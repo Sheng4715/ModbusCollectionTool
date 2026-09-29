@@ -1,6 +1,6 @@
 # Design.md — 技术设计文档
 
-> 对应当前代码基线：P0（Modbus TCP 采集）已实现并通过端到端验证（2026-09-29）。
+> 对应当前代码基线：P0（Modbus TCP 采集）已实现并验证；网卡本地端点绑定已接入（2026-09-29）。
 > 需求与优先级见 `Brief.md`；协作约定见 `AGENTS.md`。
 
 ---
@@ -49,10 +49,10 @@
 | 文件 | 职责 | 关键点 |
 |------|------|--------|
 | `MainWindow.xaml` | 全部 UI | 三页导航（总览/状态信息/设备配置）；采集周期下拉 7 档；面板显隐由 `Nav_Checked` 控制 |
-| `MainWindow.xaml.cs` | 交互编排 | 连接状态机、轮询循环、`IoPoint` 列表（64 点，列优先八进制命名）、`XComments` 注释表 |
+| `MainWindow.xaml.cs` | 交互编排 | 连接状态机、轮询循环、`IoPoint` 列表（64 点，列优先八进制命名）、`XComments` 注释表、网卡扫描与绑定（`NicInfo`） |
 | `Drivers/CommDriver.cs` | 地址模型 | `AddressArea`：元件区 ↔ Modbus 地址双向映射；`IndexBase` 支持八进制（X/Y） |
 | `Drivers/DriverRegistry.cs` | 品牌数据表 | 已注册 `xinje_xd`、`inovance_easy`；新增品牌 = 追加一个 `CommDriver` 实例 |
-| `Drivers/ModbusTcpClient.cs` | Modbus TCP 主站 | 见 §4 |
+| `Drivers/ModbusTcpClient.cs` | Modbus TCP 主站 | 报文见 §4；`ConnectAsync` 支持可选本地端点绑定（多网卡出口控制） |
 
 ### 3.1 关键状态字段（MainWindow）
 
@@ -95,7 +95,8 @@
 
 - **请求串行**：`SemaphoreSlim(1,1)` 保证同连接上单请求在途（Modbus 事务按 tid 配对，但流式 TCP 下串行最稳）
 - **单请求超时 2s**：`CancellationTokenSource.CreateLinkedTokenSource(用户取消令牌)` + `CancelAfter(2s)`，区分「主动断开」（退出循环）与「读超时」（触发断线）
-- **连接超时 3s**：`ConnectAsync(ip, port, timeout)`
+- **连接超时 3s**：`ConnectAsync(ip, port, timeout, localEndPoint?)`
+- **本地端点绑定**：`localEndPoint` 非空时先 `Socket.Bind(ip, 0)` 再连接 —— 多网卡/子网冲突时强制从所选网卡发出；绑定失败（网卡已拔出等）抛给上层红字提示，不静默回退
 - **不释放 `_gate`**：`Dispose` 时可能有在途请求，`SemaphoreSlim` 无 OS 句柄，不释放避免竞态异常
 - **事务校验**：tid 回环不匹配 / len 越界 → 抛 `IOException` → 走断线流程
 
@@ -105,9 +106,10 @@
 
 ```
 用户点「连接」
- → 校验 IP/端口 → 锁表单 → ModbusTcpClient.ConnectAsync(3s)
+ → 校验 IP/端口 → 取所选网卡 NicInfo 构造本地端点(源端口 0，可为 null=自动路由)
+ → 锁表单 → ModbusTcpClient.ConnectAsync(3s, localEndPoint?)
  → 成功: _modbus/_isConnected 置位，按钮变「断开」，StartPolling()
- → 失败: Dispose 客户端 → 解锁表单 → 红字提示（超时/失败原因）
+ → 失败: Dispose 客户端 → 解锁表单 → 红字提示（超时/绑定失败/路由不可达）
 ```
 
 ### 5.2 轮询循环（后台 Task，非 DispatcherTimer）
@@ -179,7 +181,7 @@ while (!token.IsCancellationRequested)
 
 1. **单文件 code-behind 膨胀**：`MainWindow.xaml.cs` 已 ~640 行，采集编排、连接状态机、导航混放；P2 多页面前建议拆出 `PollingService`（哪怕仍由 MainWindow 持有）。
 2. **X 点位与注释硬编码**：`XComments` 写死双工位重复注释，待 xlsx 导入（P2-6）。
-3. **目标网卡下拉无实际作用**：`ScanNetworkAdapters` 未接入 `ConnectAsync` 本地端点绑定；多网卡环境下连接走系统路由。
+3. ~~目标网卡下拉无实际作用~~ → **已解决**（2026-09-29）：下拉项改为 `NicInfo`（显示 `网卡名(ip)`、携带真实 IP），连接时 `Bind(所选IP, 0)` 强制源地址。绑定生效已证实（选错网卡时连接报「网络不可达」，绑定前直连本机 IP 必成功）；⚠️ 成功路径（选对网卡→连通）尚未端到端验证，UIA 无法操作下拉弹层（见 §10），待真机/人工确认。
 4. **串口模式 UI 可选但功能为空**：选「串口」仅隐藏以太网面板，总览仍拼 IP:端口（P1-5 一并处理）。
 5. **仅采集 X（线圈）**：D/R 寄存器页未做（API 已就绪）。
 6. **断线文案中英混杂**：底层 Socket 异常消息直传（如 "Unable to write data…"）；如需可包一层中文映射。
@@ -190,6 +192,7 @@ while (!token.IsCancellationRequested)
 - **Mock 服务器**：`%TEMP%\modbus-mock`（`dotnet run`，监听 502，FC01 返回 `(i+tick)%4==0` 变化位图，日志带毫秒时间戳 → 可验周期/地址/tid）
 - **UI 自动化**：PowerShell UIA（`x:Name` 即 AutomationId：`IpTextBox`/`ConnectButton`/`StatusInfoNav`…；Collapsed 面板不在 UIA 树，需先切页）
 - **截图对比**：两次抓窗口 PNG，对比灯阵偏移 → 证明实时刷新
+- **UIA 局限（实测）**：WPF ComboBox 弹出层不在 UIA 树内（ExpandCollapse / Alt+↓ 均取不到条目）→ 涉及下拉选项的操作暂需人工验证或改代码级验证
 - 已验证项见 `Brief.md` 变更记录（2026-09-29 P0 验证通过）
 
 ## 11. 构建与运行
