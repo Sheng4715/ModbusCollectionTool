@@ -183,7 +183,7 @@ while (!token.IsCancellationRequested)
 4. **串口模式 UI 可选但功能为空**：选「串口」仅隐藏以太网面板，总览仍拼 IP:端口（P1-5 一并处理）。
 5. **仅采集 X（线圈）**：D/R 寄存器页未做（API 已就绪）。
 6. **断线文案中英混杂**：底层 Socket 异常消息直传（如 "Unable to write data…"）；如需可包一层中文映射。
-7. ~~无版本控制~~ → **已解决**（2026-09-29）：已 `git init`（分支 `main`）+ `.gitignore`，首个提交 `75ce810`。注意：**git 不在 PATH**，使用 VS 2022 自带 Git（路径见 `AGENTS.md` 版本控制节），身份为仓库级配置 `G.Sheng`。
+7. ~~无版本控制~~ → **已解决**（2026-09-29）：已 `git init`（分支 `main`）+ `.gitignore`，首个提交 `75ce810`；Git 2.55 已通过 winget 安装并在 PATH 上，身份为仓库级配置 `G.Sheng`。
 
 ## 10. 验证方式（已实践）
 
