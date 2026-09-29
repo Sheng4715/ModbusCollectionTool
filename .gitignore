@@ -1,0 +1,15 @@
+# .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# 运行与日志
+*.log
+*.pdb
+
+# 系统文件
+Thumbs.db
+Desktop.ini
