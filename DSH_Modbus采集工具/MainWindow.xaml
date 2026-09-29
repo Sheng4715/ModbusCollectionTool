@@ -422,15 +422,12 @@
                                     <ComboBox x:Name="PollIntervalComboBox"
                                               Width="220"
                                               VerticalAlignment="Center"
-                                              SelectedIndex="2"
+                                              SelectedIndex="0"
                                               SelectionChanged="PollIntervalComboBox_SelectionChanged">
                                         <ComboBoxItem Content="100 ms" Tag="100"/>
                                         <ComboBoxItem Content="200 ms" Tag="200"/>
                                         <ComboBoxItem Content="500 ms" Tag="500"/>
                                         <ComboBoxItem Content="1 s" Tag="1000"/>
-                                        <ComboBoxItem Content="2 s" Tag="2000"/>
-                                        <ComboBoxItem Content="5 s" Tag="5000"/>
-                                        <ComboBoxItem Content="10 s" Tag="10000"/>
                                     </ComboBox>
                                 </StackPanel>
 

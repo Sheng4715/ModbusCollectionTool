@@ -48,7 +48,7 @@
 
 | 文件 | 职责 | 关键点 |
 |------|------|--------|
-| `MainWindow.xaml` | 全部 UI | 三页导航（总览/状态信息/设备配置）；采集周期下拉 7 档；面板显隐由 `Nav_Checked` 控制 |
+| `MainWindow.xaml` | 全部 UI | 三页导航（总览/状态信息/设备配置）；采集周期下拉 4 档（100ms–1s，默认 100ms）；面板显隐由 `Nav_Checked` 控制 |
 | `MainWindow.xaml.cs` | 交互编排 | 连接状态机、轮询循环、`IoPoint` 列表（64 点，列优先八进制命名）、`XComments` 注释表、网卡扫描与绑定（`NicInfo`） |
 | `Drivers/CommDriver.cs` | 地址模型 | `AddressArea`：元件区 ↔ Modbus 地址双向映射；`IndexBase` 支持八进制（X/Y） |
 | `Drivers/DriverRegistry.cs` | 品牌数据表 | 已注册 `xinje_xd`、`inovance_easy`；新增品牌 = 追加一个 `CommDriver` 实例 |
@@ -160,7 +160,7 @@ while (!token.IsCancellationRequested)
 | 新增品牌（P0-2 已具备） | `DriverRegistry` 追加 `CommDriver`；UI 自动出现（数据驱动） | ✅ 完成 |
 | Modbus RTU 串口（P1-5） | 新建 `ModbusRtuClient`，复用 PDU 构造/解析（MBAP 之外加 CRC16）；`ConnectionTypeComboBox` 已能切换面板 | 协议层 PDU 部分与传输无关，可抽出共用 |
 | 断线重连（P1） | 断线出口已收敛到 `Disconnect(status,color)`，加重连即在此处挂退避重试 | ✅ 出口统一 |
-| 采集周期（P0-3） | `_pollIntervalMs` + 7 档下拉 | ✅ 完成 |
+| 采集周期（P0-3） | `_pollIntervalMs` + 4 档下拉（100ms–1s，默认 100ms） | ✅ 完成 |
 | 读寄存器（D/R 区） | `PollOnce` 增加 `ReadHoldingRegistersAsync` 分支；数据模型加寄存器点位 | API 已就绪（0x03/0x04） |
 | xlsx 导入 IO 表（P2-6） | 替换 `XComments` 来源；注意**无第三方依赖**约束（xlsx 是 zip+xml，需评估手写 or 放宽为 CSV） | ⚠️ 待决策 |
 | 多页面 IO（P2-7） | `_ioPoints` 目前绑死 X/Coil；抽 `IIoSource` 后可加 Y/M/D 页 | 需重构 |

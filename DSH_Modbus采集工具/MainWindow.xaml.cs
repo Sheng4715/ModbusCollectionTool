@@ -55,7 +55,7 @@ namespace DSH_Modbus采集工具
         private ModbusTcpClient? _modbus;
         private bool _isConnected;
         private CancellationTokenSource? _pollCts;
-        private volatile int _pollIntervalMs = 500;
+        private volatile int _pollIntervalMs = 100;
         private CommDriver? _currentDriver;
         private readonly List<IoPoint> _ioPoints = new();
 
