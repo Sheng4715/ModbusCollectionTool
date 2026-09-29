@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,12 +22,21 @@ namespace DSH_Modbus采集工具.Drivers
 
         public bool IsConnected => _tcp?.Connected == true;
 
-        /// <summary>建立 TCP 连接；超时抛 OperationCanceledException。</summary>
-        public async Task ConnectAsync(string ip, int port, TimeSpan timeout, CancellationToken ct = default)
+        /// <summary>
+        /// 建立 TCP 连接；超时抛 OperationCanceledException。
+        /// localEndPoint 非空时先绑定本地源地址（强制从指定网卡发出，应对多网卡/子网冲突场景）；
+        /// 绑定失败（网卡已拔出等）同样抛异常，由上层提示。
+        /// </summary>
+        public async Task ConnectAsync(string ip, int port, TimeSpan timeout, IPEndPoint? localEndPoint = null, CancellationToken ct = default)
         {
             var tcp = new TcpClient();
             try
             {
+                if (localEndPoint != null)
+                {
+                    tcp.Client.Bind(localEndPoint);
+                }
+
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(timeout);
                 await tcp.ConnectAsync(ip, port, cts.Token).ConfigureAwait(false);

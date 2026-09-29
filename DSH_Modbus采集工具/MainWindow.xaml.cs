@@ -41,6 +41,15 @@ namespace DSH_Modbus采集工具
         public event PropertyChangedEventHandler? PropertyChanged;
     }
 
+    /// <summary>网卡下拉项：显示 "网卡名(ip)"，携带真实 IP 供连接时绑定本地端点。</summary>
+    public sealed class NicInfo
+    {
+        public string Name { get; init; } = string.Empty;
+        public IPAddress Ip { get; init; } = IPAddress.None;
+
+        public override string ToString() => $"{Name}({Ip})";
+    }
+
     public partial class MainWindow : Window
     {
         private ModbusTcpClient? _modbus;
@@ -215,8 +224,7 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            string? previous = (TargetNicComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content as string
-                               ?? TargetNicComboBox.SelectedItem as string;
+            string? previous = TargetNicComboBox.SelectedItem?.ToString();
 
             TargetNicComboBox.Items.Clear();
 
@@ -241,7 +249,7 @@ namespace DSH_Modbus采集工具
                     continue;
                 }
 
-                TargetNicComboBox.Items.Add($"{nic.Name}({ipv4})");
+                TargetNicComboBox.Items.Add(new NicInfo { Name = nic.Name, Ip = ipv4 });
             }
 
             if (TargetNicComboBox.Items.Count == 0)
@@ -251,7 +259,20 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            int index = previous == null ? -1 : TargetNicComboBox.Items.IndexOf(previous);
+            // 按显示文本恢复刷新前的选择（每次扫描都是新对象，不能用引用比较）
+            int index = -1;
+            if (previous != null)
+            {
+                for (int i = 0; i < TargetNicComboBox.Items.Count; i++)
+                {
+                    if (string.Equals(TargetNicComboBox.Items[i]?.ToString(), previous, StringComparison.Ordinal))
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+            }
+
             TargetNicComboBox.SelectedIndex = index >= 0 ? index : 0;
         }
 
@@ -308,10 +329,16 @@ namespace DSH_Modbus采集工具
             SetInputsEnabled(false);
             SetStatus($"正在连接 {ip}:{port} …", "#B26A00");
 
+            // 绑定所选网卡的本地源地址（多网卡/子网冲突时强制走该网卡）；
+            // 未选有效网卡项时为 null，交给系统路由自动选择
+            IPEndPoint? localEndPoint = TargetNicComboBox.SelectedItem is NicInfo nic
+                ? new IPEndPoint(nic.Ip, 0)
+                : null;
+
             var client = new ModbusTcpClient();
             try
             {
-                await client.ConnectAsync(ip, port, TimeSpan.FromSeconds(3));
+                await client.ConnectAsync(ip, port, TimeSpan.FromSeconds(3), localEndPoint);
 
                 _modbus = client;
                 _isConnected = true;
