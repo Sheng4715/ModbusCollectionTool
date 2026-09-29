@@ -91,6 +91,14 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 已注册：`xinje_xd`（X/Y/M/S/SM/HM + D/SD/HD/HSD/SFD）、`inovance_easy`（M/B/S/X/Y + D/R）。
 
+## 版本控制
+
+- 已初始化 git 仓库（分支 `main`），`.gitignore` 排除 `bin/ obj/ .vs/ *.user`
+- **git 不在 PATH**，用 VS 2022 自带 Git：
+  `& 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\TeamFoundation\Team Explorer\Git\cmd\git.exe' <args>`
+- 身份为仓库级配置（`G.Sheng`），修改：`git config user.name / user.email`
+- 提交信息用中文，改动完成后及时提交
+
 ## 代码约定
 
 - 命名空间：`DSH_Modbus采集工具`（含中文，文件路径亦含中文，命令行注意编码/引号）
