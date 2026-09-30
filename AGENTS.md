@@ -25,7 +25,7 @@ dotnet run --project DSH_Modbus采集工具
 DSH_Modbus采集工具/
 ├── App.xaml / App.xaml.cs          # 应用入口
 ├── MainWindow.xaml                 # 全部 UI（单窗口，无 UserControl 拆分）
-├── MainWindow.xaml.cs              # 交互逻辑（836 行：导航/连接状态机/轮询/网卡绑定/X-Y双列表/xlsx导入）
+├── MainWindow.xaml.cs              # 交互逻辑（1051 行：导航/连接状态机/轮询/网卡绑定/动态IO点位集与分页/xlsx导入）
 ├── XlsxIoTableReader.cs            # xlsx 点位表解析（零依赖 zip+XML，地址→右邻配对）
 └── Drivers/                        # 通讯驱动
     ├── CommDriver.cs               # 模型：ModbusArea / NumberBase / AddressArea / CommDriver
@@ -55,12 +55,13 @@ DSH_Modbus采集工具/
 | `IoSegmentRadioButton` | IO 页 X/Y 分段切换项（灰底背板、悬停加深、选中白底加粗） |
 | `IoItemTemplate` | IO 点位单元格（灯 10×10、灯与名间距 4、注释 MinWidth 144；Comment 为 INPC，导入后自动刷新） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
+| `IoPagerButton` | IO 分页箭头按钮（卡片右上角 `<` `>`，26×26，首末页置灰） |
 | `ScrollBar` | 细滚动条（10px） |
 
 ### 页面内容
 
 1. **总览**：连接状态条 `OverviewStatusPrefix`（黑字）+ `OverviewStatusState`（右对齐，未连接黄 #C08A00 / 已连接绿 #0B7A0B）。格式：`驱动：连接方式  协议  IP:端口` + 状态。由 `UpdateOverviewStatus()` 刷新（选择/输入/连接状态变化时调用）。
-2. **状态信息**（IO 监控）：卡片左上（原「IO 监控（输入 X）」标题已移除，该位置改为控件区）= **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切两个网格显隐）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`：逐行按当前通讯驱动 `_currentDriver` 校验——地址须落在驱动定义范围内、且须是 X/Y 监控点位；通过者全量替换注释表，结果**一律用 `MessageBox` 对话框**汇报：解析失败→红错误框 / 0 项有效→警告框且不替换 / 否则「成功导入 N 项，失败 M 项」+ 失败明细；**已无内联提示文字**）。每区 4 列 × 16 = 64 点（`IoColumnsGrid` X0–X77 / `YIoColumnsGrid` Y0–Y77，均八进制）。列宽 `*` 等分；行高 22、行距 2、列距 4。注释优先级：`io-comments.json`（AppContext.BaseDirectory，导入后写入）> 内置 `XComments`；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。**采集跟随可见性**：连接后 `PollLoopAsync` 每周期只读**当前显示的分段**（输入 X 或输出 Y，1×FC01，默认 100ms，`_yViewActive`）；**离开本页停止全部报文**（`_ioPageActive`，优化通讯），未显示区与离页期间灯保留上次数据，回页/切段后下一周期恢复采集；断线不清灯色（`IsOn` 保持上次值）。
+2. **状态信息**（IO 监控）：**点位集完全由导入的 IO 表驱动，不再固定 64 点**。卡片左上 = **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切网格显隐并重新分页）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`：逐行按当前通讯驱动 `_currentDriver` 校验——**仅接受 X / Y 元件**且地址须落在驱动定义范围内；通过者整体替换点位集，结果**一律用 `MessageBox` 对话框**汇报：解析失败→红错误框 / 0 项有效→警告框且不替换 / 否则「成功导入 N 项，失败 M 项」+ 失败明细；**已无内联提示文字**）。**分页**：每页固定 4 列 × `IoRowsPerColumn`（默认 16）= **64 点**，超出即分页；X/Y **各自独立记页**（`_xPageIndex` / `_yPageIndex`），分页控件在卡片右上角（`IoPagerPanel` = `IoPrevPageButton` + `IoPageText`「当前/总数」+ `IoNextPageButton`），**只有一页时整体隐藏**，首/末页对应箭头置灰。**未导入时列表为空**并显示 `IoEmptyHint`「尚未导入 IO 表」。点位按**地址升序**排序（`RebuildIoPoints`）。列宽 `*` 等分；行高 22、行距 2、列距 4。点位集/注释唯一来源 = `io-comments.json`（AppContext.BaseDirectory，导入后写入；**键=点位名，值=注释**）—— 内置 `XComments` 默认表**已移除**；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。**采集跟随可见性**：连接后 `PollLoopAsync` 每周期只读**当前显示分段 + 当前页**的点位（`_visiblePage` 快照，按本页最小..最大地址一次 FC01 读回、再按偏移回填，默认 100ms）；**离开本页停止全部报文**（`_ioPageActive`），未显示页/区与离页期间灯保留上次数据，回页/切页后下一周期恢复采集；断线不清灯色（`IsOn` 保持上次值）。
 3. **设备配置**：连接方式（以太网/串口）、协议类型（ModbusTCP）、设备类型（**来自 `DriverRegistry.All`**，选中即缓存 `_currentDriver`）、采集周期（100ms–1s 四档，默认 100ms）；以太网时显示目标网卡（`NicInfo`：扫描本机网卡 `网卡名(ip)` + 刷新按钮）、IP、端口号、连接按钮 + 状态灯。连接中/已连接时 `SetInputsEnabled(false)` 全部置灰，按钮变「断开」。连接 = **3 秒超时 ConnectAsync + 绑定所选网卡本地端点**，成功即启动后台轮询（报文已实现，`Drivers/ModbusTcpClient.cs`），读超时/对端关闭 → 自动断开红字提示。串口模式目前仅隐藏以太网面板，功能未实现（P1）。
 
 ## 通讯驱动标准（Drivers/）
@@ -116,17 +117,21 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 需求 | 位置 |
 |------|------|
 | 改导航项/页面显隐 | XAML 导航区 + `Nav_Checked` |
-| 加/改 IO 点位注释 | 导入 xlsx（推荐）或改内置默认 `XComments`（会被 json 覆盖） |
+| 加/改 IO 点位与注释 | 导入 xlsx（**唯一入口**）；点位集 + 注释持久化在 `io-comments.json`（`LoadComments` / `SaveComments`） |
+| IO 点位集构建/排序 | `RebuildIoPoints` → `TryCreateIoPoint`（仅 X/Y + 驱动范围校验）/ `NormalizePointName`（元件转大写）；按地址升序 |
+| IO 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`；`_xPageIndex` / `_yPageIndex` 各自独立，每页 4×`IoRowsPerColumn` |
+| 改每页点位数 | `MainWindow.xaml.cs` → `IoRowsPerColumn`（列数固定 4，每页 = 4 × 该值） |
+| IO 采集范围 | `PollOnceAsync` 读 `_visiblePage` 快照 → 本页最小..最大地址一次 FC01 |
 | 改 IO 行高/行距 | `IoItemTemplate` → `Height` / `Margin` 第 4 值 |
 | 改 IO 列宽策略 | `IoColumnsGrid` / `YIoColumnsGrid`（均 4×`*`） |
 | 加/改 X-Y 分段切换 | `IoSegmentRadioButton` 样式 + 卡片左上 `XViewSegment`/`YViewSegment` + `IoView_Checked` |
 | 导入 IO 表 / 解析规则 | `ImportIoTableButton_Click` + `XlsxIoTableReader.cs`（地址→右邻配对，仅首表，不支持合并单元格）；导入期按 `_currentDriver` 校验地址范围与监控点位，结果用 MessageBox 汇报成功/失败项数 |
-| 注释持久化 | `LoadComments` / `SaveComments` → `io-comments.json`（文件优先于 `XComments`） |
+| 注释持久化 | `LoadComments` / `SaveComments` → `io-comments.json`（**同时是点位集来源**；键=点位名） |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs` |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
 | 总览状态格式 | `UpdateOverviewStatus()` |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
-| 轮询与断线逻辑 | `MainWindow.xaml.cs` → `PollLoopAsync` / `PollOnceAsync`（可见分段单读，离页停采）/ `Disconnect(status,color)` |
-| 采集跟随页面/分段 | `_ioPageActive`（`Nav_Checked` 置位）+ `_yViewActive`（`IoView_Checked` 置位）→ `PollOnceAsync` 开头判断 |
+| 轮询与断线逻辑 | `MainWindow.xaml.cs` → `PollLoopAsync` / `PollOnceAsync`（当前页单读，离页停采）/ `Disconnect(status,color)` |
+| 采集跟随页面/分段/页 | `_ioPageActive`（`Nav_Checked`）+ `_yViewActive`（`IoView_Checked`）+ `_visiblePage`（`ApplyIoPage`）→ `PollOnceAsync` 开头判断 |
 | 网卡扫描/绑定 | `ScanNetworkAdapters` + `ConnectButton_Click`（`NicInfo`） |
 | 采集周期档位 | `PollIntervalComboBox`（XAML）+ `_pollIntervalMs` |

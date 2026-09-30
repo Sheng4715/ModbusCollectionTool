@@ -141,6 +141,37 @@
             </Setter>
         </Style>
 
+        <!-- IO 分页按钮（卡片右上角 < >） -->
+        <Style x:Key="IoPagerButton" TargetType="Button">
+            <Setter Property="Width" Value="26"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#5D5D5D"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PagerBd" Background="Transparent" CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PagerBd" Property="Background" Value="#E2E2E2"/>
+                                <Setter Property="Foreground" Value="#1A1A1A"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="PagerBd" Property="Background" Value="#D9D9D9"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#C0C0C0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- IO 点位项模板 -->
         <DataTemplate x:Key="IoItemTemplate">
             <Border Height="22" Padding="3,0" Margin="0,0,0,2"
@@ -376,6 +407,29 @@
                                                 VerticalAlignment="Center"
                                                 Click="ImportIoTableButton_Click"/>
                                     </StackPanel>
+
+                                    <!-- 分页（右上角）：本分段超过一页时才显示 -->
+                                    <StackPanel x:Name="IoPagerPanel"
+                                                Orientation="Horizontal"
+                                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                Visibility="Collapsed">
+                                        <Button x:Name="IoPrevPageButton"
+                                                Content="&#xE76B;"
+                                                ToolTip="上一页"
+                                                Style="{StaticResource IoPagerButton}"
+                                                Click="IoPrevPageButton_Click"/>
+                                        <TextBlock x:Name="IoPageText"
+                                                   Text="1/1"
+                                                   MinWidth="46"
+                                                   TextAlignment="Center"
+                                                   FontSize="12" Foreground="#5D5D5D"
+                                                   VerticalAlignment="Center"/>
+                                        <Button x:Name="IoNextPageButton"
+                                                Content="&#xE76C;"
+                                                ToolTip="下一页"
+                                                Style="{StaticResource IoPagerButton}"
+                                                Click="IoNextPageButton_Click"/>
+                                    </StackPanel>
                                 </Grid>
 
                                 <!-- 输入监控（X0–X77） -->
@@ -423,6 +477,14 @@
                                                   Style="{StaticResource IoItemsControlStyle}"
                                                   ItemTemplate="{StaticResource IoItemTemplate}"/>
                                 </Grid>
+
+                                <!-- 空状态占位：未导入 IO 表 / 本分段无点位时显示 -->
+                                <TextBlock x:Name="IoEmptyHint"
+                                           Text="尚未导入 IO 表"
+                                           Visibility="Collapsed"
+                                           FontSize="12"
+                                           Foreground="#9A9A9A"
+                                           Margin="0,6,0,4"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>

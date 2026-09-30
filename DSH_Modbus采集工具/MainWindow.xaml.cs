@@ -18,6 +18,9 @@ namespace DSH_Modbus采集工具
 
         public string Name { get; set; } = string.Empty;
 
+        /// <summary>Modbus 绝对地址，由当前通讯驱动解析得出；轮询按此回填 <see cref="IsOn"/>。</summary>
+        public int Address { get; set; }
+
         public string Comment
         {
             get => _comment;
@@ -75,53 +78,37 @@ namespace DSH_Modbus采集工具
         private readonly List<IoPoint> _xPoints = new();
         private readonly List<IoPoint> _yPoints = new();
 
+        /// <summary>每页 4 列 × 16 行 = 64 点；本分段点位超出一页即分页。</summary>
+        private const int IoRowsPerColumn = 16;
+        private const int IoPageSize = 4 * IoRowsPerColumn;
+
+        /// <summary>当前页号（0 基）；X / Y 两分段各自独立记页。</summary>
+        private volatile int _xPageIndex;
+        private volatile int _yPageIndex;
+
+        /// <summary>
+        /// 当前可见页的点位快照：UI 线程在切页/切段/重建点位时整体替换，
+        /// 后台轮询只读该数组（不直接触碰 <see cref="_xPoints"/><see cref="_yPoints"/>，避免与重建竞态）。
+        /// </summary>
+        private volatile IoPoint[] _visiblePage = Array.Empty<IoPoint>();
+
+        /// <summary>构造期结束标志：此后切换设备类型才需要按新驱动重建点位地址。</summary>
+        private bool _ioInitialized;
+
         /// <summary>状态信息页可见时才发起采集；离开页面停止报文，灯保持上次数据（UI 线程写、后台只读）。</summary>
         private volatile bool _ioPageActive;
 
         /// <summary>当前显示的分段：true=输出 Y，false=输入 X；只读可见区（UI 线程写、后台只读）。</summary>
         private volatile bool _yViewActive;
 
-        /// <summary>运行时注释表：默认取 <see cref="XComments"/>，若 exe 旁存在 io-comments.json 则以文件为权威（P2 导入后持久化）。</summary>
+        /// <summary>
+        /// 点位集 + 注释表（键 = 点位名如 "X17"，值 = 注释）。**IO 监控列表完全由它驱动**：
+        /// 启动时从 exe 旁的 io-comments.json 载入，导入 IO 表后整体替换并写回；未导入则为空（界面显示空列表）。
+        /// </summary>
         private Dictionary<string, string> _comments = new(StringComparer.OrdinalIgnoreCase);
 
         private static string CommentsFilePath =>
             Path.Combine(AppContext.BaseDirectory, "io-comments.json");
-
-        private static readonly Dictionary<string, string> XComments = new()
-        {
-            ["X0"] = "接料到位感应",
-            ["X1"] = "接料阻挡气缸原点",
-            ["X2"] = "接料定位气缸原点",
-            ["X3"] = "取料升降缸1原点",
-            ["X4"] = "取料升降缸1动点",
-            ["X5"] = "取料升降缸2原点",
-            ["X6"] = "取料升降缸2动点",
-            ["X7"] = "取料吸真空1感应",
-            ["X10"] = "取料吸真空2感应",
-            ["X11"] = "取料二次定位气缸原点",
-            ["X12"] = "取料二次定位气缸动点",
-            ["X13"] = "二次定位有无料检测",
-            ["X14"] = "载具顶升气缸原点",
-            ["X15"] = "载具侧推气缸原点",
-            ["X16"] = "产品起翘对射感应",
-            ["X17"] = "载具回传到位感应",
-            ["X20"] = "接料到位感应",
-            ["X21"] = "接料阻挡气缸原点",
-            ["X22"] = "接料定位气缸原点",
-            ["X23"] = "取料升降缸1原点",
-            ["X24"] = "取料升降缸1动点",
-            ["X25"] = "取料升降缸2原点",
-            ["X26"] = "取料升降缸2动点",
-            ["X27"] = "取料吸真空1感应",
-            ["X30"] = "取料吸真空2感应",
-            ["X31"] = "取料二次定位气缸原点",
-            ["X32"] = "取料二次定位气缸动点",
-            ["X33"] = "二次定位有无料检测",
-            ["X34"] = "载具顶升气缸原点",
-            ["X35"] = "载具侧推气缸原点",
-            ["X36"] = "产品起翘对射感应",
-            ["X37"] = "载具回传到位感应",
-        };
 
         public MainWindow()
         {
@@ -131,59 +118,197 @@ namespace DSH_Modbus采集工具
             DeviceTypeComboBox.ItemsSource = DriverRegistry.All.Select(d => d.DisplayName).ToList();
             DeviceTypeComboBox.SelectedIndex = 0;
 
-            // 注释表：内置默认为底，若 exe 旁存在 io-comments.json 则整表覆盖
-            _comments = new Dictionary<string, string>(XComments, StringComparer.OrdinalIgnoreCase);
+            // 点位集来自 exe 旁的 io-comments.json（导入 IO 表后写回）；文件不存在则为空列表
             LoadComments();
 
-            InitIoPoints();
+            _ioInitialized = true;
+            RebuildIoPoints();
         }
 
-        private void InitIoPoints()
+        // ---------- IO 点位集构建 / 分页 ----------
+
+        /// <summary>
+        /// 按当前点位集（<see cref="_comments"/>）重建 X / Y 监控列表：归一化点位名、用当前通讯驱动
+        /// 换算出 Modbus 地址、按地址升序排序，并复位到第 1 页。未通过驱动校验的条目忽略（导入时已过滤，此处兜底）。
+        /// </summary>
+        private void RebuildIoPoints()
         {
-            for (int col = 0; col < 4; col++)
+            _xPoints.Clear();
+            _yPoints.Clear();
+
+            foreach (string name in _comments.Keys)
             {
-                var xColumn = new List<IoPoint>();
-                var yColumn = new List<IoPoint>();
-
-                for (int row = 0; row < 16; row++)
+                if (TryCreateIoPoint(name, out IoPoint? point))
                 {
-                    int tens = col * 2 + row / 8;
-                    int ones = row % 8;
-                    string suffix = tens == 0 ? $"{ones}" : $"{tens}{ones}";
-                    string xName = $"X{suffix}";
-                    string yName = $"Y{suffix}";
-
-                    xColumn.Add(new IoPoint { Name = xName, Comment = LookupComment(xName) });
-                    yColumn.Add(new IoPoint { Name = yName, Comment = LookupComment(yName) });
+                    (point!.Name[0] == 'Y' ? _yPoints : _xPoints).Add(point);
                 }
+            }
 
-                _xPoints.AddRange(xColumn);
-                _yPoints.AddRange(yColumn);
+            // 地址升序：八进制编号解析后即数值序，与轮询回填时的偏移一致
+            _xPoints.Sort(static (a, b) => a.Address.CompareTo(b.Address));
+            _yPoints.Sort(static (a, b) => a.Address.CompareTo(b.Address));
 
-                switch (col)
+            _xPageIndex = 0;
+            _yPageIndex = 0;
+            ApplyIoPage();
+        }
+
+        /// <summary>把 "X17" 这类点位名转成 IoPoint：仅接受 X / Y 元件，且地址须在当前驱动定义范围内。</summary>
+        private bool TryCreateIoPoint(string name, out IoPoint? point)
+        {
+            point = null;
+            CommDriver? driver = _currentDriver;
+            if (driver == null || string.IsNullOrWhiteSpace(name))
+            {
+                return false;
+            }
+
+            string normalized = NormalizePointName(name);
+            if (normalized.Length < 2 || (normalized[0] != 'X' && normalized[0] != 'Y'))
+            {
+                return false;
+            }
+
+            if (!driver.TryResolve(normalized, ModbusArea.Coil, out int address, out _))
+            {
+                return false;
+            }
+
+            _comments.TryGetValue(normalized, out string? comment);
+            point = new IoPoint
+            {
+                Name = normalized,
+                Address = address,
+                Comment = comment ?? string.Empty,
+            };
+            return true;
+        }
+
+        /// <summary>归一化点位名：元件符号转大写（"x17" → "X17"、"sm5" → "SM5"），编号部分原样保留。</summary>
+        private static string NormalizePointName(string name)
+        {
+            int i = 0;
+            while (i < name.Length && char.IsLetter(name[i]))
+            {
+                i++;
+            }
+
+            return name[..i].ToUpperInvariant() + name[i..];
+        }
+
+        /// <summary>当前显示的分段（true=输出 Y / false=输入 X）的点位列表。</summary>
+        private List<IoPoint> ActiveSegmentPoints => _yViewActive ? _yPoints : _xPoints;
+
+        /// <summary>当前分段的页号（0 基）。</summary>
+        private int ActivePageIndex
+        {
+            get => _yViewActive ? _yPageIndex : _xPageIndex;
+            set
+            {
+                if (_yViewActive)
                 {
-                    case 0:
-                        IoColumn0.ItemsSource = xColumn;
-                        YIoColumn0.ItemsSource = yColumn;
-                        break;
-                    case 1:
-                        IoColumn1.ItemsSource = xColumn;
-                        YIoColumn1.ItemsSource = yColumn;
-                        break;
-                    case 2:
-                        IoColumn2.ItemsSource = xColumn;
-                        YIoColumn2.ItemsSource = yColumn;
-                        break;
-                    case 3:
-                        IoColumn3.ItemsSource = xColumn;
-                        YIoColumn3.ItemsSource = yColumn;
-                        break;
+                    _yPageIndex = value;
+                }
+                else
+                {
+                    _xPageIndex = value;
                 }
             }
         }
 
-        private string LookupComment(string name) =>
-            _comments.TryGetValue(name, out string? comment) ? comment : string.Empty;
+        /// <summary>总页数；空列表也算 1 页，便于统一处理分页控件显隐。</summary>
+        private static int PageCountOf(List<IoPoint> points) =>
+            Math.Max(1, (points.Count + IoPageSize - 1) / IoPageSize);
+
+        /// <summary>
+        /// 把当前页切片绑定到 4 个纵向 ItemsControl（每列固定 16 行，末页不满留空），
+        /// 刷新分页控件与空状态，并替换后台轮询用的可见页快照。
+        /// </summary>
+        private void ApplyIoPage()
+        {
+            if (IoColumn0 == null || IoColumn1 == null || IoColumn2 == null || IoColumn3 == null
+                || YIoColumn0 == null || YIoColumn1 == null || YIoColumn2 == null || YIoColumn3 == null)
+            {
+                return;
+            }
+
+            List<IoPoint> points = ActiveSegmentPoints;
+            int pages = PageCountOf(points);
+
+            if (ActivePageIndex > pages - 1)
+            {
+                ActivePageIndex = pages - 1;
+            }
+
+            if (ActivePageIndex < 0)
+            {
+                ActivePageIndex = 0;
+            }
+
+            List<IoPoint> page = points
+                .Skip(ActivePageIndex * IoPageSize)
+                .Take(IoPageSize)
+                .ToList();
+
+            // 只给「当前显示的分段」对应的 4 个列控件绑定（另一分段的网格保持原内容，切回时重新绑定）
+            BindIoColumn(_yViewActive ? YIoColumn0 : IoColumn0, page, 0);
+            BindIoColumn(_yViewActive ? YIoColumn1 : IoColumn1, page, 1);
+            BindIoColumn(_yViewActive ? YIoColumn2 : IoColumn2, page, 2);
+            BindIoColumn(_yViewActive ? YIoColumn3 : IoColumn3, page, 3);
+
+            _visiblePage = page.ToArray();
+
+            UpdateIoPager(pages);
+            UpdateIoEmptyHint(points.Count == 0);
+        }
+
+        /// <summary>取本页第 col 列的 16 个点（不足则少）绑定到对应 ItemsControl。</summary>
+        private static void BindIoColumn(System.Windows.Controls.ItemsControl target, List<IoPoint> page, int col)
+        {
+            target.ItemsSource = page
+                .Skip(col * IoRowsPerColumn)
+                .Take(IoRowsPerColumn)
+                .ToList();
+        }
+
+        /// <summary>分页控件：只有一页时整体隐藏；首/末页把对应箭头置灰。</summary>
+        private void UpdateIoPager(int pages)
+        {
+            if (IoPagerPanel == null)
+            {
+                return;
+            }
+
+            IoPagerPanel.Visibility = pages > 1 ? Visibility.Visible : Visibility.Collapsed;
+            IoPageText.Text = $"{ActivePageIndex + 1}/{pages}";
+            IoPrevPageButton.IsEnabled = ActivePageIndex > 0;
+            IoNextPageButton.IsEnabled = ActivePageIndex < pages - 1;
+        }
+
+        /// <summary>空状态提示：仅在未导入 IO 表 / 本分段无点位时出现。</summary>
+        private void UpdateIoEmptyHint(bool empty)
+        {
+            if (IoEmptyHint != null)
+            {
+                IoEmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        private void IoPrevPageButton_Click(object sender, RoutedEventArgs e) => ChangeIoPage(-1);
+
+        private void IoNextPageButton_Click(object sender, RoutedEventArgs e) => ChangeIoPage(1);
+
+        private void ChangeIoPage(int delta)
+        {
+            int next = ActivePageIndex + delta;
+            if (next < 0 || next >= PageCountOf(ActiveSegmentPoints))
+            {
+                return;
+            }
+
+            ActivePageIndex = next;
+            ApplyIoPage();
+        }
 
         /// <summary>读取 exe 旁的 io-comments.json；文件不存在或损坏时保持内置默认，不阻断启动。</summary>
         private void LoadComments()
@@ -221,20 +346,6 @@ namespace DSH_Modbus采集工具
             catch
             {
                 // 忽略写入失败
-            }
-        }
-
-        /// <summary>按当前注释表刷新全部灯项文本（Comment 已实现变更通知）。</summary>
-        private void ApplyComments()
-        {
-            foreach (IoPoint p in _xPoints)
-            {
-                p.Comment = LookupComment(p.Name);
-            }
-
-            foreach (IoPoint p in _yPoints)
-            {
-                p.Comment = LookupComment(p.Name);
             }
         }
 
@@ -555,6 +666,13 @@ namespace DSH_Modbus采集工具
 
             string name = DeviceTypeComboBox.SelectedItem as string ?? DeviceTypeComboBox.Text;
             _currentDriver = DriverRegistry.GetByDisplayName(name);
+
+            // 换驱动后 X/Y 的 Modbus 地址随之变化，按新驱动重建点位地址（构造期尚未就绪，跳过）
+            if (_ioInitialized)
+            {
+                RebuildIoPoints();
+            }
+
             UpdateOverviewStatus();
         }
 
@@ -653,29 +771,47 @@ namespace DSH_Modbus采集工具
             }
 
             ModbusTcpClient? modbus = _modbus;
-            CommDriver? driver = _currentDriver;
-            if (modbus == null || driver == null)
+            if (modbus == null)
             {
-                throw new IOException("连接或驱动未就绪");
+                throw new IOException("连接未就绪");
             }
 
-            // 只读当前显示的分段（未显示区不读，切回后下一周期即刷新）
-            bool yView = _yViewActive;
-            string element = yView ? "Y0" : "X0";
-            if (!driver.TryResolve(element, ModbusArea.Coil, out int start, out string error))
+            // 只读当前显示分段「当前页」的点位；点位集由 IO 表决定，未导入时为空 → 不发报文
+            IoPoint[] points = _visiblePage;
+            if (points.Length == 0)
             {
-                throw new InvalidOperationException(error);
+                return;
             }
 
-            List<IoPoint> points = yView ? _yPoints : _xPoints;
-            bool[] coils = await modbus.ReadCoilsAsync((ushort)start, (ushort)points.Count, token);
+            // 本页点位可能不连续：按最小..最大地址一次读回（FC01），再用偏移回填
+            int min = int.MaxValue;
+            int max = int.MinValue;
+            foreach (IoPoint p in points)
+            {
+                if (p.Address < min)
+                {
+                    min = p.Address;
+                }
+
+                if (p.Address > max)
+                {
+                    max = p.Address;
+                }
+            }
+
+            int count = max - min + 1;
+            bool[] coils = await modbus.ReadCoilsAsync((ushort)min, (ushort)count, token);
 
             // 回到 UI 线程刷新绑定（IoPoint 为 INPC 对象，IsOn 变更驱动灯色）
             await Dispatcher.InvokeAsync(() =>
             {
-                for (int i = 0; i < points.Count && i < coils.Length; i++)
+                foreach (IoPoint p in points)
                 {
-                    points[i].IsOn = coils[i];
+                    int offset = p.Address - min;
+                    if (offset >= 0 && offset < coils.Length)
+                    {
+                        p.IsOn = coils[offset];
+                    }
                 }
             });
         }
@@ -732,6 +868,9 @@ namespace DSH_Modbus采集工具
             _yViewActive = !xView; // 采集跟随可见分段：未显示区不读，保留上次数据
             IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
             YIoColumnsGrid.Visibility = xView ? Visibility.Collapsed : Visibility.Visible;
+
+            // 切段后本段有自己的页号与页数，重新切片绑定
+            ApplyIoPage();
         }
 
         private void ImportIoTableButton_Click(object sender, RoutedEventArgs e)
@@ -796,8 +935,8 @@ namespace DSH_Modbus采集工具
             }
 
             _comments = next;
-            ApplyComments();
             SaveComments();
+            RebuildIoPoints(); // 点位集随之变化：重建监控列表并复位到第 1 页
 
             string message = $"成功导入 {ok} 项，失败 {failures.Count} 项。";
             if (failures.Count > 0)
@@ -823,6 +962,13 @@ namespace DSH_Modbus采集工具
                 return false;
             }
 
+            string normalized = NormalizePointName(name);
+            if (normalized[0] != 'X' && normalized[0] != 'Y')
+            {
+                reason = "非 IO 监控点位（IO 监控仅支持输入 X / 输出 Y）";
+                return false;
+            }
+
             CommDriver? driver = _currentDriver;
             if (driver == null)
             {
@@ -831,15 +977,9 @@ namespace DSH_Modbus采集工具
             }
 
             // IO 监控页采集的是线圈（FC01），故按 Coil 区校验地址范围
-            if (!driver.TryResolve(name, ModbusArea.Coil, out _, out string error))
+            if (!driver.TryResolve(normalized, ModbusArea.Coil, out _, out string error))
             {
-                reason = DescribeResolveFailure(driver, name, error);
-                return false;
-            }
-
-            if (!IsMonitoredPoint(name))
-            {
-                reason = "非 IO 监控点位（本页仅显示 X0–X77 / Y0–Y77）";
+                reason = DescribeResolveFailure(driver, normalized, error);
                 return false;
             }
 
@@ -902,11 +1042,6 @@ namespace DSH_Modbus采集工具
 
             return true;
         }
-
-        /// <summary>是否为当前监控页上的点位（X0–X77 / Y0–Y77 之一）。</summary>
-        private bool IsMonitoredPoint(string name) =>
-            _xPoints.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-            || _yPoints.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
         private void RadioButton_Checked(object sender, RoutedEventArgs e)
         {
