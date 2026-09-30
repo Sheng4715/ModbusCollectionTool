@@ -214,8 +214,9 @@ while (!token.IsCancellationRequested)
 7. ~~无版本控制~~ → **已解决**（2026-09-29）：已 `git init`（分支 `main`）+ `.gitignore`，首个提交 `75ce810`；Git 2.55 已通过 winget 安装并在 PATH 上，身份为仓库级配置 `G.Sheng`。
 8. **xlsx 解析规则有限**（`XlsxIoTableReader`，零依赖的取舍）：仅读**首个工作表**；**不支持合并单元格**（跨列/跨行合并会丢配对）；配对规则固定为「地址形单元格（字母+数字）→ 右侧一列单元格为注释」（匹配 A/B、D/E 双面板模板）；表头等非地址行在解析期即被丢弃；非 X/Y 元件（如 M100、D100）与超出驱动地址范围/八进制非法的点位在导入期计入「失败」并附中文原因；无有效点位时**拒绝替换**（警告对话框）。导入结果一律用 `MessageBox` 汇报（`导入结果的内联文字提示已移除`），失败明细最多列 12 条、其余折叠汇总。复杂模板需先整理为该布局。
 9. **离页期间断线检测暂停**（2026-09-30 采集可见性的取舍）：离开状态信息页零报文 ⇒ PLC 断线/链路失效在离页时不被发现，回到状态页后首个请求失败才报红（≤2s 读超时）；离页久置后 TCP 可能被 NAT/设备静默回收，回页首读也会暴露。若将来需要离页保活，可在离页态加低频心跳（如 2s 读 1 点，见 ADR-7 备选）。
-10. **信捷驱动的 X/Y 区各仅 64 点 ⇒ 分页对其不可达**：`xinje_xd` 的 X/Y 区 `Count=64`，恰好等于一页容量；导入时超出范围的地址会被判「失败」而进不了点位集。因此**分页只有汇川（X/Y 各 1024 点）或未来更大区间的品牌才会触发**。另：单页 ≤64 点、地址跨度 ≤ 驱动区大小（≤1024），恒小于 FC01 单帧 2000 点上限，故始终单帧读取、无需拆包。
+10. **单页地址跨度受 FC01 单帧上限（2000 点）约束**：`PollOnceAsync` 对「当前页」取 `min..max` 一次读回，跨度 = `max-min+1`。加入扩展模块后信捷 X 的有效地址从 20480 延伸到 23599，若**同页**同时含本体点（20480）与 ED 点（23599），跨度可达 **3120 > 2000** → 设备返回非法数据值异常 → 触发断线。当前实际表格（X0–X43 + X10000–X10017，跨度 272）安全，但**混排远距离地址的表格会踩雷**。`ModbusTcpClient` 目前不做 count 上限校验，修法见 §9-12。
 11. **切换设备类型会重建点位集**：`DeviceTypeComboBox_SelectionChanged` 会按新驱动重新解析地址（`RebuildIoPoints`），新驱动下解析失败的点位会被剔除、页号复位到第 1 页。连接中设备类型被锁定，故不会打断轮询。
+12. **（待定）大跨度分页读的加固**：把本页点位按「地址连续段」分组，每段一次 FC01（常态仍是 1 帧，仅跨度超限时才拆多帧）；或对超限跨度按 2000 切窗多次读。**尚未实现** —— 需先确认现场是否存在跨本体/ED 混排的表格。
 
 ## 10. 验证方式（已实践）
 
@@ -223,6 +224,9 @@ while (!token.IsCancellationRequested)
 - **UI 自动化**：PowerShell UIA（`x:Name` 即 AutomationId：`IpTextBox`/`ConnectButton`/`StatusInfoNav`…；Collapsed 面板不在 UIA 树，需先切页）
 - **截图对比**：两次抓窗口 PNG，对比灯阵偏移 → 证明实时刷新
 - **UIA 局限（实测）**：WPF ComboBox 弹出层不在 UIA 树内（ExpandCollapse / Alt+↓ 均取不到条目）→ 涉及下拉选项的操作暂需人工验证或改代码级验证；标题栏最小化/关闭按钮无 `x:Name`（无 AutomationId），关闭窗口用 `WindowPattern.Close()`；模态对话框按钮必须**真实鼠标点击**（UIA Invoke 会阻塞到 ShowDialog 返回）；**WPF 面板（StackPanel/Grid）没有 AutomationPeer**，自身节点查不到（如 `IoPagerPanel`），判定其显隐要改用其子控件（`IoPageText`/`IoPrevPageButton`）是否存在
+- **文件对话框可自动化了（2026-09-30 实测，推翻此前「涉及文件对话框只能人工」的结论）**：`OpenFileDialog` 是 `#32770` 顶层窗口，但 **UIA 的 `RootElement.FindAll(Children, pid)` 找不到它**（要用 Win32 `EnumWindows` + `GetClassName` 定位）。它又是 DirectUI 实现：文件名框在 UIA 里只有无 peer 的 `Pane`、`ComboBox` 不支持 `ValuePattern`，且 `SetForegroundWindow` 会被前台锁拒绝 → `SendKeys` 收不到。**可靠做法是纯 Win32 消息，不需要任何键盘焦点**：`EnumChildWindows` 找 控件id=1148 的 `Edit`（文件名）与 控件id=1 的 `Button`（打开），然后 `SendMessage(edit, WM_SETTEXT, path)` + `SendMessage(button, BM_CLICK)`。
+  - 注意：跨进程**读**控件文本要用 `WM_GETTEXT`，`GetWindowText` 对其它进程的控件恒返回空（本次踩过，导致误判「赋值失败」）。
+- **触发导入按钮要在后台 Job 里 UIA Invoke**：`Invoke()` 会阻塞到模态对话框关闭，故放进 `Start-Job`（主脚本随即去驱动对话框），否则主脚本会一直卡在 Invoke 上。
 - **截图局限（实测）**：自动化过程中界面可能被人工操作，且截图相对动作有滞后一拍现象 → 截图仅作辅助参考，**以功能证据为准**（server.log 报文、按钮态、json 内容、UIA isSelected 查询）
 - **P2 验证（2026-09-30，全部通过）**：
   - 解析器：合成 xlsx 4 对配对 ✓；真实 `IO模板.xlsx` 60 对（A/B+D/E 双面板）✓（控制台 harness）
@@ -240,6 +244,9 @@ while (!token.IsCancellationRequested)
   - 分页：信捷单段上限恰好 64 点（=一页）无法自然超页，故临时把 `IoRowsPerColumn` 改为 4（每页 16 点）来触发 → 36 点分 3 页，`IoPageText` 依次 `1/3`→`2/3`→`3/3`，列内容 X0-X17 / X20-X37 / X40-X43 正确，首/末页箭头分别置灰 ✓；**验证后已还原为 16 并复验**（代码中无 `TEMP-PAGINATION-TEST` 残留）
   - 回归：Y→X 切回后 X 各列 16/16/4/0 正常；冷启动默认 X 段正常 ✓
   - **过程中发现并修复 1 个真 bug**：`ApplyIoPage` 起初只把页面切片绑到 X 的 4 个列控件，导致 Y 段网格永远拿不到 `ItemsSource`（Y 段渲染全空）——已改为按 `_yViewActive` 绑定「当前分段」对应的网格。
+- **信捷扩展模块地址 + 导入闭环验证（2026-09-30，全部通过）**：
+  - 驱动层独立控制台 harness（`%TEMP%\dsh_drvtest`，只编译 `CommDriver.cs` + `DriverRegistry.cs`，不依赖 UI）**29 项断言全过**：本体 `X0/X43/X77`、扩展 `X10000/X10017/X10077/X10100/X11777`、BD `X20000/X20100/X20177`、ED `X30000/X30077`，以及 Y 侧对应值与 `M100`；`X8`（八进制非法）/`X100`（本体与扩展之间的空档）/`X11800`（扩展区外）/`Z9`（未定义元件）均正确拒绝
+  - 端到端导入真实 `IO模板.xlsx`（经上述文件对话框自动化驱动）→ **`io-comments.json` 落盘 92 条**（本体 60 + 扩展模块 `X10000–X10017` / `Y10000–Y10017` 共 32），失败 0 —— 证明「多段地址区 + `TryResolve` 修复 + 导入链路」全通
 
 ## 11. 构建与运行
 

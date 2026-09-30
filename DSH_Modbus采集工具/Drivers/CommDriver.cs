@@ -150,12 +150,19 @@ namespace DSH_Modbus采集工具.Drivers
             string element = token[..split];
             string number = token[split..];
 
+            // 同一元件符号可有多段地址区（如信捷 X 的「本体 / 扩展模块 / BD / ED」），
+            // 故需遍历全部匹配区：任一段命中即成功，全部越界才报「超出范围」。
+            bool elementDefined = false;
+            string? rangeError = null;
+
             foreach (AddressArea a in Areas)
             {
                 if (a.Element != element || a.Area != area)
                 {
                     continue;
                 }
+
+                elementDefined = true;
 
                 int index;
                 try
@@ -172,16 +179,17 @@ namespace DSH_Modbus采集工具.Drivers
                     return false;
                 }
 
-                if (!a.TryGetAddress(index, out address))
+                if (a.TryGetAddress(index, out address))
                 {
-                    error = $"{token} 超出驱动定义范围";
-                    return false;
+                    return true;
                 }
 
-                return true;
+                rangeError = $"{token} 超出驱动定义范围";
             }
 
-            error = $"驱动未定义元件 {element}";
+            error = elementDefined
+                ? rangeError ?? $"{token} 超出驱动定义范围"
+                : $"驱动未定义元件 {element}";
             return false;
         }
     }

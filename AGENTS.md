@@ -94,7 +94,10 @@ var d = DriverRegistry.GetByKey("xinje_xd")!;
 d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制 X17 → 20495
 ```
 
-已注册：`xinje_xd`（X/Y/M/S/SM/HM + D/SD/HD/HSD/SFD）、`inovance_easy`（M/B/S/X/Y + D/R）。
+已注册：`xinje_xd`（X/Y/M/S/SM/HM + D/SD/HD/HSD/SFD；其中 **X/Y 各 4 段**：本体 / 扩展模块 #1–#16 / BD / ED）、`inovance_easy`（M/B/S/X/Y + D/R）。
+
+> **同一元件符号可有多段地址区**（信捷 X/Y 即如此）。`CommDriver.TryResolve(string,…)` 会遍历**全部**匹配 `Element+Area` 的区：任一段命中即成功，全部越界才报「超出驱动定义范围」。
+> `AddressArea.StartIndex` 用编号的**十进制**值表达八进制编号（如 X10000₈ → `4096`），`Count` 为段内点数，`StartAddress` 为该段起始 Modbus 十进制地址。
 
 ## 版本控制
 
