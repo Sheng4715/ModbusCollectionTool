@@ -65,6 +65,8 @@
 | `_pollIntervalMs` | volatile | 采集周期；**UI 线程写、后台线程读**，故用 volatile 而非跨线程访问控件 |
 | `_currentDriver` | UI 写 / 后台读 | 当前品牌驱动；选表时在 UI 线程缓存，避免后台碰 ComboBox（WPF DispatcherObject 不可跨线程访问） |
 | `_xPoints` / `_yPoints` | 仅 UI | X/Y 两区各 64 个 `IoPoint`（`Comment` 为 INPC，导入后 UI 自动刷新）；两个 ItemsControl 分别绑定，切换分段只改 Visibility |
+| `_ioPageActive` | UI 写 / 后台读（volatile） | 状态信息页可见 = 采集；离开即停采（零报文，灯保留上次数据） |
+| `_yViewActive` | UI 写 / 后台读（volatile） | 当前分段 true=输出 Y / false=输入 X；只读可见区 |
 | `_comments` | 仅 UI | 点位名→注释字典（OrdinalIgnoreCase）；启动时 `XComments` 打底 + `LoadComments()` 读 json 覆盖，导入后 `SaveComments()` 落盘 |
 
 ## 4. Modbus TCP 协议层设计
@@ -119,17 +121,19 @@
 
 ```
 while (!token.IsCancellationRequested)
-    PollOnce（2×FC01，X/Y 双读，两个页签共用同一刷新）:
-        TryResolve("X0", Coil) → ReadCoilsAsync(xStart, 64, token)
-        TryResolve("Y0", Coil) → ReadCoilsAsync(yStart, 64, token)
-        一次 Dispatcher.InvokeAsync → 同时刷新 _xPoints / _yPoints 的 IsOn
+    PollOnce（采集跟随可见性，2026-09-30 起）:
+        _ioPageActive == false → return   ← 离开状态信息页：零报文，灯保持上次数据
+        只读当前分段（_yViewActive ? Y0 区 : X0 区），单次 ReadCoilsAsync(64, token)
+        Dispatcher.InvokeAsync → 刷新该区 _xPoints/_yPoints 的 IsOn
     等待 max(0, _pollIntervalMs - 本轮耗时)  → 周期从"上轮结束"起算，无累积漂移
 异常: OperationCanceledException+token已取消 → 正常退出
       OperationCanceledException+token未取消 → 读超时 → 断线
       其他异常 → 断线
 ```
 
-> X、Y 同周期读取 ⇒ 切换分段无需等待下一采样（两区数据始终同帧新鲜）。代价：每周期 2 个请求，100ms 档下串行两读仍远小于周期（实测 397 对成对、无排队堆积）。
+> **通讯量**：可见页 + 可见分段单读（相对早期 2×FC01 再减半），离页为 0；回页/切段后下一周期（≤采集周期）恢复，最多一帧延迟。
+> **数据保留**：未显示区与离页期间不写入 `IsOn`，灯自然保持上次值（断线同样不清色）。
+> **代价**：离页期间无报文 ⇒ 断线检测暂停，回到状态页后首个请求失败才报红（≤2s 读超时）——见 §9-9。
 
 **选 Task 循环而非 DispatcherTimer 的原因**：读是 async I/O，Timer 的 tick 无法 await，会产生重入；Task 循环可自然串行 + 精确补时。
 
@@ -147,7 +151,7 @@ while (!token.IsCancellationRequested)
 
 `X：线圈 20480..20543（信捷；汇川 63488 起）` → FC01 64 bit → `_xPoints[0..63]`（八进制 X0..X77）
 `Y：线圈 24576..24639（信捷；汇川 64512 起）` → FC01 64 bit → `_yPoints[0..63]`（八进制 Y0..Y77）
-→ `IsOn` 变更通知 → 灯变色。**索引即地址偏移**，无需逐点解析（依赖各品牌区 `StartIndex=0` 且连续）。
+→ `IsOn` 变更通知 → 灯变色。**索引即地址偏移**，无需逐点解析（依赖各品牌区 `StartIndex=0` 且连续）。每周期只流动**当前可见区**的那一条（见 §5.2）。
 
 ## 6. UI 状态矩阵
 
@@ -183,6 +187,7 @@ while (!token.IsCancellationRequested)
 | 4 | 灯数据用索引直接对应地址偏移 | 两品牌 X 区均从 0 连续，简单且免逐点解析 | 逐点 `TryResolve` 每轮 64 次解析，无收益 |
 | 5 | 异常一律走断线兜底 | 与 §1「故障可见」一致；P1 重连有统一挂点 | 分级重试推迟到 P1 |
 | 6 | 单请求 2s / 连接 3s 超时 | 轮询周期最短 100ms，2s 已是 20 个周期，早断早恢复 | 可配置超时暂无需求 |
+| 7 | 采集跟随可见性（可见页 + 可见分段单读，离页停采） | 通讯量优化：可见区相对双读减半、离页归零；不写入即数据自然保留 | 双读常开（通讯翻倍、无人看也在跑）；离页心跳（保断线检测但离页仍有报文）——需要时可作为 §9-9 的后续补充 |
 
 ## 9. 已知限制与技术债
 
@@ -194,6 +199,7 @@ while (!token.IsCancellationRequested)
 6. **断线文案中英混杂**：底层 Socket 异常消息直传（如 "Unable to write data…"）；如需可包一层中文映射。
 7. ~~无版本控制~~ → **已解决**（2026-09-29）：已 `git init`（分支 `main`）+ `.gitignore`，首个提交 `75ce810`；Git 2.55 已通过 winget 安装并在 PATH 上，身份为仓库级配置 `G.Sheng`。
 8. **xlsx 解析规则有限**（`XlsxIoTableReader`，零依赖的取舍）：仅读**首个工作表**；**不支持合并单元格**（跨列/跨行合并会丢配对）；配对规则固定为「地址形单元格（字母+数字）→ 右侧一列单元格为注释」（匹配 A/B、D/E 双面板模板）；非监控点位（如 M100、表头）静默跳过；无有效点位时**拒绝替换**（琥珀色提示）。复杂模板需先整理为该布局。
+9. **离页期间断线检测暂停**（2026-09-30 采集可见性的取舍）：离开状态信息页零报文 ⇒ PLC 断线/链路失效在离页时不被发现，回到状态页后首个请求失败才报红（≤2s 读超时）；离页久置后 TCP 可能被 NAT/设备静默回收，回页首读也会暴露。若将来需要离页保活，可在离页态加低频心跳（如 2s 读 1 点，见 ADR-7 备选）。
 
 ## 10. 验证方式（已实践）
 
@@ -210,6 +216,8 @@ while (!token.IsCancellationRequested)
   - 双读轮询：server.log 397×`start=20480` + 397×`start=24576` 严格成对、tid 连续、~100ms 节奏 ✓
   - 实况灯阵：X 绿灯八进制 X0/X4/X10…、Y 绿灯 Y1/Y5/Y11…，与 mock `(i+tick)%4==0` 图案吻合 ✓
   - 连接/断开闭环：绑定网卡自连成功（按钮 断开、总览绿字）→ UIA 断开（按钮回 连接）→ mock 记录 `client closed` ✓
+- **采集可见性验证（2026-09-30，11 项断言全过）**：连接后停在设备配置页 5s → **零 FC01**；进状态信息 X 页 → 只见 `start=20480`（25 次/2.5s ≈ 100ms），`start=24576` = 0；切 Y 段 → X 计数冻结、Y 启动；离页 3s → 双计数冻结（灯数据保留的机制保证）；回页 → Y 恢复、X 仍冻结；切回 X → X 恢复、Y 冻结；断开+关闭正常。
+  - 脚本方法论：切换/离页动作后先 **settle 600ms** 再取计数快照（在途请求属切换前），否则会误报 +1 假失败。
 
 ## 11. 构建与运行
 

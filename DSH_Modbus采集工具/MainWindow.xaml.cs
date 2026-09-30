@@ -75,6 +75,12 @@ namespace DSH_Modbus采集工具
         private readonly List<IoPoint> _xPoints = new();
         private readonly List<IoPoint> _yPoints = new();
 
+        /// <summary>状态信息页可见时才发起采集；离开页面停止报文，灯保持上次数据（UI 线程写、后台只读）。</summary>
+        private volatile bool _ioPageActive;
+
+        /// <summary>当前显示的分段：true=输出 Y，false=输入 X；只读可见区（UI 线程写、后台只读）。</summary>
+        private volatile bool _yViewActive;
+
         /// <summary>运行时注释表：默认取 <see cref="XComments"/>，若 exe 旁存在 io-comments.json 则以文件为权威（P2 导入后持久化）。</summary>
         private Dictionary<string, string> _comments = new(StringComparer.OrdinalIgnoreCase);
 
@@ -241,6 +247,9 @@ namespace DSH_Modbus采集工具
 
         private void Nav_Checked(object sender, RoutedEventArgs e)
         {
+            // 采集跟随页面可见性：离开状态信息页即停采（零报文，灯保留上次数据）
+            _ioPageActive = ReferenceEquals(sender, StatusInfoNav);
+
             if (OverviewPanel != null)
             {
                 OverviewPanel.Visibility = ReferenceEquals(sender, OverviewNav)
@@ -637,6 +646,12 @@ namespace DSH_Modbus采集工具
 
         private async Task PollOnceAsync(CancellationToken token)
         {
+            // 离开状态信息页：不发起任何报文（优化通讯），灯保留上次采集数据，回页后下一周期恢复
+            if (!_ioPageActive)
+            {
+                return;
+            }
+
             ModbusTcpClient? modbus = _modbus;
             CommDriver? driver = _currentDriver;
             if (modbus == null || driver == null)
@@ -644,33 +659,23 @@ namespace DSH_Modbus采集工具
                 throw new IOException("连接或驱动未就绪");
             }
 
-            // 按当前驱动地址表解析 X0 / Y0 起始地址（各区 64 点连续；两区地址段不同，分两次读）
-            if (!driver.TryResolve("X0", ModbusArea.Coil, out int xStart, out string error))
+            // 只读当前显示的分段（未显示区不读，切回后下一周期即刷新）
+            bool yView = _yViewActive;
+            string element = yView ? "Y0" : "X0";
+            if (!driver.TryResolve(element, ModbusArea.Coil, out int start, out string error))
             {
                 throw new InvalidOperationException(error);
             }
 
-            if (!driver.TryResolve("Y0", ModbusArea.Coil, out int yStart, out error))
-            {
-                throw new InvalidOperationException(error);
-            }
+            List<IoPoint> points = yView ? _yPoints : _xPoints;
+            bool[] coils = await modbus.ReadCoilsAsync((ushort)start, (ushort)points.Count, token);
 
-            int xCount = _xPoints.Count;
-            int yCount = _yPoints.Count;
-            bool[] xCoils = await modbus.ReadCoilsAsync((ushort)xStart, (ushort)xCount, token);
-            bool[] yCoils = await modbus.ReadCoilsAsync((ushort)yStart, (ushort)yCount, token);
-
-            // 回到 UI 线程刷新绑定（两页数据始终都刷，切页无延迟）
+            // 回到 UI 线程刷新绑定（IoPoint 为 INPC 对象，IsOn 变更驱动灯色）
             await Dispatcher.InvokeAsync(() =>
             {
-                for (int i = 0; i < xCount && i < xCoils.Length; i++)
+                for (int i = 0; i < points.Count && i < coils.Length; i++)
                 {
-                    _xPoints[i].IsOn = xCoils[i];
-                }
-
-                for (int i = 0; i < yCount && i < yCoils.Length; i++)
-                {
-                    _yPoints[i].IsOn = yCoils[i];
+                    points[i].IsOn = coils[i];
                 }
             });
         }
@@ -724,6 +729,7 @@ namespace DSH_Modbus采集工具
             }
 
             bool xView = XViewSegment.IsChecked == true;
+            _yViewActive = !xView; // 采集跟随可见分段：未显示区不读，保留上次数据
             IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
             YIoColumnsGrid.Visibility = xView ? Visibility.Collapsed : Visibility.Visible;
             IoCardTitle.Text = xView ? "IO 监控（输入 X）" : "IO 监控（输出 Y）";

@@ -60,7 +60,7 @@ DSH_Modbus采集工具/
 ### 页面内容
 
 1. **总览**：连接状态条 `OverviewStatusPrefix`（黑字）+ `OverviewStatusState`（右对齐，未连接黄 #C08A00 / 已连接绿 #0B7A0B）。格式：`驱动：连接方式  协议  IP:端口` + 状态。由 `UpdateOverviewStatus()` 刷新（选择/输入/连接状态变化时调用）。
-2. **状态信息**（IO 监控）：标题右侧 = **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切两个网格显隐 + 换标题）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`）+ 导入结果文字（`ImportResultText`，绿=成功条数 / 琥珀=无有效点位不替换 / 红=解析失败）。每区 4 列 × 16 = 64 点（`IoColumnsGrid` X0–X77 / `YIoColumnsGrid` Y0–Y77，均八进制）。列宽 `*` 等分；行高 22、行距 2、列距 4。注释优先级：`io-comments.json`（AppContext.BaseDirectory，导入后写入）> 内置 `XComments`；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。连接后 `PollLoopAsync` 每周期 **2×FC01（X+Y 双读）** 刷新两列表灯（默认 100ms）；未连接时灯全灰。
+2. **状态信息**（IO 监控）：标题右侧 = **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切两个网格显隐 + 换标题）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`）+ 导入结果文字（`ImportResultText`，绿=成功条数 / 琥珀=无有效点位不替换 / 红=解析失败）。每区 4 列 × 16 = 64 点（`IoColumnsGrid` X0–X77 / `YIoColumnsGrid` Y0–Y77，均八进制）。列宽 `*` 等分；行高 22、行距 2、列距 4。注释优先级：`io-comments.json`（AppContext.BaseDirectory，导入后写入）> 内置 `XComments`；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。**采集跟随可见性**：连接后 `PollLoopAsync` 每周期只读**当前显示的分段**（输入 X 或输出 Y，1×FC01，默认 100ms，`_yViewActive`）；**离开本页停止全部报文**（`_ioPageActive`，优化通讯），未显示区与离页期间灯保留上次数据，回页/切段后下一周期恢复采集；断线不清灯色（`IsOn` 保持上次值）。
 3. **设备配置**：连接方式（以太网/串口）、协议类型（ModbusTCP）、设备类型（**来自 `DriverRegistry.All`**，选中即缓存 `_currentDriver`）、采集周期（100ms–1s 四档，默认 100ms）；以太网时显示目标网卡（`NicInfo`：扫描本机网卡 `网卡名(ip)` + 刷新按钮）、IP、端口号、连接按钮 + 状态灯。连接中/已连接时 `SetInputsEnabled(false)` 全部置灰，按钮变「断开」。连接 = **3 秒超时 ConnectAsync + 绑定所选网卡本地端点**，成功即启动后台轮询（报文已实现，`Drivers/ModbusTcpClient.cs`），读超时/对端关闭 → 自动断开红字提示。串口模式目前仅隐藏以太网面板，功能未实现（P1）。
 
 ## 通讯驱动标准（Drivers/）
@@ -126,6 +126,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
 | 总览状态格式 | `UpdateOverviewStatus()` |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
-| 轮询与断线逻辑 | `MainWindow.xaml.cs` → `PollLoopAsync` / `PollOnceAsync`（X+Y 双读）/ `Disconnect(status,color)` |
+| 轮询与断线逻辑 | `MainWindow.xaml.cs` → `PollLoopAsync` / `PollOnceAsync`（可见分段单读，离页停采）/ `Disconnect(status,color)` |
+| 采集跟随页面/分段 | `_ioPageActive`（`Nav_Checked` 置位）+ `_yViewActive`（`IoView_Checked` 置位）→ `PollOnceAsync` 开头判断 |
 | 网卡扫描/绑定 | `ScanNetworkAdapters` + `ConnectButton_Click`（`NicInfo`） |
 | 采集周期档位 | `PollIntervalComboBox`（XAML）+ `_pollIntervalMs` |
