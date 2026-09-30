@@ -226,7 +226,11 @@ while (!token.IsCancellationRequested)
 - **UIA 局限（实测）**：WPF ComboBox 弹出层不在 UIA 树内（ExpandCollapse / Alt+↓ 均取不到条目）→ 涉及下拉选项的操作暂需人工验证或改代码级验证；标题栏最小化/关闭按钮无 `x:Name`（无 AutomationId），关闭窗口用 `WindowPattern.Close()`；模态对话框按钮必须**真实鼠标点击**（UIA Invoke 会阻塞到 ShowDialog 返回）；**WPF 面板（StackPanel/Grid）没有 AutomationPeer**，自身节点查不到（如 `IoPagerPanel`），判定其显隐要改用其子控件（`IoPageText`/`IoPrevPageButton`）是否存在
 - **文件对话框可自动化了（2026-09-30 实测，推翻此前「涉及文件对话框只能人工」的结论）**：`OpenFileDialog` 是 `#32770` 顶层窗口，但 **UIA 的 `RootElement.FindAll(Children, pid)` 找不到它**（要用 Win32 `EnumWindows` + `GetClassName` 定位）。它又是 DirectUI 实现：文件名框在 UIA 里只有无 peer 的 `Pane`、`ComboBox` 不支持 `ValuePattern`，且 `SetForegroundWindow` 会被前台锁拒绝 → `SendKeys` 收不到。**可靠做法是纯 Win32 消息，不需要任何键盘焦点**：`EnumChildWindows` 找 控件id=1148 的 `Edit`（文件名）与 控件id=1 的 `Button`（打开），然后 `SendMessage(edit, WM_SETTEXT, path)` + `SendMessage(button, BM_CLICK)`。
   - 注意：跨进程**读**控件文本要用 `WM_GETTEXT`，`GetWindowText` 对其它进程的控件恒返回空（本次踩过，导致误判「赋值失败」）。
-- **触发导入按钮要在后台 Job 里 UIA Invoke**：`Invoke()` 会阻塞到模态对话框关闭，故放进 `Start-Job`（主脚本随即去驱动对话框），否则主脚本会一直卡在 Invoke 上。
+- **⚠️ 触发导入按钮：必须用真实鼠标点击，且必须在主脚本里（2026-09-30 二次实测，推翻下面这条旧结论）**：
+  - ~~「放进 `Start-Job` 里 UIA `Invoke()`」~~ **行不通**：PowerShell 后台 Job 没有消息泵，`InvokePattern.Invoke()` **静默失败**（不抛异常），对话框永不出现 —— 此前两次探测「找不到对话框」的真因即此，而非对话框实现变化。
+  - 正确做法：主脚本内 `GetClickablePoint()` → `ShowWindow(hwnd, 9)` → `SetForegroundWindow` → 等 400ms → `SetCursorPos` → 等 200ms → `mouse_event(LEFTDOWN/LEFTUP)`。鼠标点击本身不阻塞（`ShowDialog` 在应用自己的线程上模态），主脚本可继续驱动对话框。
+- **文件对话框填充：`SendKeys` 输路径 + `{ENTER}` 足够（比 Win32 控件 id 更简单）**：对话框出现后（`#32770`，标题=代码里的 `dialog.Title`，如「导入 IO 点位表」）用 `SendKeys.SendWait(path)` 再 `SendWait("{ENTER}")` 即可完成选择。其上文的 `WM_SETTEXT`+`BM_CLICK`（控件 id 1148/1）同样可用，但需先解决前台锁，`SendKeys` 路径实测更省事。
+  - 仍成立：跨进程**读**控件文本要用 `WM_GETTEXT`，`GetWindowText` 对其它进程的控件恒返回空。
 - **截图局限（实测）**：自动化过程中界面可能被人工操作，且截图相对动作有滞后一拍现象 → 截图仅作辅助参考，**以功能证据为准**（server.log 报文、按钮态、json 内容、UIA isSelected 查询）
 - **P2 验证（2026-09-30，全部通过）**：
   - 解析器：合成 xlsx 4 对配对 ✓；真实 `IO模板.xlsx` 60 对（A/B+D/E 双面板）✓（控制台 harness）
@@ -244,6 +248,13 @@ while (!token.IsCancellationRequested)
   - 分页：信捷单段上限恰好 64 点（=一页）无法自然超页，故临时把 `IoRowsPerColumn` 改为 4（每页 16 点）来触发 → 36 点分 3 页，`IoPageText` 依次 `1/3`→`2/3`→`3/3`，列内容 X0-X17 / X20-X37 / X40-X43 正确，首/末页箭头分别置灰 ✓；**验证后已还原为 16 并复验**（代码中无 `TEMP-PAGINATION-TEST` 残留）
   - 回归：Y→X 切回后 X 各列 16/16/4/0 正常；冷启动默认 X 段正常 ✓
   - **过程中发现并修复 1 个真 bug**：`ApplyIoPage` 起初只把页面切片绑到 X 的 4 个列控件，导致 Y 段网格永远拿不到 `ItemsSource`（Y 段渲染全空）——已改为按 `_yViewActive` 绑定「当前分段」对应的网格。
+- **完整 UI 导入端到端验证（2026-09-30，真实鼠标点击 + SendKeys 路径，全部通过）**：
+  - 驱动：启动应用（标题「采集工具」）→ 状态信息页 → **真实鼠标点击**「导入 IO 表」→ `#32770` 对话框出现（标题「导入 IO 点位表」）→ `SendKeys` 输 `IO模板.xlsx` 全路径 + `{ENTER}` → 导入完成
+  - 落盘：`io-comments.json` 由 60 条 → **92 条**（X 52 / Y 40，扩展模块 32 条）
+  - 界面（重启后加载）：X 段 4 列 **16/16/16/4 = 52 点**、Y 段 **16/16/8/0 = 40 点**，与落盘数据、与离线复算**三方一致**；点位按地址升序（X40,X41,X42,X43 → X10000..X10017）
+  - 分页控件不可见（各 1 页）、`IoEmptyHint` 不在树中（有数据）—— 均符合预期
+  - 离线复算同一模板（复用真实 `XlsxIoTableReader`+`CommDriver`+`DriverRegistry`）：接受 92/失败 0；**每页 FC01 跨度 272 ≪ 2000 上限**；边界输入 17 项（X8/X100/X11800/X40000/M100/D10/Z9/SM5/地址/X/1X0 拒绝）全符合预期
+  - 已知数据现象（非代码问题）：模板扩展段 `Y10010–Y10017` 的注释为占位文本，与 X 侧编号不对应 —— 属表格内容，程序忠实导入
 - **信捷扩展模块地址 + 导入闭环验证（2026-09-30，全部通过）**：
   - 驱动层独立控制台 harness（`%TEMP%\dsh_drvtest`，只编译 `CommDriver.cs` + `DriverRegistry.cs`，不依赖 UI）**29 项断言全过**：本体 `X0/X43/X77`、扩展 `X10000/X10017/X10077/X10100/X11777`、BD `X20000/X20100/X20177`、ED `X30000/X30077`，以及 Y 侧对应值与 `M100`；`X8`（八进制非法）/`X100`（本体与扩展之间的空档）/`X11800`（扩展区外）/`Z9`（未定义元件）均正确拒绝
   - 端到端导入真实 `IO模板.xlsx`（经上述文件对话框自动化驱动）→ **`io-comments.json` 落盘 92 条**（本体 60 + 扩展模块 `X10000–X10017` / `Y10000–Y10017` 共 32），失败 0 —— 证明「多段地址区 + `TryResolve` 修复 + 导入链路」全通

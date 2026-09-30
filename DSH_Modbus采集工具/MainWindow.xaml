@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Microsoft Store"
+        Title="采集工具"
         Height="640" Width="1024"
         MinHeight="640" MinWidth="1024"
         Background="#F3F3F3"
