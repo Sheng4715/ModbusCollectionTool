@@ -173,7 +173,7 @@ while (!token.IsCancellationRequested)
 | 断线重连（P1） | 断线出口已收敛到 `Disconnect(status,color)`，加重连即在此处挂退避重试 | ✅ 出口统一 |
 | 采集周期（P0-3） | `_pollIntervalMs` + 4 档下拉（100ms–1s，默认 100ms） | ✅ 完成 |
 | 读寄存器（D/R 区） | `PollOnce` 增加 `ReadHoldingRegistersAsync` 分支；数据模型加寄存器点位 | API 已就绪（0x03/0x04） |
-| xlsx 导入 IO 表（P2-6） | `ImportIoTableButton_Click` → `XlsxIoTableReader.Read` → 全量替换 `_comments` → `SaveComments()` 持久化 | ✅ 完成（零依赖手写解析，见 §9-8 解析限制） |
+| xlsx 导入 IO 表（P2-6） | `ImportIoTableButton_Click` → `XlsxIoTableReader.Read` → 逐行按 `_currentDriver` 校验（元件/编号落在驱动区范围内、且为 X/Y 监控点位）→ 全量替换 `_comments` → `SaveComments()` 持久化；结果用 `MessageBox` 汇报「成功导入 N 项，失败 M 项」+ 失败明细 | ✅ 完成（零依赖手写解析，见 §9-8 解析限制） |
 | 多页面 IO（P2-7） | X/Y 分段切换已实现：`_xPoints`/`_yPoints` 双列表 + 双 ItemsControl 切 Visibility；再加 M/D 页 = 复制一个列表+网格+分段按钮 | ✅ X/Y 完成；M/D 页暂缓（有需求按同模式扩展） |
 | 数据存表格 / MES（P3） | 轮询成功回调处挂「数据落盘/上报」旁路，不干扰主循环 | 待设计 |
 
@@ -198,7 +198,7 @@ while (!token.IsCancellationRequested)
 5. **仅采集线圈（X/Y）**：D/R 寄存器页未做（FC03/04 API 已就绪）。
 6. **断线文案中英混杂**：底层 Socket 异常消息直传（如 "Unable to write data…"）；如需可包一层中文映射。
 7. ~~无版本控制~~ → **已解决**（2026-09-29）：已 `git init`（分支 `main`）+ `.gitignore`，首个提交 `75ce810`；Git 2.55 已通过 winget 安装并在 PATH 上，身份为仓库级配置 `G.Sheng`。
-8. **xlsx 解析规则有限**（`XlsxIoTableReader`，零依赖的取舍）：仅读**首个工作表**；**不支持合并单元格**（跨列/跨行合并会丢配对）；配对规则固定为「地址形单元格（字母+数字）→ 右侧一列单元格为注释」（匹配 A/B、D/E 双面板模板）；非监控点位（如 M100、表头）静默跳过；无有效点位时**拒绝替换**（琥珀色提示）。复杂模板需先整理为该布局。
+8. **xlsx 解析规则有限**（`XlsxIoTableReader`，零依赖的取舍）：仅读**首个工作表**；**不支持合并单元格**（跨列/跨行合并会丢配对）；配对规则固定为「地址形单元格（字母+数字）→ 右侧一列单元格为注释」（匹配 A/B、D/E 双面板模板）；表头等非地址行在解析期即被丢弃；非监控点位（如 M100）与超出驱动地址范围/进制非法的点位在导入期计入「失败」并附中文原因；无有效点位时**拒绝替换**（警告对话框）。导入结果一律用 `MessageBox` 汇报（`导入结果的内联文字提示已移除`），失败明细最多列 12 条、其余折叠汇总。复杂模板需先整理为该布局。
 9. **离页期间断线检测暂停**（2026-09-30 采集可见性的取舍）：离开状态信息页零报文 ⇒ PLC 断线/链路失效在离页时不被发现，回到状态页后首个请求失败才报红（≤2s 读超时）；离页久置后 TCP 可能被 NAT/设备静默回收，回页首读也会暴露。若将来需要离页保活，可在离页态加低频心跳（如 2s 读 1 点，见 ADR-7 备选）。
 
 ## 10. 验证方式（已实践）

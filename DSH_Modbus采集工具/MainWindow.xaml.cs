@@ -736,11 +736,6 @@ namespace DSH_Modbus采集工具
 
         private void ImportIoTableButton_Click(object sender, RoutedEventArgs e)
         {
-            if (ImportResultText == null)
-            {
-                return;
-            }
-
             var dialog = new Microsoft.Win32.OpenFileDialog
             {
                 Title = "导入 IO 点位表",
@@ -752,58 +747,141 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
+            List<(string Address, string Comment)> rows;
             try
             {
-                var rows = XlsxIoTableReader.Read(dialog.FileName);
-
-                // 全量替换：以表为权威重建注释字典；仅接受形如 X17/Y3 的点位地址，
-                // 表头/空行等非地址行直接忽略，M/D 等非监控点位计入「跳过」
-                var next = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                int skipped = 0;
-
-                foreach ((string address, string comment) in rows)
-                {
-                    string name = address.Trim();
-                    if (!IsPointName(name))
-                    {
-                        continue;
-                    }
-
-                    if (IsMonitoredPoint(name))
-                    {
-                        next[name] = comment.Trim();
-                    }
-                    else
-                    {
-                        skipped++;
-                    }
-                }
-
-                if (next.Count == 0)
-                {
-                    ImportResultText.Text = "未识别到有效点位地址，注释未变更";
-                    ImportResultText.Foreground = MakeBrush("#C08A00");
-                }
-                else
-                {
-                    _comments = next;
-                    ApplyComments();
-                    SaveComments();
-
-                    ImportResultText.Text = skipped > 0
-                        ? $"已导入 {next.Count} 条注释，跳过 {skipped} 行非监控点位"
-                        : $"已导入 {next.Count} 条注释";
-                    ImportResultText.Foreground = MakeBrush("#0B7A0B");
-                }
-
-                ImportResultText.Visibility = Visibility.Visible;
+                rows = XlsxIoTableReader.Read(dialog.FileName);
             }
             catch (Exception ex)
             {
-                ImportResultText.Text = $"导入失败：{ex.Message}";
-                ImportResultText.Foreground = MakeBrush("#C42B1C");
-                ImportResultText.Visibility = Visibility.Visible;
+                MessageBox.Show(this, $"导入失败：{ex.Message}", "导入 IO 表",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
             }
+
+            if (rows.Count == 0)
+            {
+                MessageBox.Show(this,
+                    "未在表中识别到点位地址（应形如 X0 / Y37），当前注释未变更。",
+                    "导入 IO 表", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // 全量替换：以表为权威重建注释字典。
+            // 每行先按当前通讯驱动校验地址是否落在驱动定义范围内（超范围即失败），
+            // 再确认是 IO 监控页上的点位；任一环节不通过都计入「失败」，不写入注释表。
+            var next = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var failures = new List<string>();
+
+            foreach ((string address, string comment) in rows)
+            {
+                string name = address.Trim();
+                if (!TryValidateIoPoint(name, out string reason))
+                {
+                    failures.Add($"{name} —— {reason}");
+                    continue;
+                }
+
+                next[name] = comment.Trim();
+            }
+
+            int ok = next.Count;
+
+            if (ok == 0)
+            {
+                MessageBox.Show(this,
+                    $"成功导入 0 项，失败 {failures.Count} 项。\n\n{FormatFailures(failures)}\n\n当前注释未变更。",
+                    "导入 IO 表", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            _comments = next;
+            ApplyComments();
+            SaveComments();
+
+            string message = $"成功导入 {ok} 项，失败 {failures.Count} 项。";
+            if (failures.Count > 0)
+            {
+                message += $"\n\n失败明细：\n{FormatFailures(failures)}";
+            }
+
+            MessageBox.Show(this, message, "导入 IO 表", MessageBoxButton.OK,
+                failures.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        }
+
+        /// <summary>
+        /// 校验点位能否生效：① 形如 X0/Y37；② 元件在当前通讯驱动中已定义、且编号未超出该区范围；
+        /// ③ 属于 IO 监控页上的点位（X0–X77 / Y0–Y77）。失败时输出中文原因。
+        /// </summary>
+        private bool TryValidateIoPoint(string name, out string reason)
+        {
+            reason = string.Empty;
+
+            if (!IsPointName(name))
+            {
+                reason = "格式无效，应为「元件+编号」如 X0";
+                return false;
+            }
+
+            CommDriver? driver = _currentDriver;
+            if (driver == null)
+            {
+                reason = "尚未选择设备类型（通讯驱动）";
+                return false;
+            }
+
+            // IO 监控页采集的是线圈（FC01），故按 Coil 区校验地址范围
+            if (!driver.TryResolve(name, ModbusArea.Coil, out _, out string error))
+            {
+                reason = DescribeResolveFailure(driver, name, error);
+                return false;
+            }
+
+            if (!IsMonitoredPoint(name))
+            {
+                reason = "非 IO 监控点位（本页仅显示 X0–X77 / Y0–Y77）";
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>把驱动层的解析失败翻译得更具体：未定义元件 / 非线圈元件 / 编号越界或进制非法。</summary>
+        private static string DescribeResolveFailure(CommDriver driver, string name, string error)
+        {
+            int split = 0;
+            while (split < name.Length && char.IsLetter(name[split]))
+            {
+                split++;
+            }
+
+            string element = name[..split];
+            var areas = driver.Areas.Where(a => a.Element == element).ToList();
+
+            if (areas.Count == 0)
+            {
+                return $"驱动「{driver.DisplayName}」未定义元件 {element}";
+            }
+
+            if (areas.All(a => a.Area != ModbusArea.Coil))
+            {
+                return $"元件 {element} 不是线圈，IO 监控仅支持线圈点位";
+            }
+
+            return error;
+        }
+
+        /// <summary>失败明细文本：最多列前 12 条，其余折叠为一行汇总。</summary>
+        private static string FormatFailures(List<string> failures)
+        {
+            const int maxShown = 12;
+            var lines = failures.Take(maxShown).ToList();
+            if (failures.Count > maxShown)
+            {
+                lines.Add($"…… 其余 {failures.Count - maxShown} 项从略");
+            }
+
+            return string.Join("\n", lines);
         }
 
         /// <summary>形如 X0 / Y37：字母开头、其后全为数字（表头「地址」、说明文字在此被排除）。</summary>
@@ -829,9 +907,6 @@ namespace DSH_Modbus采集工具
         private bool IsMonitoredPoint(string name) =>
             _xPoints.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
             || _yPoints.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
-
-        private static SolidColorBrush MakeBrush(string colorHex) =>
-            new((Color)ColorConverter.ConvertFromString(colorHex)!);
 
         private void RadioButton_Checked(object sender, RoutedEventArgs e)
         {

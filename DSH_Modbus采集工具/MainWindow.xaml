@@ -378,13 +378,6 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <!-- 导入结果提示（导入后显示） -->
-                                <TextBlock x:Name="ImportResultText"
-                                           Visibility="Collapsed"
-                                           FontSize="11"
-                                           Foreground="#5D5D5D"
-                                           Margin="0,0,0,6"/>
-
                                 <!-- 输入监控（X0–X77） -->
                                 <Grid x:Name="IoColumnsGrid">
                                     <Grid.ColumnDefinitions>
