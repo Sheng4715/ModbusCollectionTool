@@ -25,7 +25,8 @@ dotnet run --project DSH_Modbus采集工具
 DSH_Modbus采集工具/
 ├── App.xaml / App.xaml.cs          # 应用入口
 ├── MainWindow.xaml                 # 全部 UI（单窗口，无 UserControl 拆分）
-├── MainWindow.xaml.cs              # 交互逻辑（约 630 行：导航/连接状态机/轮询/网卡绑定）
+├── MainWindow.xaml.cs              # 交互逻辑（836 行：导航/连接状态机/轮询/网卡绑定/X-Y双列表/xlsx导入）
+├── XlsxIoTableReader.cs            # xlsx 点位表解析（零依赖 zip+XML，地址→右邻配对）
 └── Drivers/                        # 通讯驱动
     ├── CommDriver.cs               # 模型：ModbusArea / NumberBase / AddressArea / CommDriver
     ├── DriverRegistry.cs           # 驱动注册表（品牌地址数据）
@@ -51,14 +52,15 @@ DSH_Modbus采集工具/
 |-----|------|
 | `CaptionButton` / `CloseCaptionButton` | 标题栏按钮（关闭悬停红底） |
 | `NavRadioButton` | 导航项（灰底背板，选中加粗） |
-| `IoItemTemplate` | IO 点位单元格（灯 10×10、灯与名间距 4、注释 MinWidth 144） |
+| `IoSegmentRadioButton` | IO 页 X/Y 分段切换项（灰底背板、悬停加深、选中白底加粗） |
+| `IoItemTemplate` | IO 点位单元格（灯 10×10、灯与名间距 4、注释 MinWidth 144；Comment 为 INPC，导入后自动刷新） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
 | `ScrollBar` | 细滚动条（10px） |
 
 ### 页面内容
 
 1. **总览**：连接状态条 `OverviewStatusPrefix`（黑字）+ `OverviewStatusState`（右对齐，未连接黄 #C08A00 / 已连接绿 #0B7A0B）。格式：`驱动：连接方式  协议  IP:端口` + 状态。由 `UpdateOverviewStatus()` 刷新（选择/输入/连接状态变化时调用）。
-2. **状态信息**：IO 监控 4 列 × 16 = 64 点（X0–X77 八进制）。列宽 `*` 等分自适应窗口；行高 22、行距 2、列距 4（Grid 列 margin）。注释来自 `MainWindow.xaml.cs` 的 `XComments` 字典（X0–X37 有注释，X40+ 留空）。连接后由后台轮询（`PollLoopAsync`）按驱动地址表读 FC01 刷新 `IoPoint.IsOn`（默认 100ms，采集周期可调）；未连接时灯全灰。
+2. **状态信息**（IO 监控）：标题右侧 = **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切两个网格显隐 + 换标题）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`）+ 导入结果文字（`ImportResultText`，绿=成功条数 / 琥珀=无有效点位不替换 / 红=解析失败）。每区 4 列 × 16 = 64 点（`IoColumnsGrid` X0–X77 / `YIoColumnsGrid` Y0–Y77，均八进制）。列宽 `*` 等分；行高 22、行距 2、列距 4。注释优先级：`io-comments.json`（AppContext.BaseDirectory，导入后写入）> 内置 `XComments`；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。连接后 `PollLoopAsync` 每周期 **2×FC01（X+Y 双读）** 刷新两列表灯（默认 100ms）；未连接时灯全灰。
 3. **设备配置**：连接方式（以太网/串口）、协议类型（ModbusTCP）、设备类型（**来自 `DriverRegistry.All`**，选中即缓存 `_currentDriver`）、采集周期（100ms–1s 四档，默认 100ms）；以太网时显示目标网卡（`NicInfo`：扫描本机网卡 `网卡名(ip)` + 刷新按钮）、IP、端口号、连接按钮 + 状态灯。连接中/已连接时 `SetInputsEnabled(false)` 全部置灰，按钮变「断开」。连接 = **3 秒超时 ConnectAsync + 绑定所选网卡本地端点**，成功即启动后台轮询（报文已实现，`Drivers/ModbusTcpClient.cs`），读超时/对端关闭 → 自动断开红字提示。串口模式目前仅隐藏以太网面板，功能未实现（P1）。
 
 ## 通讯驱动标准（Drivers/）
@@ -114,13 +116,16 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 需求 | 位置 |
 |------|------|
 | 改导航项/页面显隐 | XAML 导航区 + `Nav_Checked` |
-| 加/改 IO 点位注释 | `MainWindow.xaml.cs` → `XComments` |
+| 加/改 IO 点位注释 | 导入 xlsx（推荐）或改内置默认 `XComments`（会被 json 覆盖） |
 | 改 IO 行高/行距 | `IoItemTemplate` → `Height` / `Margin` 第 4 值 |
-| 改 IO 列宽策略 | `IoColumnsGrid`（4×`*`） |
+| 改 IO 列宽策略 | `IoColumnsGrid` / `YIoColumnsGrid`（均 4×`*`） |
+| 加/改 X-Y 分段切换 | `IoSegmentRadioButton` 样式 + 标题右侧 `XViewSegment`/`YViewSegment` + `IoView_Checked` |
+| 导入 IO 表 / 解析规则 | `ImportIoTableButton_Click` + `XlsxIoTableReader.cs`（地址→右邻配对，仅首表，不支持合并单元格） |
+| 注释持久化 | `LoadComments` / `SaveComments` → `io-comments.json`（文件优先于 `XComments`） |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs` |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
 | 总览状态格式 | `UpdateOverviewStatus()` |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
-| 轮询与断线逻辑 | `MainWindow.xaml.cs` → `PollLoopAsync` / `Disconnect(status,color)` |
+| 轮询与断线逻辑 | `MainWindow.xaml.cs` → `PollLoopAsync` / `PollOnceAsync`（X+Y 双读）/ `Disconnect(status,color)` |
 | 网卡扫描/绑定 | `ScanNetworkAdapters` + `ConnectButton_Click`（`NicInfo`） |
 | 采集周期档位 | `PollIntervalComboBox`（XAML）+ `_pollIntervalMs` |

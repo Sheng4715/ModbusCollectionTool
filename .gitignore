@@ -13,3 +13,7 @@ obj/
 # 系统文件
 Thumbs.db
 Desktop.ini
+
+# Office 锁文件 / 验证脚本临时目录
+~$*
+.tmp/

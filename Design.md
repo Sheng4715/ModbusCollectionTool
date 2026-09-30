@@ -1,6 +1,6 @@
 # Design.md — 技术设计文档
 
-> 对应当前代码基线：P0（Modbus TCP 采集）已实现并验证；网卡本地端点绑定已接入（2026-09-29）。
+> 对应当前代码基线：P0（Modbus TCP 采集）+ P2（IO 监控 X/Y 分段、xlsx 导入、注释持久化）已实现并验证（2026-09-30）；网卡本地端点绑定成功路径已验证。
 > 需求与优先级见 `Brief.md`；协作约定见 `AGENTS.md`。
 
 ---
@@ -48,8 +48,9 @@
 
 | 文件 | 职责 | 关键点 |
 |------|------|--------|
-| `MainWindow.xaml` | 全部 UI | 三页导航（总览/状态信息/设备配置）；采集周期下拉 4 档（100ms–1s，默认 100ms）；面板显隐由 `Nav_Checked` 控制 |
-| `MainWindow.xaml.cs` | 交互编排 | 连接状态机、轮询循环、`IoPoint` 列表（64 点，列优先八进制命名）、`XComments` 注释表、网卡扫描与绑定（`NicInfo`） |
+| `MainWindow.xaml` | 全部 UI | 三页导航（总览/状态信息/设备配置）；IO 监控标题右侧 = X/Y 分段切换（`XViewSegment`/`YViewSegment`）+ 「导入 IO 表」按钮；采集周期下拉 4 档（100ms–1s，默认 100ms）；面板显隐由 `Nav_Checked` 控制 |
+| `MainWindow.xaml.cs` | 交互编排 | 连接状态机、轮询循环、`_xPoints`/`_yPoints` 双列表（各 64 点，列优先八进制命名）、`_comments` 注释字典（`XComments` 为内置默认，`io-comments.json` 优先）、xlsx 导入处理、网卡扫描与绑定（`NicInfo`） |
+| `XlsxIoTableReader.cs` | xlsx 解析 | 零依赖手写（System.IO.Compression + XmlReader）：首个工作表 → sharedStrings/inlineStr → **地址形单元格 → 右邻为注释** 配对 |
 | `Drivers/CommDriver.cs` | 地址模型 | `AddressArea`：元件区 ↔ Modbus 地址双向映射；`IndexBase` 支持八进制（X/Y） |
 | `Drivers/DriverRegistry.cs` | 品牌数据表 | 已注册 `xinje_xd`、`inovance_easy`；新增品牌 = 追加一个 `CommDriver` 实例 |
 | `Drivers/ModbusTcpClient.cs` | Modbus TCP 主站 | 报文见 §4；`ConnectAsync` 支持可选本地端点绑定（多网卡出口控制） |
@@ -63,6 +64,8 @@
 | `_pollCts` | 仅 UI | 轮询取消源；`StartPolling` 创建、`StopPolling` 取消+释放 |
 | `_pollIntervalMs` | volatile | 采集周期；**UI 线程写、后台线程读**，故用 volatile 而非跨线程访问控件 |
 | `_currentDriver` | UI 写 / 后台读 | 当前品牌驱动；选表时在 UI 线程缓存，避免后台碰 ComboBox（WPF DispatcherObject 不可跨线程访问） |
+| `_xPoints` / `_yPoints` | 仅 UI | X/Y 两区各 64 个 `IoPoint`（`Comment` 为 INPC，导入后 UI 自动刷新）；两个 ItemsControl 分别绑定，切换分段只改 Visibility |
+| `_comments` | 仅 UI | 点位名→注释字典（OrdinalIgnoreCase）；启动时 `XComments` 打底 + `LoadComments()` 读 json 覆盖，导入后 `SaveComments()` 落盘 |
 
 ## 4. Modbus TCP 协议层设计
 
@@ -116,15 +119,17 @@
 
 ```
 while (!token.IsCancellationRequested)
-    PollOnce:
-        _currentDriver.TryResolve("X0", Coil) → 起始地址
-        ReadCoilsAsync(起始, 64, token)
-        Dispatcher.InvokeAsync → 刷新 _ioPoints[i].IsOn   ← 灯绑定自动更新
+    PollOnce（2×FC01，X/Y 双读，两个页签共用同一刷新）:
+        TryResolve("X0", Coil) → ReadCoilsAsync(xStart, 64, token)
+        TryResolve("Y0", Coil) → ReadCoilsAsync(yStart, 64, token)
+        一次 Dispatcher.InvokeAsync → 同时刷新 _xPoints / _yPoints 的 IsOn
     等待 max(0, _pollIntervalMs - 本轮耗时)  → 周期从"上轮结束"起算，无累积漂移
 异常: OperationCanceledException+token已取消 → 正常退出
       OperationCanceledException+token未取消 → 读超时 → 断线
       其他异常 → 断线
 ```
+
+> X、Y 同周期读取 ⇒ 切换分段无需等待下一采样（两区数据始终同帧新鲜）。代价：每周期 2 个请求，100ms 档下串行两读仍远小于周期（实测 397 对成对、无排队堆积）。
 
 **选 Task 循环而非 DispatcherTimer 的原因**：读是 async I/O，Timer 的 tick 无法 await，会产生重入；Task 循环可自然串行 + 精确补时。
 
@@ -138,9 +143,11 @@ while (!token.IsCancellationRequested)
 
 断开统一做：停轮询（Cancel+Dispose CTS）→ Dispose socket → 复位按钮 → 解锁表单 → 刷新总览。
 
-### 5.4 当前数据流（X 点）
+### 5.4 当前数据流（X/Y 点）
 
-`Mock/PLC 线圈 20480..20543` → FC01 64 bit → `_ioPoints[0..63]`（八进制 X0..X77 顺序即地址顺序）→ `IsOn` 变更通知 → 灯变色。**索引即地址偏移**，无需逐点解析（依赖两品牌 X 区均 `StartIndex=0` 且连续）。
+`X：线圈 20480..20543（信捷；汇川 63488 起）` → FC01 64 bit → `_xPoints[0..63]`（八进制 X0..X77）
+`Y：线圈 24576..24639（信捷；汇川 64512 起）` → FC01 64 bit → `_yPoints[0..63]`（八进制 Y0..Y77）
+→ `IsOn` 变更通知 → 灯变色。**索引即地址偏移**，无需逐点解析（依赖各品牌区 `StartIndex=0` 且连续）。
 
 ## 6. UI 状态矩阵
 
@@ -162,8 +169,8 @@ while (!token.IsCancellationRequested)
 | 断线重连（P1） | 断线出口已收敛到 `Disconnect(status,color)`，加重连即在此处挂退避重试 | ✅ 出口统一 |
 | 采集周期（P0-3） | `_pollIntervalMs` + 4 档下拉（100ms–1s，默认 100ms） | ✅ 完成 |
 | 读寄存器（D/R 区） | `PollOnce` 增加 `ReadHoldingRegistersAsync` 分支；数据模型加寄存器点位 | API 已就绪（0x03/0x04） |
-| xlsx 导入 IO 表（P2-6） | 替换 `XComments` 来源；注意**无第三方依赖**约束（xlsx 是 zip+xml，需评估手写 or 放宽为 CSV） | ⚠️ 待决策 |
-| 多页面 IO（P2-7） | `_ioPoints` 目前绑死 X/Coil；抽 `IIoSource` 后可加 Y/M/D 页 | 需重构 |
+| xlsx 导入 IO 表（P2-6） | `ImportIoTableButton_Click` → `XlsxIoTableReader.Read` → 全量替换 `_comments` → `SaveComments()` 持久化 | ✅ 完成（零依赖手写解析，见 §9-8 解析限制） |
+| 多页面 IO（P2-7） | X/Y 分段切换已实现：`_xPoints`/`_yPoints` 双列表 + 双 ItemsControl 切 Visibility；再加 M/D 页 = 复制一个列表+网格+分段按钮 | ✅ X/Y 完成；M/D 页暂缓（有需求按同模式扩展） |
 | 数据存表格 / MES（P3） | 轮询成功回调处挂「数据落盘/上报」旁路，不干扰主循环 | 待设计 |
 
 ## 8. 关键设计决策记录（ADR）
@@ -179,21 +186,30 @@ while (!token.IsCancellationRequested)
 
 ## 9. 已知限制与技术债
 
-1. **单文件 code-behind 膨胀**：`MainWindow.xaml.cs` 已 ~640 行，采集编排、连接状态机、导航混放；P2 多页面前建议拆出 `PollingService`（哪怕仍由 MainWindow 持有）。
-2. **X 点位与注释硬编码**：`XComments` 写死双工位重复注释，待 xlsx 导入（P2-6）。
-3. ~~目标网卡下拉无实际作用~~ → **已解决**（2026-09-29）：下拉项改为 `NicInfo`（显示 `网卡名(ip)`、携带真实 IP），连接时 `Bind(所选IP, 0)` 强制源地址。绑定生效已证实（选错网卡时连接报「网络不可达」，绑定前直连本机 IP 必成功）；⚠️ 成功路径（选对网卡→连通）尚未端到端验证，UIA 无法操作下拉弹层（见 §10），待真机/人工确认。
+1. **单文件 code-behind 膨胀**：`MainWindow.xaml.cs` 已 836 行，采集编排、连接状态机、导航、导入混放；下一次大功能前建议拆出 `PollingService`（哪怕仍由 MainWindow 持有）。
+2. ~~X 点位与注释硬编码~~ → **已解决**（2026-09-30）：`XComments` 降级为内置默认值，xlsx 导入全量替换并持久化到 `io-comments.json`（文件优先于内置值）。
+3. ~~目标网卡下拉无实际作用~~ → **已解决**（2026-09-29 接入，2026-09-30 成功路径验证）：下拉项为 `NicInfo`（`网卡名(ip)`），连接时 `Bind(所选IP, 0)` 强制源地址。错误路径（选错网卡→「网络不可达」）与成功路径（选 Tailscale 网卡自连 100.95.29.47:502 → 已连接 + 正常轮询）均已端到端验证。
 4. **串口模式 UI 可选但功能为空**：选「串口」仅隐藏以太网面板，总览仍拼 IP:端口（P1-5 一并处理）。
-5. **仅采集 X（线圈）**：D/R 寄存器页未做（API 已就绪）。
+5. **仅采集线圈（X/Y）**：D/R 寄存器页未做（FC03/04 API 已就绪）。
 6. **断线文案中英混杂**：底层 Socket 异常消息直传（如 "Unable to write data…"）；如需可包一层中文映射。
 7. ~~无版本控制~~ → **已解决**（2026-09-29）：已 `git init`（分支 `main`）+ `.gitignore`，首个提交 `75ce810`；Git 2.55 已通过 winget 安装并在 PATH 上，身份为仓库级配置 `G.Sheng`。
+8. **xlsx 解析规则有限**（`XlsxIoTableReader`，零依赖的取舍）：仅读**首个工作表**；**不支持合并单元格**（跨列/跨行合并会丢配对）；配对规则固定为「地址形单元格（字母+数字）→ 右侧一列单元格为注释」（匹配 A/B、D/E 双面板模板）；非监控点位（如 M100、表头）静默跳过；无有效点位时**拒绝替换**（琥珀色提示）。复杂模板需先整理为该布局。
 
 ## 10. 验证方式（已实践）
 
 - **Mock 服务器**：`%TEMP%\modbus-mock`（`dotnet run`，监听 502，FC01 返回 `(i+tick)%4==0` 变化位图，日志带毫秒时间戳 → 可验周期/地址/tid）
 - **UI 自动化**：PowerShell UIA（`x:Name` 即 AutomationId：`IpTextBox`/`ConnectButton`/`StatusInfoNav`…；Collapsed 面板不在 UIA 树，需先切页）
 - **截图对比**：两次抓窗口 PNG，对比灯阵偏移 → 证明实时刷新
-- **UIA 局限（实测）**：WPF ComboBox 弹出层不在 UIA 树内（ExpandCollapse / Alt+↓ 均取不到条目）→ 涉及下拉选项的操作暂需人工验证或改代码级验证
-- 已验证项见 `Brief.md` 变更记录（2026-09-29 P0 验证通过）
+- **UIA 局限（实测）**：WPF ComboBox 弹出层不在 UIA 树内（ExpandCollapse / Alt+↓ 均取不到条目）→ 涉及下拉选项的操作暂需人工验证或改代码级验证；标题栏最小化/关闭按钮无 `x:Name`（无 AutomationId），关闭窗口用 `WindowPattern.Close()`；模态对话框按钮必须**真实鼠标点击**（UIA Invoke 会阻塞到 ShowDialog 返回）
+- **截图局限（实测）**：自动化过程中界面可能被人工操作，且截图相对动作有滞后一拍现象 → 截图仅作辅助参考，**以功能证据为准**（server.log 报文、按钮态、json 内容、UIA isSelected 查询）
+- **P2 验证（2026-09-30，全部通过）**：
+  - 解析器：合成 xlsx 4 对配对 ✓；真实 `IO模板.xlsx` 60 对（A/B+D/E 双面板）✓（控制台 harness）
+  - 导入闭环：真实文件对话框导入 → `io-comments.json` 写入 60 条（X0–X43、Y0–Y27）✓
+  - 持久化：重启后显示模板注释（CommentN）而非内置 XComments ✓
+  - 分段切换：UIA SelectionItem 选中、标题换为「IO 监控（输出 Y）」、两页各 64 点渲染 ✓
+  - 双读轮询：server.log 397×`start=20480` + 397×`start=24576` 严格成对、tid 连续、~100ms 节奏 ✓
+  - 实况灯阵：X 绿灯八进制 X0/X4/X10…、Y 绿灯 Y1/Y5/Y11…，与 mock `(i+tick)%4==0` 图案吻合 ✓
+  - 连接/断开闭环：绑定网卡自连成功（按钮 断开、总览绿字）→ UIA 断开（按钮回 连接）→ mock 记录 `client closed` ✓
 
 ## 11. 构建与运行
 

@@ -111,6 +111,36 @@
             </Setter>
         </Style>
 
+        <!-- IO 元件区分段切换（输入X / 输出Y）：灰底胶囊轨道 + 选中白底浮起 -->
+        <Style x:Key="IoSegmentRadioButton" TargetType="RadioButton">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#5D5D5D"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="SegmentBd"
+                                Background="Transparent"
+                                CornerRadius="5"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="SegmentBd" Property="Background" Value="#E2E2E2"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="SegmentBd" Property="Background" Value="#FFFFFF"/>
+                                <Setter Property="Foreground" Value="#1A1A1A"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- IO 点位项模板 -->
         <DataTemplate x:Key="IoItemTemplate">
             <Border Height="22" Padding="3,0" Margin="0,0,0,2"
@@ -319,18 +349,48 @@
                                 CornerRadius="8" Padding="12">
                             <StackPanel>
                                 <Grid Margin="0,0,0,8">
-                                    <TextBlock Text="IO 监控（X 元件）"
+                                    <TextBlock x:Name="IoCardTitle"
+                                               Text="IO 监控（输入 X）"
                                                FontSize="13" FontWeight="SemiBold"
                                                Foreground="#1A1A1A"
                                                VerticalAlignment="Center"/>
                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <Border Width="10" Height="10" CornerRadius="5" Background="#C4C4C4" VerticalAlignment="Center"/>
-                                        <TextBlock Text="OFF" FontSize="11" Foreground="#5D5D5D" Margin="5,0,12,0" VerticalAlignment="Center"/>
-                                        <Border Width="10" Height="10" CornerRadius="5" Background="#0B7A0B" VerticalAlignment="Center"/>
-                                        <TextBlock Text="ON" FontSize="11" Foreground="#5D5D5D" Margin="5,0,0,0" VerticalAlignment="Center"/>
+                                        <!-- 元件区快速切换：输入监控(X) / 输出监控(Y) -->
+                                        <Border Background="#EDEDED" CornerRadius="6" Padding="2">
+                                            <StackPanel Orientation="Horizontal">
+                                                <RadioButton x:Name="XViewSegment"
+                                                             Content="输入监控"
+                                                             GroupName="IoView"
+                                                             IsChecked="True"
+                                                             Style="{StaticResource IoSegmentRadioButton}"
+                                                             Checked="IoView_Checked"/>
+                                                <RadioButton x:Name="YViewSegment"
+                                                             Content="输出监控"
+                                                             GroupName="IoView"
+                                                             Style="{StaticResource IoSegmentRadioButton}"
+                                                             Checked="IoView_Checked"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <!-- 导入 IO 点位表（xlsx，替换注释） -->
+                                        <Button x:Name="ImportIoTableButton"
+                                                Content="导入 IO 表"
+                                                Margin="8,0,0,0"
+                                                Padding="10,5"
+                                                FontSize="12"
+                                                Cursor="Hand"
+                                                VerticalAlignment="Center"
+                                                Click="ImportIoTableButton_Click"/>
                                     </StackPanel>
                                 </Grid>
 
+                                <!-- 导入结果提示（导入后显示） -->
+                                <TextBlock x:Name="ImportResultText"
+                                           Visibility="Collapsed"
+                                           FontSize="11"
+                                           Foreground="#5D5D5D"
+                                           Margin="0,0,0,6"/>
+
+                                <!-- 输入监控（X0–X77） -->
                                 <Grid x:Name="IoColumnsGrid">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -349,6 +409,29 @@
                                                   Style="{StaticResource IoItemsControlStyle}"
                                                   ItemTemplate="{StaticResource IoItemTemplate}"/>
                                     <ItemsControl x:Name="IoColumn3" Grid.Column="3"
+                                                  Style="{StaticResource IoItemsControlStyle}"
+                                                  ItemTemplate="{StaticResource IoItemTemplate}"/>
+                                </Grid>
+
+                                <!-- 输出监控（Y0–Y77，默认隐藏） -->
+                                <Grid x:Name="YIoColumnsGrid" Visibility="Collapsed">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <ItemsControl x:Name="YIoColumn0" Margin="0,0,4,0"
+                                                  Style="{StaticResource IoItemsControlStyle}"
+                                                  ItemTemplate="{StaticResource IoItemTemplate}"/>
+                                    <ItemsControl x:Name="YIoColumn1" Grid.Column="1" Margin="0,0,4,0"
+                                                  Style="{StaticResource IoItemsControlStyle}"
+                                                  ItemTemplate="{StaticResource IoItemTemplate}"/>
+                                    <ItemsControl x:Name="YIoColumn2" Grid.Column="2" Margin="0,0,4,0"
+                                                  Style="{StaticResource IoItemsControlStyle}"
+                                                  ItemTemplate="{StaticResource IoItemTemplate}"/>
+                                    <ItemsControl x:Name="YIoColumn3" Grid.Column="3"
                                                   Style="{StaticResource IoItemsControlStyle}"
                                                   ItemTemplate="{StaticResource IoItemTemplate}"/>
                                 </Grid>

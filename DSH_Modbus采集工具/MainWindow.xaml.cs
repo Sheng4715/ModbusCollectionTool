@@ -14,9 +14,24 @@ namespace DSH_Modbus采集工具
     public class IoPoint : INotifyPropertyChanged
     {
         private bool _isOn;
+        private string _comment = string.Empty;
 
         public string Name { get; set; } = string.Empty;
-        public string Comment { get; set; } = string.Empty;
+
+        public string Comment
+        {
+            get => _comment;
+            set
+            {
+                if (_comment == value)
+                {
+                    return;
+                }
+
+                _comment = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Comment)));
+            }
+        }
 
         public bool IsOn
         {
@@ -57,7 +72,14 @@ namespace DSH_Modbus采集工具
         private CancellationTokenSource? _pollCts;
         private volatile int _pollIntervalMs = 100;
         private CommDriver? _currentDriver;
-        private readonly List<IoPoint> _ioPoints = new();
+        private readonly List<IoPoint> _xPoints = new();
+        private readonly List<IoPoint> _yPoints = new();
+
+        /// <summary>运行时注释表：默认取 <see cref="XComments"/>，若 exe 旁存在 io-comments.json 则以文件为权威（P2 导入后持久化）。</summary>
+        private Dictionary<string, string> _comments = new(StringComparer.OrdinalIgnoreCase);
+
+        private static string CommentsFilePath =>
+            Path.Combine(AppContext.BaseDirectory, "io-comments.json");
 
         private static readonly Dictionary<string, string> XComments = new()
         {
@@ -103,6 +125,10 @@ namespace DSH_Modbus采集工具
             DeviceTypeComboBox.ItemsSource = DriverRegistry.All.Select(d => d.DisplayName).ToList();
             DeviceTypeComboBox.SelectedIndex = 0;
 
+            // 注释表：内置默认为底，若 exe 旁存在 io-comments.json 则整表覆盖
+            _comments = new Dictionary<string, string>(XComments, StringComparer.OrdinalIgnoreCase);
+            LoadComments();
+
             InitIoPoints();
         }
 
@@ -110,38 +136,99 @@ namespace DSH_Modbus采集工具
         {
             for (int col = 0; col < 4; col++)
             {
-                var column = new List<IoPoint>();
+                var xColumn = new List<IoPoint>();
+                var yColumn = new List<IoPoint>();
 
                 for (int row = 0; row < 16; row++)
                 {
                     int tens = col * 2 + row / 8;
                     int ones = row % 8;
-                    string name = tens == 0 ? $"X{ones}" : $"X{tens}{ones}";
+                    string suffix = tens == 0 ? $"{ones}" : $"{tens}{ones}";
+                    string xName = $"X{suffix}";
+                    string yName = $"Y{suffix}";
 
-                    column.Add(new IoPoint
-                    {
-                        Name = name,
-                        Comment = XComments.TryGetValue(name, out string? comment) ? comment : string.Empty,
-                    });
+                    xColumn.Add(new IoPoint { Name = xName, Comment = LookupComment(xName) });
+                    yColumn.Add(new IoPoint { Name = yName, Comment = LookupComment(yName) });
                 }
 
-                _ioPoints.AddRange(column);
+                _xPoints.AddRange(xColumn);
+                _yPoints.AddRange(yColumn);
 
                 switch (col)
                 {
                     case 0:
-                        IoColumn0.ItemsSource = column;
+                        IoColumn0.ItemsSource = xColumn;
+                        YIoColumn0.ItemsSource = yColumn;
                         break;
                     case 1:
-                        IoColumn1.ItemsSource = column;
+                        IoColumn1.ItemsSource = xColumn;
+                        YIoColumn1.ItemsSource = yColumn;
                         break;
                     case 2:
-                        IoColumn2.ItemsSource = column;
+                        IoColumn2.ItemsSource = xColumn;
+                        YIoColumn2.ItemsSource = yColumn;
                         break;
                     case 3:
-                        IoColumn3.ItemsSource = column;
+                        IoColumn3.ItemsSource = xColumn;
+                        YIoColumn3.ItemsSource = yColumn;
                         break;
                 }
+            }
+        }
+
+        private string LookupComment(string name) =>
+            _comments.TryGetValue(name, out string? comment) ? comment : string.Empty;
+
+        /// <summary>读取 exe 旁的 io-comments.json；文件不存在或损坏时保持内置默认，不阻断启动。</summary>
+        private void LoadComments()
+        {
+            try
+            {
+                if (!File.Exists(CommentsFilePath))
+                {
+                    return;
+                }
+
+                var loaded = System.Text.Json.JsonSerializer
+                    .Deserialize<Dictionary<string, string>>(File.ReadAllText(CommentsFilePath));
+                if (loaded != null)
+                {
+                    _comments = new Dictionary<string, string>(loaded, StringComparer.OrdinalIgnoreCase);
+                }
+            }
+            catch
+            {
+                // 损坏/不可读 → 回退内置注释
+            }
+        }
+
+        /// <summary>整表写回 io-comments.json（导入后调用）。失败仅意味着下次启动不记得本次导入，不提示打断。</summary>
+        private void SaveComments()
+        {
+            try
+            {
+                string json = System.Text.Json.JsonSerializer.Serialize(
+                    _comments,
+                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(CommentsFilePath, json);
+            }
+            catch
+            {
+                // 忽略写入失败
+            }
+        }
+
+        /// <summary>按当前注释表刷新全部灯项文本（Comment 已实现变更通知）。</summary>
+        private void ApplyComments()
+        {
+            foreach (IoPoint p in _xPoints)
+            {
+                p.Comment = LookupComment(p.Name);
+            }
+
+            foreach (IoPoint p in _yPoints)
+            {
+                p.Comment = LookupComment(p.Name);
             }
         }
 
@@ -557,21 +644,33 @@ namespace DSH_Modbus采集工具
                 throw new IOException("连接或驱动未就绪");
             }
 
-            // 按当前驱动地址表解析 X0 起始地址（X0–X77 连续 64 点）
-            if (!driver.TryResolve("X0", ModbusArea.Coil, out int start, out string error))
+            // 按当前驱动地址表解析 X0 / Y0 起始地址（各区 64 点连续；两区地址段不同，分两次读）
+            if (!driver.TryResolve("X0", ModbusArea.Coil, out int xStart, out string error))
             {
                 throw new InvalidOperationException(error);
             }
 
-            int count = _ioPoints.Count;
-            bool[] coils = await modbus.ReadCoilsAsync((ushort)start, (ushort)count, token);
+            if (!driver.TryResolve("Y0", ModbusArea.Coil, out int yStart, out error))
+            {
+                throw new InvalidOperationException(error);
+            }
 
-            // 回到 UI 线程刷新绑定
+            int xCount = _xPoints.Count;
+            int yCount = _yPoints.Count;
+            bool[] xCoils = await modbus.ReadCoilsAsync((ushort)xStart, (ushort)xCount, token);
+            bool[] yCoils = await modbus.ReadCoilsAsync((ushort)yStart, (ushort)yCount, token);
+
+            // 回到 UI 线程刷新绑定（两页数据始终都刷，切页无延迟）
             await Dispatcher.InvokeAsync(() =>
             {
-                for (int i = 0; i < count && i < coils.Length; i++)
+                for (int i = 0; i < xCount && i < xCoils.Length; i++)
                 {
-                    _ioPoints[i].IsOn = coils[i];
+                    _xPoints[i].IsOn = xCoils[i];
+                }
+
+                for (int i = 0; i < yCount && i < yCoils.Length; i++)
+                {
+                    _yPoints[i].IsOn = yCoils[i];
                 }
             });
         }
@@ -613,6 +712,121 @@ namespace DSH_Modbus采集工具
                 MaximizeButton.Content = WindowState == WindowState.Maximized ? "\uE923" : "\uE922";
             }
         }
+
+        // ---------- IO 元件区切换 / IO 表导入（P2） ----------
+
+        private void IoView_Checked(object sender, RoutedEventArgs e)
+        {
+            if (IoColumnsGrid == null || YIoColumnsGrid == null || IoCardTitle == null
+                || XViewSegment == null || YViewSegment == null)
+            {
+                return;
+            }
+
+            bool xView = XViewSegment.IsChecked == true;
+            IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
+            YIoColumnsGrid.Visibility = xView ? Visibility.Collapsed : Visibility.Visible;
+            IoCardTitle.Text = xView ? "IO 监控（输入 X）" : "IO 监控（输出 Y）";
+        }
+
+        private void ImportIoTableButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (ImportResultText == null)
+            {
+                return;
+            }
+
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "导入 IO 点位表",
+                Filter = "Excel 工作簿 (*.xlsx)|*.xlsx",
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            try
+            {
+                var rows = XlsxIoTableReader.Read(dialog.FileName);
+
+                // 全量替换：以表为权威重建注释字典；仅接受形如 X17/Y3 的点位地址，
+                // 表头/空行等非地址行直接忽略，M/D 等非监控点位计入「跳过」
+                var next = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                int skipped = 0;
+
+                foreach ((string address, string comment) in rows)
+                {
+                    string name = address.Trim();
+                    if (!IsPointName(name))
+                    {
+                        continue;
+                    }
+
+                    if (IsMonitoredPoint(name))
+                    {
+                        next[name] = comment.Trim();
+                    }
+                    else
+                    {
+                        skipped++;
+                    }
+                }
+
+                if (next.Count == 0)
+                {
+                    ImportResultText.Text = "未识别到有效点位地址，注释未变更";
+                    ImportResultText.Foreground = MakeBrush("#C08A00");
+                }
+                else
+                {
+                    _comments = next;
+                    ApplyComments();
+                    SaveComments();
+
+                    ImportResultText.Text = skipped > 0
+                        ? $"已导入 {next.Count} 条注释，跳过 {skipped} 行非监控点位"
+                        : $"已导入 {next.Count} 条注释";
+                    ImportResultText.Foreground = MakeBrush("#0B7A0B");
+                }
+
+                ImportResultText.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                ImportResultText.Text = $"导入失败：{ex.Message}";
+                ImportResultText.Foreground = MakeBrush("#C42B1C");
+                ImportResultText.Visibility = Visibility.Visible;
+            }
+        }
+
+        /// <summary>形如 X0 / Y37：字母开头、其后全为数字（表头「地址」、说明文字在此被排除）。</summary>
+        private static bool IsPointName(string name)
+        {
+            if (name.Length < 2 || !char.IsLetter(name[0]))
+            {
+                return false;
+            }
+
+            for (int i = 1; i < name.Length; i++)
+            {
+                if (!char.IsDigit(name[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>是否为当前监控页上的点位（X0–X77 / Y0–Y77 之一）。</summary>
+        private bool IsMonitoredPoint(string name) =>
+            _xPoints.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+            || _yPoints.Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
+        private static SolidColorBrush MakeBrush(string colorHex) =>
+            new((Color)ColorConverter.ConvertFromString(colorHex)!);
 
         private void RadioButton_Checked(object sender, RoutedEventArgs e)
         {
