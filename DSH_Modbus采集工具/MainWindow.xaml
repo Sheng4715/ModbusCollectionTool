@@ -1,4 +1,4 @@
-﻿<Window x:Class="DSH_Modbus采集工具.MainWindow"
+<Window x:Class="DSH_Modbus采集工具.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -349,12 +349,7 @@
                                 CornerRadius="8" Padding="12">
                             <StackPanel>
                                 <Grid Margin="0,0,0,8">
-                                    <TextBlock x:Name="IoCardTitle"
-                                               Text="IO 监控（输入 X）"
-                                               FontSize="13" FontWeight="SemiBold"
-                                               Foreground="#1A1A1A"
-                                               VerticalAlignment="Center"/>
-                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
                                         <!-- 元件区快速切换：输入监控(X) / 输出监控(Y) -->
                                         <Border Background="#EDEDED" CornerRadius="6" Padding="2">
                                             <StackPanel Orientation="Horizontal">

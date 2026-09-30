@@ -48,7 +48,7 @@
 
 | 文件 | 职责 | 关键点 |
 |------|------|--------|
-| `MainWindow.xaml` | 全部 UI | 三页导航（总览/状态信息/设备配置）；IO 监控标题右侧 = X/Y 分段切换（`XViewSegment`/`YViewSegment`）+ 「导入 IO 表」按钮；采集周期下拉 4 档（100ms–1s，默认 100ms）；面板显隐由 `Nav_Checked` 控制 |
+| `MainWindow.xaml` | 全部 UI | 三页导航（总览/状态信息/设备配置）；IO 监控卡片左上 = X/Y 分段切换（`XViewSegment`/`YViewSegment`）+ 「导入 IO 表」按钮（原 `IoCardTitle` 标题文案已移除，该行改为左对齐控件区；切换分段不再改标题）；采集周期下拉 4 档（100ms–1s，默认 100ms）；面板显隐由 `Nav_Checked` 控制 |
 | `MainWindow.xaml.cs` | 交互编排 | 连接状态机、轮询循环、`_xPoints`/`_yPoints` 双列表（各 64 点，列优先八进制命名）、`_comments` 注释字典（`XComments` 为内置默认，`io-comments.json` 优先）、xlsx 导入处理、网卡扫描与绑定（`NicInfo`） |
 | `XlsxIoTableReader.cs` | xlsx 解析 | 零依赖手写（System.IO.Compression + XmlReader）：首个工作表 → sharedStrings/inlineStr → **地址形单元格 → 右邻为注释** 配对 |
 | `Drivers/CommDriver.cs` | 地址模型 | `AddressArea`：元件区 ↔ Modbus 地址双向映射；`IndexBase` 支持八进制（X/Y） |

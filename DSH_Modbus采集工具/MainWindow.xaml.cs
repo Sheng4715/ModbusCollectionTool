@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
@@ -722,7 +722,7 @@ namespace DSH_Modbus采集工具
 
         private void IoView_Checked(object sender, RoutedEventArgs e)
         {
-            if (IoColumnsGrid == null || YIoColumnsGrid == null || IoCardTitle == null
+            if (IoColumnsGrid == null || YIoColumnsGrid == null
                 || XViewSegment == null || YViewSegment == null)
             {
                 return;
@@ -732,7 +732,6 @@ namespace DSH_Modbus采集工具
             _yViewActive = !xView; // 采集跟随可见分段：未显示区不读，保留上次数据
             IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
             YIoColumnsGrid.Visibility = xView ? Visibility.Collapsed : Visibility.Visible;
-            IoCardTitle.Text = xView ? "IO 监控（输入 X）" : "IO 监控（输出 Y）";
         }
 
         private void ImportIoTableButton_Click(object sender, RoutedEventArgs e)

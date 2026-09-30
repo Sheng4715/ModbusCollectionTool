@@ -60,7 +60,7 @@ DSH_Modbus采集工具/
 ### 页面内容
 
 1. **总览**：连接状态条 `OverviewStatusPrefix`（黑字）+ `OverviewStatusState`（右对齐，未连接黄 #C08A00 / 已连接绿 #0B7A0B）。格式：`驱动：连接方式  协议  IP:端口` + 状态。由 `UpdateOverviewStatus()` 刷新（选择/输入/连接状态变化时调用）。
-2. **状态信息**（IO 监控）：标题右侧 = **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切两个网格显隐 + 换标题）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`）+ 导入结果文字（`ImportResultText`，绿=成功条数 / 琥珀=无有效点位不替换 / 红=解析失败）。每区 4 列 × 16 = 64 点（`IoColumnsGrid` X0–X77 / `YIoColumnsGrid` Y0–Y77，均八进制）。列宽 `*` 等分；行高 22、行距 2、列距 4。注释优先级：`io-comments.json`（AppContext.BaseDirectory，导入后写入）> 内置 `XComments`；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。**采集跟随可见性**：连接后 `PollLoopAsync` 每周期只读**当前显示的分段**（输入 X 或输出 Y，1×FC01，默认 100ms，`_yViewActive`）；**离开本页停止全部报文**（`_ioPageActive`，优化通讯），未显示区与离页期间灯保留上次数据，回页/切段后下一周期恢复采集；断线不清灯色（`IsOn` 保持上次值）。
+2. **状态信息**（IO 监控）：卡片左上（原「IO 监控（输入 X）」标题已移除，该位置改为控件区）= **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切两个网格显隐）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`）+ 导入结果文字（`ImportResultText`，绿=成功条数 / 琥珀=无有效点位不替换 / 红=解析失败）。每区 4 列 × 16 = 64 点（`IoColumnsGrid` X0–X77 / `YIoColumnsGrid` Y0–Y77，均八进制）。列宽 `*` 等分；行高 22、行距 2、列距 4。注释优先级：`io-comments.json`（AppContext.BaseDirectory，导入后写入）> 内置 `XComments`；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。**采集跟随可见性**：连接后 `PollLoopAsync` 每周期只读**当前显示的分段**（输入 X 或输出 Y，1×FC01，默认 100ms，`_yViewActive`）；**离开本页停止全部报文**（`_ioPageActive`，优化通讯），未显示区与离页期间灯保留上次数据，回页/切段后下一周期恢复采集；断线不清灯色（`IsOn` 保持上次值）。
 3. **设备配置**：连接方式（以太网/串口）、协议类型（ModbusTCP）、设备类型（**来自 `DriverRegistry.All`**，选中即缓存 `_currentDriver`）、采集周期（100ms–1s 四档，默认 100ms）；以太网时显示目标网卡（`NicInfo`：扫描本机网卡 `网卡名(ip)` + 刷新按钮）、IP、端口号、连接按钮 + 状态灯。连接中/已连接时 `SetInputsEnabled(false)` 全部置灰，按钮变「断开」。连接 = **3 秒超时 ConnectAsync + 绑定所选网卡本地端点**，成功即启动后台轮询（报文已实现，`Drivers/ModbusTcpClient.cs`），读超时/对端关闭 → 自动断开红字提示。串口模式目前仅隐藏以太网面板，功能未实现（P1）。
 
 ## 通讯驱动标准（Drivers/）
@@ -119,7 +119,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 加/改 IO 点位注释 | 导入 xlsx（推荐）或改内置默认 `XComments`（会被 json 覆盖） |
 | 改 IO 行高/行距 | `IoItemTemplate` → `Height` / `Margin` 第 4 值 |
 | 改 IO 列宽策略 | `IoColumnsGrid` / `YIoColumnsGrid`（均 4×`*`） |
-| 加/改 X-Y 分段切换 | `IoSegmentRadioButton` 样式 + 标题右侧 `XViewSegment`/`YViewSegment` + `IoView_Checked` |
+| 加/改 X-Y 分段切换 | `IoSegmentRadioButton` 样式 + 卡片左上 `XViewSegment`/`YViewSegment` + `IoView_Checked` |
 | 导入 IO 表 / 解析规则 | `ImportIoTableButton_Click` + `XlsxIoTableReader.cs`（地址→右邻配对，仅首表，不支持合并单元格） |
 | 注释持久化 | `LoadComments` / `SaveComments` → `io-comments.json`（文件优先于 `XComments`） |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs` |
