@@ -120,7 +120,8 @@ namespace DSH_Modbus采集工具.Drivers
 
         /// <summary>
         /// 按 Modbus 地址反查所属地址区（未命中返回 null）。
-        /// 用于批量读取分块：不同区之间的空隙地址从站通常不接受（如信捷 X 本体与扩展之间回异常码 2）。
+        /// 用于批量读取分块：不同区之间的空隙地址从站通常不接受
+        /// （实测信捷 XD：X 本体 20480–20543 与扩展 20736 起之间的空隙回异常码 <b>6</b>，而非标准的 2）。
         /// </summary>
         public AddressArea? FindArea(ModbusArea area, int address)
         {
