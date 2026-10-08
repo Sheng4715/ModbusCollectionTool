@@ -25,7 +25,7 @@ dotnet run --project DSH_Modbus采集工具
 DSH_Modbus采集工具/
 ├── App.xaml / App.xaml.cs          # 应用入口
 ├── MainWindow.xaml                 # 全部 UI（单窗口，无 UserControl 拆分）
-├── MainWindow.xaml.cs              # 交互逻辑（1051 行：导航/连接状态机/轮询/网卡绑定/动态IO点位集与分页/xlsx导入）
+├── MainWindow.xaml.cs              # 交互逻辑（1127 行：导航/连接状态机/轮询/网卡绑定/动态IO点位集与分页/xlsx导入）
 ├── XlsxIoTableReader.cs            # xlsx 点位表解析（零依赖 zip+XML，地址→右邻配对）
 └── Drivers/                        # 通讯驱动
     ├── CommDriver.cs               # 模型：ModbusArea / NumberBase / AddressArea / CommDriver
@@ -134,7 +134,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
 | 总览状态格式 | `UpdateOverviewStatus()` |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
-| 轮询与断线逻辑 | `MainWindow.xaml.cs` → `PollLoopAsync` / `PollOnceAsync`（当前页单读，离页停采）/ `Disconnect(status,color)` |
+| 轮询与断线逻辑 | `MainWindow.xaml.cs` → `PollLoopAsync` / `PollOnceAsync`（按所属地址区分块读取，同区超 2000 点切窗；离页停采）/ `Disconnect(status,color)` |
 | 采集跟随页面/分段/页 | `_ioPageActive`（`Nav_Checked`）+ `_yViewActive`（`IoView_Checked`）+ `_visiblePage`（`ApplyIoPage`）→ `PollOnceAsync` 开头判断 |
 | 网卡扫描/绑定 | `ScanNetworkAdapters` + `ConnectButton_Click`（`NicInfo`） |
 | 采集周期档位 | `PollIntervalComboBox`（XAML）+ `_pollIntervalMs` |
