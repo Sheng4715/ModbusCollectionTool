@@ -97,6 +97,9 @@ namespace DSH_Modbus采集工具.Drivers
         /// <summary>显示名称，如 "信捷XD/XL系列"</summary>
         public string DisplayName { get; init; } = string.Empty;
 
+        /// <summary>用于 FC01 单点健康检查的可读线圈；未配置时不猜测地址。</summary>
+        public string? HeartbeatCoil { get; init; }
+
         /// <summary>地址区域表</summary>
         public IReadOnlyList<AddressArea> Areas { get; init; } = Array.Empty<AddressArea>();
 

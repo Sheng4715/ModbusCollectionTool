@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -7,6 +8,16 @@ using System.Threading.Tasks;
 
 namespace DSH_Modbus采集工具.Drivers
 {
+    public sealed class ModbusResponseException : IOException
+    {
+        public byte ExceptionCode { get; }
+
+        public ModbusResponseException(byte exceptionCode, string message) : base(message)
+        {
+            ExceptionCode = exceptionCode;
+        }
+    }
+
     /// <summary>
     /// Modbus TCP 主站（只读）：MBAP 报文封装 + 功能码 0x01/0x02/0x03/0x04。
     /// 单连接、请求串行（信号量），单次请求 2 秒超时。
@@ -16,6 +27,7 @@ namespace DSH_Modbus采集工具.Drivers
         private readonly SemaphoreSlim _gate = new(1, 1);
         private TcpClient? _tcp;
         private ushort _tid;
+        private long _lastResponseTimestamp = Stopwatch.GetTimestamp();
 
         /// <summary>Modbus 从站单元号，默认 1</summary>
         public byte UnitId { get; set; } = 1;
@@ -41,6 +53,7 @@ namespace DSH_Modbus采集工具.Drivers
                 cts.CancelAfter(timeout);
                 await tcp.ConnectAsync(ip, port, cts.Token).ConfigureAwait(false);
                 _tcp = tcp;
+                Interlocked.Exchange(ref _lastResponseTimestamp, Stopwatch.GetTimestamp());
             }
             catch
             {
@@ -65,12 +78,22 @@ namespace DSH_Modbus采集工具.Drivers
         public Task<ushort[]> ReadInputRegistersAsync(ushort startAddress, ushort count, CancellationToken ct = default)
             => ReadRegistersAsync(0x04, startAddress, count, ct);
 
+        /// <summary>
+        /// 在请求锁内检查空闲时间，只有缺少近期有效响应时才读取一个心跳线圈。
+        /// 正常采集和合法异常响应都能证明对端仍在回应；返回 false 表示省略了心跳。
+        /// </summary>
+        public async Task<bool> HeartbeatIfIdleAsync(ushort address, TimeSpan idleInterval, CancellationToken ct)
+        {
+            byte[] response = await RequestAsync(BuildReadPdu(0x01, address, 1), ct, idleInterval)
+                .ConfigureAwait(false);
+            return response.Length != 0;
+        }
+
         // ========== 内部实现 ==========
 
         private async Task<bool[]> ReadBitsAsync(byte functionCode, ushort start, ushort count, CancellationToken ct)
         {
             byte[] resp = await RequestAsync(BuildReadPdu(functionCode, start, count), ct).ConfigureAwait(false);
-            ThrowIfException(resp);
             if (resp.Length < 2)
             {
                 throw new IOException("Modbus 响应报文过短");
@@ -94,7 +117,6 @@ namespace DSH_Modbus采集工具.Drivers
         private async Task<ushort[]> ReadRegistersAsync(byte functionCode, ushort start, ushort count, CancellationToken ct)
         {
             byte[] resp = await RequestAsync(BuildReadPdu(functionCode, start, count), ct).ConfigureAwait(false);
-            ThrowIfException(resp);
             if (resp.Length < 2)
             {
                 throw new IOException("Modbus 响应报文过短");
@@ -127,7 +149,7 @@ namespace DSH_Modbus采集工具.Drivers
             if (resp.Length >= 1 && (resp[0] & 0x80) != 0)
             {
                 byte code = resp.Length >= 2 ? resp[1] : (byte)0;
-                throw new IOException($"Modbus 异常：{DescribeException(code)}（异常码 {code}）");
+                throw new ModbusResponseException(code, $"Modbus 异常：{DescribeException(code)}（异常码 {code}）");
             }
         }
 
@@ -152,14 +174,20 @@ namespace DSH_Modbus采集工具.Drivers
         };
 
         /// <summary>发送请求并返回响应 PDU（不含 MBAP/单元号）。请求串行，2 秒超时。</summary>
-        private async Task<byte[]> RequestAsync(byte[] pdu, CancellationToken ct)
+        private async Task<byte[]> RequestAsync(byte[] pdu, CancellationToken ct, TimeSpan? idleInterval = null)
         {
-            TcpClient tcp = _tcp ?? throw new IOException("连接未建立");
-            NetworkStream stream = tcp.GetStream();
-
             await _gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                ct.ThrowIfCancellationRequested();
+                TcpClient tcp = _tcp ?? throw new IOException("连接未建立");
+                if (idleInterval.HasValue
+                    && Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastResponseTimestamp)) < idleInterval.Value)
+                {
+                    return Array.Empty<byte>();
+                }
+
+                NetworkStream stream = tcp.GetStream();
                 ushort tid = ++_tid;
                 int length = pdu.Length + 1; // 单元号 + PDU
                 byte[] frame = new byte[6 + length];
@@ -201,9 +229,46 @@ namespace DSH_Modbus采集工具.Drivers
                 byte[] body = new byte[respLength];
                 await ReadExactAsync(stream, body, timeout.Token).ConfigureAwait(false);
 
+                if (body[0] != frame[6])
+                {
+                    throw new IOException("Modbus 单元号不匹配");
+                }
+
                 byte[] respPdu = new byte[respLength - 1];
                 Buffer.BlockCopy(body, 1, respPdu, 0, respLength - 1);
+                bool exception = respPdu[0] == (pdu[0] | 0x80);
+                if (exception)
+                {
+                    if (respPdu.Length != 2)
+                    {
+                        throw new IOException("Modbus 异常响应长度无效");
+                    }
+                }
+                else
+                {
+                    int count = (pdu[3] << 8) | pdu[4];
+                    int expectedBytes = pdu[0] is 0x01 or 0x02 ? (count + 7) / 8 : count * 2;
+                    if (respPdu[0] != pdu[0] || respPdu.Length != expectedBytes + 2
+                        || respPdu[1] != expectedBytes)
+                    {
+                        throw new IOException("Modbus 响应功能码或数据长度不匹配");
+                    }
+                }
+
+                Interlocked.Exchange(ref _lastResponseTimestamp, Stopwatch.GetTimestamp());
+                ThrowIfException(respPdu);
                 return respPdu;
+            }
+            catch (ModbusResponseException)
+            {
+                // 合法异常响应：帧已完整读完，连接仍可复用。
+                throw;
+            }
+            catch
+            {
+                // 超时/取消可能留下半帧，关闭连接，阻止排队请求继续使用失去同步的流。
+                Dispose();
+                throw;
             }
             finally
             {

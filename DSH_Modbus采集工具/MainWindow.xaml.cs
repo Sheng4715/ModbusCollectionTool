@@ -83,6 +83,8 @@ namespace DSH_Modbus采集工具
         private ModbusTcpClient? _modbus;
         private bool _isConnected;
         private CancellationTokenSource? _pollCts;
+        private CancellationTokenSource? _connectCts;
+        private bool _windowClosed;
         private volatile int _pollIntervalMs = 100;
         private CommDriver? _currentDriver;
         private readonly List<IoPoint> _xPoints = new();
@@ -527,6 +529,11 @@ namespace DSH_Modbus采集工具
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
+            if (_windowClosed || _connectCts != null)
+            {
+                return;
+            }
+
             if (_isConnected)
             {
                 Disconnect();
@@ -546,6 +553,13 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
+            CommDriver? driver = _currentDriver;
+            if (driver == null)
+            {
+                SetStatus("请选择设备类型", "#C42B1C");
+                return;
+            }
+
             ConnectButton.IsEnabled = false;
             SetInputsEnabled(false);
             SetStatus($"正在连接 {ip}:{port} …", "#B26A00");
@@ -557,32 +571,52 @@ namespace DSH_Modbus采集工具
                 : null;
 
             var client = new ModbusTcpClient();
+            using var connectCts = new CancellationTokenSource();
+            _connectCts = connectCts;
             try
             {
-                await client.ConnectAsync(ip, port, TimeSpan.FromSeconds(3), localEndPoint);
+                await client.ConnectAsync(ip, port, TimeSpan.FromSeconds(3), localEndPoint, connectCts.Token);
+                if (_windowClosed || connectCts.IsCancellationRequested)
+                {
+                    client.Dispose();
+                    return;
+                }
 
                 _modbus = client;
                 _isConnected = true;
                 ConnectButton.Content = "断开";
                 ConnectButton.IsEnabled = true;
                 SetStatus($"已连接 {ip}:{port}", "#0B7A0B");
-                StartPolling();
+                StartPolling(client, driver, $"{ip}:{port}");
             }
             catch (OperationCanceledException)
             {
                 client.Dispose();
-                SetInputsEnabled(true);
-                SetStatus("连接超时", "#C42B1C");
+                if (!_windowClosed)
+                {
+                    SetInputsEnabled(true);
+                    SetStatus("连接超时", "#C42B1C");
+                }
             }
             catch (Exception ex)
             {
                 client.Dispose();
-                SetInputsEnabled(true);
-                SetStatus($"连接失败：{ex.Message}", "#C42B1C");
+                if (!_windowClosed)
+                {
+                    SetInputsEnabled(true);
+                    SetStatus($"连接失败：{ex.Message}", "#C42B1C");
+                }
             }
             finally
             {
-                ConnectButton.IsEnabled = true;
+                if (ReferenceEquals(_connectCts, connectCts))
+                {
+                    _connectCts = null;
+                }
+                if (!_windowClosed)
+                {
+                    ConnectButton.IsEnabled = true;
+                }
             }
         }
 
@@ -636,6 +670,7 @@ namespace DSH_Modbus采集工具
 
         private void Disconnect(string statusText, string colorHex)
         {
+            _connectCts?.Cancel();
             StopPolling();
             _modbus?.Dispose();
             _modbus = null;
@@ -771,13 +806,78 @@ namespace DSH_Modbus采集工具
 
         // ---------- Modbus 采集轮询（P0） ----------
 
-        private void StartPolling()
+        private void StartPolling(ModbusTcpClient client, CommDriver driver, string endpoint)
         {
             StopPolling();
-            _pollCts = new CancellationTokenSource();
-            CancellationToken token = _pollCts.Token;
-            _ = Task.Run(() => PollLoopAsync(token), token);
+            var cts = new CancellationTokenSource();
+            _pollCts = cts;
+            // 两项任务持有自己的连接和驱动快照，结束后才释放取消源。
+            _ = RunConnectionTasksAsync(client, driver, endpoint, cts);
         }
+
+        private async Task RunConnectionTasksAsync(ModbusTcpClient client, CommDriver driver,
+            string endpoint, CancellationTokenSource cts)
+        {
+            CancellationToken token = cts.Token;
+            try
+            {
+                await Task.WhenAll(
+                    Task.Run(() => PollLoopAsync(client, driver, token)),
+                    Task.Run(() => HeartbeatLoopAsync(client, driver, endpoint, token)));
+            }
+            catch (Exception ex)
+            {
+                NotifyConnectionLost(client, token, ex.Message);
+            }
+            finally
+            {
+                // 本方法从 UI 线程启动，await 后仍回 UI 线程，避免与 StopPolling 竞争释放。
+                if (ReferenceEquals(_pollCts, cts))
+                {
+                    _pollCts = null;
+                }
+                cts.Dispose();
+            }
+        }
+
+        private async Task HeartbeatLoopAsync(ModbusTcpClient client, CommDriver driver,
+            string endpoint, CancellationToken token)
+        {
+            try
+            {
+                await ModbusHeartbeat.RunAsync(client, driver, async warning =>
+                {
+                    if (token.IsCancellationRequested || Dispatcher.HasShutdownStarted)
+                    {
+                        return;
+                    }
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (!IsCurrentConnection(client, token))
+                        {
+                            return;
+                        }
+                        SetStatus(warning == null ? $"已连接 {endpoint}" : $"已连接；{warning}",
+                            warning == null ? "#0B7A0B" : "#B26A00");
+                    });
+                }, token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!token.IsCancellationRequested)
+                {
+                    NotifyConnectionLost(client, token, "心跳读取超时");
+                }
+            }
+            catch (Exception ex)
+            {
+                NotifyConnectionLost(client, token, $"心跳检查失败：{ex.Message}");
+            }
+        }
+
+        private bool IsCurrentConnection(ModbusTcpClient client, CancellationToken token) =>
+            !_windowClosed && !token.IsCancellationRequested && _isConnected
+            && ReferenceEquals(_modbus, client);
 
         private void StopPolling()
         {
@@ -787,11 +887,10 @@ namespace DSH_Modbus采集工具
             }
 
             _pollCts.Cancel();
-            _pollCts.Dispose();
             _pollCts = null;
         }
 
-        private async Task PollLoopAsync(CancellationToken token)
+        private async Task PollLoopAsync(ModbusTcpClient client, CommDriver driver, CancellationToken token)
         {
             while (!token.IsCancellationRequested)
             {
@@ -799,7 +898,7 @@ namespace DSH_Modbus采集工具
 
                 try
                 {
-                    await PollOnceAsync(token);
+                    await PollOnceAsync(client, driver, token);
                 }
                 catch (OperationCanceledException)
                 {
@@ -809,12 +908,12 @@ namespace DSH_Modbus采集工具
                         break;
                     }
 
-                    NotifyConnectionLost("读取超时");
+                    NotifyConnectionLost(client, token, "读取超时");
                     break;
                 }
                 catch (Exception ex)
                 {
-                    NotifyConnectionLost(ex.Message);
+                    NotifyConnectionLost(client, token, ex.Message);
                     break;
                 }
 
@@ -834,18 +933,12 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        private async Task PollOnceAsync(CancellationToken token)
+        private async Task PollOnceAsync(ModbusTcpClient modbus, CommDriver driver, CancellationToken token)
         {
-            // 离开状态信息页：不发起任何报文（优化通讯），灯保留上次采集数据，回页后下一周期恢复
+            // 离开状态信息页仅停采 IO；独立心跳继续工作，灯保留上次采集数据。
             if (!_ioPageActive)
             {
                 return;
-            }
-
-            ModbusTcpClient? modbus = _modbus;
-            if (modbus == null)
-            {
-                throw new IOException("连接未就绪");
             }
 
             // 只读当前显示分段「当前页」的点位；点位集由 IO 表决定，未导入时为空 → 不发报文
@@ -858,10 +951,9 @@ namespace DSH_Modbus采集工具
             // 本页点位可能跨多段地址区（如信捷 X 本体 + 扩展模块）：区与区之间的空隙地址从站不接受，
             // 跨区一次读会回异常响应而被判为断线。故按所属地址区分块，每块读本区最小..最大地址（FC01），再按偏移回填。
             // 连接期间设备类型下拉已置灰，_currentDriver 不会变化。
-            CommDriver? driver = _currentDriver;
             var results = new List<(IoPoint[] Points, int Min, bool[] Coils)>();
 
-            foreach (var group in points.GroupBy(p => driver?.FindArea(ModbusArea.Coil, p.Address)))
+            foreach (var group in points.GroupBy(p => driver.FindArea(ModbusArea.Coil, p.Address)))
             {
                 // 单次 FC01 最多 2000 点；同区跨度超限时再按 2000 切分
                 int baseAddress = group.Min(p => p.Address);
@@ -878,6 +970,10 @@ namespace DSH_Modbus采集工具
             // 回到 UI 线程刷新绑定（IoPoint 为 INPC 对象，IsOn 变更驱动灯色）
             await Dispatcher.InvokeAsync(() =>
             {
+                if (!IsCurrentConnection(modbus, token))
+                {
+                    return;
+                }
                 foreach (var (chunkPoints, min, coils) in results)
                 {
                     foreach (IoPoint p in chunkPoints)
@@ -892,12 +988,16 @@ namespace DSH_Modbus采集工具
             });
         }
 
-        private void NotifyConnectionLost(string reason)
+        private void NotifyConnectionLost(ModbusTcpClient client, CancellationToken token, string reason)
         {
+            if (token.IsCancellationRequested || Dispatcher.HasShutdownStarted)
+            {
+                return;
+            }
             // 轮询在后台线程，回 UI 线程执行断开
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                if (_isConnected)
+                if (IsCurrentConnection(client, token))
                 {
                     Disconnect($"连接已断开：{reason}", "#C42B1C");
                 }
@@ -918,8 +1018,14 @@ namespace DSH_Modbus采集工具
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            Disconnect();
             Close();
+        }
+
+        protected override void OnClosed(EventArgs e)
+        {
+            _windowClosed = true;
+            Disconnect();
+            base.OnClosed(e);
         }
 
         private void Window_StateChanged(object? sender, EventArgs e)

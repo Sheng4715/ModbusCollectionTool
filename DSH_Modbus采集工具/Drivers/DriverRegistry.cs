@@ -43,6 +43,7 @@ namespace DSH_Modbus采集工具.Drivers
         {
             Key = "xinje_xd",
             DisplayName = "信捷XD/XL系列",
+            HeartbeatCoil = "M0",
             Areas = new[]
             {
                 // ---- 线圈（位）：非 IO 元件 ----
@@ -78,6 +79,7 @@ namespace DSH_Modbus采集工具.Drivers
         {
             Key = "inovance_easy",
             DisplayName = "汇川Easy系列",
+            HeartbeatCoil = "M0",
             Areas = new[]
             {
                 // ---- 线圈（位）----
