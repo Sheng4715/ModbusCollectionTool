@@ -280,6 +280,77 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <!-- 日志卡「清空」按钮（文字版，沿用 IoPagerButton 的悬停/按下反馈） -->
+        <Style x:Key="LogClearButton" TargetType="Button">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#5D5D5D"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="LogClearBd" Background="Transparent" CornerRadius="5"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="LogClearBd" Property="Background" Value="#E2E2E2"/>
+                                <Setter Property="Foreground" Value="#1A1A1A"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="LogClearBd" Property="Background" Value="#D9D9D9"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#C0C0C0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 设备状态日志行：[时间] 消息；时间固定灰色，消息按级别着色 -->
+        <DataTemplate x:Key="DeviceLogItemTemplate">
+            <Grid Margin="0,1,0,1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding TimeText}" FontSize="12" Foreground="#9A9A9A"
+                           VerticalAlignment="Top"/>
+                <TextBlock Grid.Column="1" Text="{Binding Message}" FontSize="12"
+                           Foreground="{Binding LevelBrush}"
+                           TextWrapping="Wrap" Margin="8,0,0,0"/>
+            </Grid>
+        </DataTemplate>
+
+        <!-- 日志列表：无边框/透明底，去掉条目的选中底色与焦点框（只读展示） -->
+        <Style x:Key="DeviceLogListStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="Margin" Value="0"/>
+                        <Setter Property="Focusable" Value="False"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <ContentPresenter/>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -352,46 +423,79 @@
             </Border>
 
             <!-- 内容区（商店内容已移除，留空待填充） -->
-            <ScrollViewer
+            <ScrollViewer x:Name="ContentScrollViewer"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
                           Padding="36,4,36,16" Grid.ColumnSpan="2" Margin="112,0,0,0">
                 <StackPanel>
 
-                    <!-- 总览 -->
-                    <StackPanel x:Name="OverviewPanel" d:Visibility="Collapsed">
-                        <TextBlock Text="总览"
-                                   FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
-                                   FontSize="20" FontWeight="SemiBold" Foreground="#1A1A1A"
-                                   Margin="0,16,0,16"/>
+                    <!-- 总览：高度取内容区视口高度，下方 1/4 固定给设备状态日志（贴窗口底部） -->
+                    <Grid x:Name="OverviewPanel" d:Visibility="Collapsed"
+                          Height="{Binding ViewportHeight, ElementName=ContentScrollViewer}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="3*"/>
+                            <RowDefinition Height="1*"/>
+                        </Grid.RowDefinitions>
 
-                        <Border Background="#FFFFFF"
+                        <StackPanel Grid.Row="0" VerticalAlignment="Top">
+                            <TextBlock Text="总览"
+                                       FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
+                                       FontSize="20" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                       Margin="0,16,0,16"/>
+
+                            <Border Background="#FFFFFF"
+                                    BorderBrush="#E8E8E8" BorderThickness="1"
+                                    CornerRadius="8" Padding="20">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="1"
+                                               x:Name="OverviewStatusText"
+                                               FontSize="14"
+                                               Foreground="#1A1A1A"
+                                               VerticalAlignment="Center"
+                                               HorizontalAlignment="Left">
+                                        <Run x:Name="OverviewStatusPrefix" Text="信捷XD/XL系列：以太网  ModbusTCP  192.168.1.100:502"/>
+                                    </TextBlock>
+                                    <TextBlock Grid.Column="2"
+                                               x:Name="OverviewStatusState"
+                                               Text="未连接"
+                                               FontSize="14"
+                                               Foreground="#C08A00"
+                                               VerticalAlignment="Center"
+                                               HorizontalAlignment="Right"/>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- 设备状态日志：只记设备状态（连接/断开/连接失败/心跳告警），空时不显示任何内容 -->
+                        <Border Grid.Row="1" Background="#FFFFFF"
                                 BorderBrush="#E8E8E8" BorderThickness="1"
-                                CornerRadius="8" Padding="20">
+                                CornerRadius="8">
                             <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="1"
-                                           x:Name="OverviewStatusText"
-                                           FontSize="14"
-                                           Foreground="#1A1A1A"
-                                           VerticalAlignment="Center"
-                                           HorizontalAlignment="Left">
-                                    <Run x:Name="OverviewStatusPrefix" Text="信捷XD/XL系列：以太网  ModbusTCP  192.168.1.100:502"/>
-                                </TextBlock>
-                                <TextBlock Grid.Column="2"
-                                           x:Name="OverviewStatusState"
-                                           Text="未连接"
-                                           FontSize="14"
-                                           Foreground="#C08A00"
-                                           VerticalAlignment="Center"
-                                           HorizontalAlignment="Right"/>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Margin="16,8,10,2">
+                                    <TextBlock Text="设备状态日志"
+                                               FontSize="13" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                               VerticalAlignment="Center"/>
+                                    <Button x:Name="ClearDeviceLogButton" Content="清空"
+                                            HorizontalAlignment="Right" VerticalAlignment="Center"
+                                            Style="{StaticResource LogClearButton}"
+                                            Click="ClearDeviceLogButton_Click"/>
+                                </Grid>
+                                <ListBox Grid.Row="1" x:Name="DeviceLogList"
+                                         Margin="16,0,8,8"
+                                         Style="{StaticResource DeviceLogListStyle}"
+                                         ItemTemplate="{StaticResource DeviceLogItemTemplate}"/>
                             </Grid>
                         </Border>
-                    </StackPanel>
+                    </Grid>
 
                     <!-- 状态信息 / IO 监控 -->
                     <StackPanel x:Name="StatusInfoPanel" Visibility="Collapsed" d:Visibility="Visible">

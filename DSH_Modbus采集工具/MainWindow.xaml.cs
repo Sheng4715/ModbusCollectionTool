@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
@@ -68,6 +69,47 @@ namespace DSH_Modbus采集工具
         public override string ToString() => $"{Name}({Ip})";
     }
 
+    /// <summary>设备状态日志的级别，决定日志行的颜色（沿用状态栏既有配色）。</summary>
+    public enum DeviceLogLevel
+    {
+        /// <summary>中性灰：如用户主动断开。</summary>
+        Neutral,
+
+        /// <summary>绿色：连接成功、心跳恢复。</summary>
+        Connected,
+
+        /// <summary>红色：连接失败、通讯异常断开。</summary>
+        Disconnected,
+
+        /// <summary>琥珀色：告警，如心跳响应异常。</summary>
+        Warning,
+    }
+
+    /// <summary>设备状态日志的一行（不可变），供总览页底部的 ListBox 绑定。</summary>
+    public sealed class LogEntry
+    {
+        public LogEntry(DateTime time, string message, DeviceLogLevel level)
+        {
+            TimeText = $"[{time:yyyy-MM-dd HH:mm:ss}]";
+            Message = message;
+            Color color = level switch
+            {
+                DeviceLogLevel.Connected => Color.FromRgb(0x0B, 0x7A, 0x0B),
+                DeviceLogLevel.Disconnected => Color.FromRgb(0xC4, 0x2B, 0x1C),
+                DeviceLogLevel.Warning => Color.FromRgb(0xB2, 0x6A, 0x00),
+                _ => Color.FromRgb(0x5D, 0x5D, 0x5D),
+            };
+            LevelBrush = new SolidColorBrush(color);
+        }
+
+        /// <summary>形如 "[2026-10-08 10:23:45]"，固定灰色显示。</summary>
+        public string TimeText { get; }
+
+        public string Message { get; }
+
+        public Brush LevelBrush { get; }
+    }
+
     /// <summary>设备配置页展示用：地址表中的一个元件（同名元件的多段地址区合并为一项）。</summary>
     public sealed class AreaElement
     {
@@ -122,6 +164,12 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private Dictionary<string, string> _comments = new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>设备状态日志（总览页底部展示）。只在 UI 线程追加。</summary>
+        private readonly ObservableCollection<LogEntry> _deviceLog = new();
+
+        /// <summary>日志内存条数上限：超出后丢弃最旧一条（仅内存，不落盘）。</summary>
+        private const int MaxDeviceLogEntries = 200;
+
         private static string CommentsFilePath =>
             Path.Combine(AppContext.BaseDirectory, "io-comments.json");
 
@@ -135,6 +183,9 @@ namespace DSH_Modbus采集工具
 
             // 点位集来自 exe 旁的 io-comments.json（导入 IO 表后写回）；文件不存在则为空列表
             LoadComments();
+
+            // 设备状态日志：只在总览页展示，仅内存保存
+            DeviceLogList.ItemsSource = _deviceLog;
 
             _ioInitialized = true;
             RebuildIoPoints();
@@ -536,6 +587,7 @@ namespace DSH_Modbus采集工具
 
             if (_isConnected)
             {
+                AppendDeviceLog("已断开：用户主动断开", DeviceLogLevel.Neutral);
                 Disconnect();
                 return;
             }
@@ -587,6 +639,7 @@ namespace DSH_Modbus采集工具
                 ConnectButton.Content = "断开";
                 ConnectButton.IsEnabled = true;
                 SetStatus($"已连接 {ip}:{port}", "#0B7A0B");
+                AppendDeviceLog($"已连接 {ip}:{port}", DeviceLogLevel.Connected);
                 StartPolling(client, driver, $"{ip}:{port}");
             }
             catch (OperationCanceledException)
@@ -596,6 +649,7 @@ namespace DSH_Modbus采集工具
                 {
                     SetInputsEnabled(true);
                     SetStatus("连接超时", "#C42B1C");
+                    AppendDeviceLog($"连接失败 {ip}:{port}：连接超时", DeviceLogLevel.Disconnected);
                 }
             }
             catch (Exception ex)
@@ -605,6 +659,8 @@ namespace DSH_Modbus采集工具
                 {
                     SetInputsEnabled(true);
                     SetStatus($"连接失败：{ex.Message}", "#C42B1C");
+                    AppendDeviceLog($"连接失败 {ip}:{port}：{ClassifyDisconnectReason(ex.Message)}",
+                        DeviceLogLevel.Disconnected);
                 }
             }
             finally
@@ -686,6 +742,96 @@ namespace DSH_Modbus采集工具
             StatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
             StatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
             UpdateOverviewStatus();
+        }
+
+        // ---------- 设备状态日志（总览页底部） ----------
+
+        /// <summary>
+        /// 追加一条设备状态日志：超出上限丢弃最旧一条，并滚动到最新一行。
+        /// 只在 UI 线程调用（连接/断开/心跳告警回切后均已处于 UI 线程）。
+        /// </summary>
+        private void AppendDeviceLog(string message, DeviceLogLevel level)
+        {
+            _deviceLog.Add(new LogEntry(DateTime.Now, message, level));
+            while (_deviceLog.Count > MaxDeviceLogEntries)
+            {
+                _deviceLog.RemoveAt(0);
+            }
+
+            DeviceLogList.ScrollIntoView(_deviceLog[^1]);
+        }
+
+        private void ClearDeviceLogButton_Click(object sender, RoutedEventArgs e)
+        {
+            _deviceLog.Clear();
+        }
+
+        /// <summary>
+        /// 把底层异常/状态文本归类为简短的中文断开原因。命中已知模式返回中文短语，
+        /// 未命中则原样返回（可能含英文），保证不吞掉信息。
+        /// </summary>
+        private static string ClassifyDisconnectReason(string raw)
+        {
+            string text = raw.Trim();
+
+            const string heartbeatPrefix = "心跳检查失败：";
+            bool fromHeartbeat = text.StartsWith(heartbeatPrefix, StringComparison.Ordinal);
+            if (fromHeartbeat)
+            {
+                text = text[heartbeatPrefix.Length..].Trim();
+            }
+
+            // 已是简短中文原因的（含「心跳」这类上下文）直接沿用，不做压缩
+            if (text is "读取超时" or "心跳读取超时" or "连接被对方关闭")
+            {
+                return text;
+            }
+
+            if (text.StartsWith("Modbus 异常：", StringComparison.Ordinal))
+            {
+                return text["Modbus 异常：".Length..]; // 例如「从站设备忙（异常码 6）」
+            }
+
+            if (text.StartsWith("Modbus ", StringComparison.Ordinal))
+            {
+                return "响应帧校验失败";
+            }
+
+            string cause;
+            if (text.Contains("无法连接的网络", StringComparison.Ordinal)
+                || text.Contains("network is unreachable", StringComparison.OrdinalIgnoreCase))
+            {
+                cause = "网络不可达";
+            }
+            else if (text.Contains("无法访问目标主机", StringComparison.Ordinal)
+                     || text.Contains("host is unreachable", StringComparison.OrdinalIgnoreCase))
+            {
+                cause = "主机不可达";
+            }
+            else if (text.Contains("积极拒绝", StringComparison.Ordinal)
+                     || text.Contains("actively refused", StringComparison.OrdinalIgnoreCase))
+            {
+                cause = "目标拒绝连接";
+            }
+            else if (text.Contains("强迫关闭", StringComparison.Ordinal)
+                     || text.Contains("forcibly closed", StringComparison.OrdinalIgnoreCase)
+                     || text.Contains("transport connection", StringComparison.OrdinalIgnoreCase))
+            {
+                cause = "对端关闭连接";
+            }
+            else if (text.Contains("超时", StringComparison.Ordinal)
+                     || text.Contains("timed out", StringComparison.OrdinalIgnoreCase))
+            {
+                cause = "响应超时";
+            }
+            else
+            {
+                cause = text; // 未归类：原样保留，不吞信息
+            }
+
+            return fromHeartbeat && !cause.Contains("心跳", StringComparison.Ordinal)
+                ? $"心跳：{cause}"
+                : cause;
         }
 
         private void RefreshNicButton_Click(object sender, RoutedEventArgs e)
@@ -859,6 +1005,8 @@ namespace DSH_Modbus采集工具
                         }
                         SetStatus(warning == null ? $"已连接 {endpoint}" : $"已连接；{warning}",
                             warning == null ? "#0B7A0B" : "#B26A00");
+                        AppendDeviceLog(warning == null ? "心跳恢复正常，连接可用" : $"通讯告警：{warning}",
+                            warning == null ? DeviceLogLevel.Connected : DeviceLogLevel.Warning);
                     });
                 }, token);
             }
@@ -999,6 +1147,8 @@ namespace DSH_Modbus采集工具
             {
                 if (IsCurrentConnection(client, token))
                 {
+                    AppendDeviceLog($"已断开：通讯异常（{ClassifyDisconnectReason(reason)}）",
+                        DeviceLogLevel.Disconnected);
                     Disconnect($"连接已断开：{reason}", "#C42B1C");
                 }
             }));

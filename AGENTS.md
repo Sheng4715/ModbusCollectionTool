@@ -25,7 +25,7 @@ dotnet run --project DSH_Modbus采集工具
 DSH_Modbus采集工具/
 ├── App.xaml / App.xaml.cs          # 应用入口
 ├── MainWindow.xaml                 # 全部 UI（单窗口，无 UserControl 拆分）
-├── MainWindow.xaml.cs              # 交互逻辑（导航/连接生命周期/轮询与心跳编排/网卡绑定/动态IO点位集与分页/xlsx导入）
+├── MainWindow.xaml.cs              # 交互逻辑（导航/连接生命周期/轮询与心跳编排/网卡绑定/动态IO点位集与分页/xlsx导入/设备状态日志）
 ├── XlsxIoTableReader.cs            # xlsx 点位表解析（零依赖 zip+XML，地址→右邻配对）
 └── Drivers/                        # 通讯驱动
     ├── CommDriver.cs               # 模型：ModbusArea / NumberBase / AddressArea / CommDriver
@@ -57,11 +57,14 @@ DSH_Modbus采集工具/
 | `IoItemTemplate` | IO 点位单元格（灯 10×10、灯与名间距 4、注释 MinWidth 144；Comment 为 INPC，导入后自动刷新） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
 | `IoPagerButton` | IO 分页箭头按钮（卡片右上角 `<` `>`，26×26，首末页置灰） |
+| `LogClearButton` | 日志卡「清空」按钮（文字版，高 24，悬停灰底） |
+| `DeviceLogItemTemplate` | 设备状态日志行（时间戳灰 `#9A9A9A` + 消息按级别着色，消息可换行） |
+| `DeviceLogListStyle` | 日志列表（透明底/无边框、条目无选中底色与焦点框，只读展示） |
 | `ScrollBar` | 细滚动条（10px） |
 
 ### 页面内容
 
-1. **总览**：连接状态条 `OverviewStatusPrefix`（黑字）+ `OverviewStatusState`（右对齐，未连接黄 #C08A00 / 已连接绿 #0B7A0B）。格式：`驱动：连接方式  协议  IP:端口` + 状态。由 `UpdateOverviewStatus()` 刷新（选择/输入/连接状态变化时调用）。
+1. **总览**：连接状态条 `OverviewStatusPrefix`（黑字）+ `OverviewStatusState`（右对齐，未连接黄 #C08A00 / 已连接绿 #0B7A0B）。格式：`驱动：连接方式  协议  IP:端口` + 状态。由 `UpdateOverviewStatus()` 刷新（选择/输入/连接状态变化时调用）。**下方固定为「设备状态日志」卡，占本页高度 1/4 并贴窗口底部**：`OverviewPanel` 是 `Grid`（`3*` 行放标题+状态卡、`1*` 行放日志卡），其 `Height` 绑定 `ContentScrollViewer.ViewportHeight` 以撑满视口 —— 所以**总览页自身不再滚动**（状态信息/设备配置两页照旧滚动）。日志只记**设备状态**：`已连接 ip:端口`、`已断开：用户主动断开`、`已断开：通讯异常（原因）`、`连接失败 ip:端口：原因`、`通讯告警：…` 与 `心跳恢复正常`；**不记**「未启用心跳」与关窗。格式 `[yyyy-MM-dd HH:mm:ss] 消息`，时间戳灰、消息按级别着色（连接绿 `#0B7A0B` / 断开与失败红 `#C42B1C` / 告警琥珀 `#B26A00` / 用户主动断开中性灰 `#5D5D5D`）；**空日志不显示任何占位文字**。仅内存保留最近 `MaxDeviceLogEntries`（200）条，超出丢最旧、不落盘，右上角「清空」按钮清空。原因经 `ClassifyDisconnectReason` 归一为简短中文（Socket 原文如「向一个无法连接的网络尝试了一个套接字操作。」→「网络不可达」，Modbus 帧错误 →「响应帧校验失败」），未命中则原样保留。
 2. **状态信息**（IO 监控）：**点位集完全由导入的 IO 表驱动，不再固定 64 点**。卡片左上 = **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切网格显隐并重新分页）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`：逐行按当前通讯驱动 `_currentDriver` 校验——**仅接受 X / Y 元件**且地址须落在驱动定义范围内；通过者整体替换点位集，结果**一律用 `MessageBox` 对话框**汇报：解析失败→红错误框 / 0 项有效→警告框且不替换 / 否则「成功导入 N 项，失败 M 项」+ 失败明细；**已无内联提示文字**）。**分页**：每页固定 4 列 × `IoRowsPerColumn`（默认 16）= **64 点**，超出即分页；X/Y **各自独立记页**（`_xPageIndex` / `_yPageIndex`），分页控件在卡片右上角（`IoPagerPanel` = `IoPrevPageButton` + `IoPageText`「当前/总数」+ `IoNextPageButton`），**只有一页时整体隐藏**，首/末页对应箭头置灰。**未导入时列表为空**并显示 `IoEmptyHint`「尚未导入 IO 表」。点位按**地址升序**排序（`RebuildIoPoints`）。列宽 `*` 等分；行高 22、行距 2、列距 4。点位集/注释唯一来源 = `io-comments.json`（AppContext.BaseDirectory，导入后写入；**键=点位名，值=注释**）—— 内置 `XComments` 默认表**已移除**；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。**采集跟随可见性**：连接后 `PollLoopAsync` 每周期只读**当前显示分段 + 当前页**的点位（`_visiblePage` 快照，按所属地址区分块、每块读本区最小..最大地址（FC01，跨区空隙从站不接受）再按偏移回填，默认 100ms）；**离开本页停止 IO 采集，独立心跳继续**（`_ioPageActive` 仅控制 IO 轮询），未显示页/区与离页期间灯保留上次数据，回页/切页后下一周期恢复采集；断线不清灯色（`IsOn` 保持上次值）。
 3. **设备配置**：连接方式（以太网/串口）、协议类型（ModbusTCP）、设备类型（**来自 `DriverRegistry.All`**，选中即缓存 `_currentDriver`）、采集周期（100ms–1s 四档，默认 100ms）；以太网时显示目标网卡（`NicInfo`：扫描本机网卡 `网卡名(ip)` + 刷新按钮）、IP、端口号、连接按钮 + 状态灯。连接中/已连接时 `SetInputsEnabled(false)` 全部置灰，按钮变「断开」。连接 = **3 秒超时 ConnectAsync + 绑定所选网卡本地端点**，成功后并行启动 IO 轮询与独立心跳，两者共用串行请求锁；读超时/对端关闭 → 自动断开红字提示。心跳详情见下节。串口模式目前仅隐藏以太网面板，功能未实现（P1）。
 
@@ -145,6 +148,10 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 加通讯品牌 | `Drivers/DriverRegistry.cs` |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
 | 总览状态格式 | `UpdateOverviewStatus()` |
+| 设备状态日志（追加/清空/上限） | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `MaxDeviceLogEntries`（200，仅内存不落盘） |
+| 日志行颜色与格式 | `LogEntry`（`DeviceLogLevel` → `LevelBrush`）+ `DeviceLogItemTemplate` |
+| 断开原因归类 | `ClassifyDisconnectReason`（Socket / Modbus 原文 → 简短中文，未命中原样保留） |
+| 日志卡高度/位置 | `OverviewPanel` 的 `3*`/`1*` 两行 + `Height` 绑定 `ContentScrollViewer.ViewportHeight` |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
 | 心跳周期/响应空闲判断 | `Drivers/ModbusHeartbeat.cs` → `RunAsync`（100ms 检查、1s 空闲）；`ModbusTcpClient.HeartbeatIfIdleAsync`（锁内复查） |
 | 品牌心跳地址 | `CommDriver.HeartbeatCoil` + `DriverRegistry`（现有两驱动均为 M0） |
