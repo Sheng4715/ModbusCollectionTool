@@ -119,6 +119,23 @@ namespace DSH_Modbus采集工具.Drivers
         }
 
         /// <summary>
+        /// 按 Modbus 地址反查所属地址区（未命中返回 null）。
+        /// 用于批量读取分块：不同区之间的空隙地址从站通常不接受（如信捷 X 本体与扩展之间回异常码 2）。
+        /// </summary>
+        public AddressArea? FindArea(ModbusArea area, int address)
+        {
+            foreach (AddressArea a in Areas)
+            {
+                if (a.Area == area && a.TryGetIndex(address, out _))
+                {
+                    return a;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// 解析字符串形式的元件（如 "M100"、"X17"、"D20"）为 Modbus 地址。
         /// 进制由该元件区的 IndexBase 决定。
         /// </summary>

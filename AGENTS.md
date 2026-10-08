@@ -61,7 +61,7 @@ DSH_Modbus采集工具/
 ### 页面内容
 
 1. **总览**：连接状态条 `OverviewStatusPrefix`（黑字）+ `OverviewStatusState`（右对齐，未连接黄 #C08A00 / 已连接绿 #0B7A0B）。格式：`驱动：连接方式  协议  IP:端口` + 状态。由 `UpdateOverviewStatus()` 刷新（选择/输入/连接状态变化时调用）。
-2. **状态信息**（IO 监控）：**点位集完全由导入的 IO 表驱动，不再固定 64 点**。卡片左上 = **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切网格显隐并重新分页）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`：逐行按当前通讯驱动 `_currentDriver` 校验——**仅接受 X / Y 元件**且地址须落在驱动定义范围内；通过者整体替换点位集，结果**一律用 `MessageBox` 对话框**汇报：解析失败→红错误框 / 0 项有效→警告框且不替换 / 否则「成功导入 N 项，失败 M 项」+ 失败明细；**已无内联提示文字**）。**分页**：每页固定 4 列 × `IoRowsPerColumn`（默认 16）= **64 点**，超出即分页；X/Y **各自独立记页**（`_xPageIndex` / `_yPageIndex`），分页控件在卡片右上角（`IoPagerPanel` = `IoPrevPageButton` + `IoPageText`「当前/总数」+ `IoNextPageButton`），**只有一页时整体隐藏**，首/末页对应箭头置灰。**未导入时列表为空**并显示 `IoEmptyHint`「尚未导入 IO 表」。点位按**地址升序**排序（`RebuildIoPoints`）。列宽 `*` 等分；行高 22、行距 2、列距 4。点位集/注释唯一来源 = `io-comments.json`（AppContext.BaseDirectory，导入后写入；**键=点位名，值=注释**）—— 内置 `XComments` 默认表**已移除**；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。**采集跟随可见性**：连接后 `PollLoopAsync` 每周期只读**当前显示分段 + 当前页**的点位（`_visiblePage` 快照，按本页最小..最大地址一次 FC01 读回、再按偏移回填，默认 100ms）；**离开本页停止全部报文**（`_ioPageActive`），未显示页/区与离页期间灯保留上次数据，回页/切页后下一周期恢复采集；断线不清灯色（`IsOn` 保持上次值）。
+2. **状态信息**（IO 监控）：**点位集完全由导入的 IO 表驱动，不再固定 64 点**。卡片左上 = **X/Y 分段切换**（`XViewSegment` 输入监控 / `YViewSegment` 输出监控，GroupName="IoView"，`IoView_Checked` 切网格显隐并重新分页）+ **「导入 IO 表」按钮**（`ImportIoTableButton_Click`：逐行按当前通讯驱动 `_currentDriver` 校验——**仅接受 X / Y 元件**且地址须落在驱动定义范围内；通过者整体替换点位集，结果**一律用 `MessageBox` 对话框**汇报：解析失败→红错误框 / 0 项有效→警告框且不替换 / 否则「成功导入 N 项，失败 M 项」+ 失败明细；**已无内联提示文字**）。**分页**：每页固定 4 列 × `IoRowsPerColumn`（默认 16）= **64 点**，超出即分页；X/Y **各自独立记页**（`_xPageIndex` / `_yPageIndex`），分页控件在卡片右上角（`IoPagerPanel` = `IoPrevPageButton` + `IoPageText`「当前/总数」+ `IoNextPageButton`），**只有一页时整体隐藏**，首/末页对应箭头置灰。**未导入时列表为空**并显示 `IoEmptyHint`「尚未导入 IO 表」。点位按**地址升序**排序（`RebuildIoPoints`）。列宽 `*` 等分；行高 22、行距 2、列距 4。点位集/注释唯一来源 = `io-comments.json`（AppContext.BaseDirectory，导入后写入；**键=点位名，值=注释**）—— 内置 `XComments` 默认表**已移除**；`IoPoint.Comment` 是 INPC 属性，导入即刷 UI。**采集跟随可见性**：连接后 `PollLoopAsync` 每周期只读**当前显示分段 + 当前页**的点位（`_visiblePage` 快照，按所属地址区分块、每块读本区最小..最大地址（FC01，跨区空隙从站不接受）再按偏移回填，默认 100ms）；**离开本页停止全部报文**（`_ioPageActive`），未显示页/区与离页期间灯保留上次数据，回页/切页后下一周期恢复采集；断线不清灯色（`IsOn` 保持上次值）。
 3. **设备配置**：连接方式（以太网/串口）、协议类型（ModbusTCP）、设备类型（**来自 `DriverRegistry.All`**，选中即缓存 `_currentDriver`）、采集周期（100ms–1s 四档，默认 100ms）；以太网时显示目标网卡（`NicInfo`：扫描本机网卡 `网卡名(ip)` + 刷新按钮）、IP、端口号、连接按钮 + 状态灯。连接中/已连接时 `SetInputsEnabled(false)` 全部置灰，按钮变「断开」。连接 = **3 秒超时 ConnectAsync + 绑定所选网卡本地端点**，成功即启动后台轮询（报文已实现，`Drivers/ModbusTcpClient.cs`），读超时/对端关闭 → 自动断开红字提示。串口模式目前仅隐藏以太网面板，功能未实现（P1）。
 
 ## 通讯驱动标准（Drivers/）
@@ -112,7 +112,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 - UI 事件处理方法：`Xxx_Click` / `Nav_Checked` / `Xxx_SelectionChanged`；构造函数中 `InitializeComponent()` 后初始化数据
 - 颜色常量：主色 `#0067C0`，背景 `#F3F3F3`，顶栏 `#E7E7E7`，卡片白底 + `#E8E8E8` 边框、圆角 8
 - 字体：全局 `Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI`；标题用 `Segoe UI Variable Display`；图标 `Segoe Fluent Icons, Segoe MDL2 Assets`（资源键 `IconFont`）
-- 表单布局：标签 `Width="80"` + 控件 `Width="220"`、行距 16、控件高与下拉框一致（`SyncInputHeights` 在 Loaded 与面板显示时同步）
+- 表单布局：标签 `Width="80"` + 控件 `Width="200"`、行距 16、控件高与下拉框一致（`SyncInputHeights` 在 Loaded 与面板显示时同步）
 - 修改 UI 后构建验证；用户习惯「构建成功后自动启动应用」
 
 ## 常见任务速查
@@ -124,7 +124,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | IO 点位集构建/排序 | `RebuildIoPoints` → `TryCreateIoPoint`（仅 X/Y + 驱动范围校验）/ `NormalizePointName`（元件转大写）；按地址升序 |
 | IO 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`；`_xPageIndex` / `_yPageIndex` 各自独立，每页 4×`IoRowsPerColumn` |
 | 改每页点位数 | `MainWindow.xaml.cs` → `IoRowsPerColumn`（列数固定 4，每页 = 4 × 该值） |
-| IO 采集范围 | `PollOnceAsync` 读 `_visiblePage` 快照 → 本页最小..最大地址一次 FC01 |
+| IO 采集范围 | `PollOnceAsync` 读 `_visiblePage` 快照 → 按地址区分块 FC01（`CommDriver.FindArea`，单块 ≤2000 点） |
 | 改 IO 行高/行距 | `IoItemTemplate` → `Height` / `Margin` 第 4 值 |
 | 改 IO 列宽策略 | `IoColumnsGrid` / `YIoColumnsGrid`（均 4×`*`） |
 | 加/改 X-Y 分段切换 | `IoSegmentRadioButton` 样式 + 卡片左上 `XViewSegment`/`YViewSegment` + `IoView_Checked` |

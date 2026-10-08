@@ -68,6 +68,16 @@ namespace DSH_Modbus采集工具
         public override string ToString() => $"{Name}({Ip})";
     }
 
+    /// <summary>设备配置页展示用：地址表中的一个元件（同名元件的多段地址区合并为一项）。</summary>
+    public sealed class AreaElement
+    {
+        /// <summary>元件符号，如 M、X、SD</summary>
+        public string Element { get; init; } = string.Empty;
+
+        /// <summary>悬停提示：各段编号范围与点数</summary>
+        public string ToolTipText { get; init; } = string.Empty;
+    }
+
     public partial class MainWindow : Window
     {
         private ModbusTcpClient? _modbus;
@@ -81,6 +91,9 @@ namespace DSH_Modbus采集工具
         /// <summary>每页 4 列 × 16 行 = 64 点；本分段点位超出一页即分页。</summary>
         private const int IoRowsPerColumn = 16;
         private const int IoPageSize = 4 * IoRowsPerColumn;
+
+        /// <summary>Modbus FC01 单次读取上限（协议规定 2000 点）。</summary>
+        private const int MaxCoilsPerRead = 2000;
 
         /// <summary>当前页号（0 基）；X / Y 两分段各自独立记页。</summary>
         private volatile int _xPageIndex;
@@ -123,6 +136,7 @@ namespace DSH_Modbus采集工具
 
             _ioInitialized = true;
             RebuildIoPoints();
+            RefreshDriverAreas();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -673,7 +687,65 @@ namespace DSH_Modbus采集工具
                 RebuildIoPoints();
             }
 
+            RefreshDriverAreas();
             UpdateOverviewStatus();
+        }
+
+        /// <summary>
+        /// 刷新设备配置页的地址表元件展示：按当前驱动分「线圈区 / 寄存器区」两行列出元件，
+        /// 同名元件的多段地址区合并为一项（悬停提示列出各段编号范围与点数）。
+        /// </summary>
+        private void RefreshDriverAreas()
+        {
+            if (CoilAreaItems == null || RegisterAreaItems == null)
+            {
+                return;
+            }
+
+            CommDriver? driver = _currentDriver;
+            if (driver == null)
+            {
+                CoilAreaItems.ItemsSource = null;
+                RegisterAreaItems.ItemsSource = null;
+                return;
+            }
+
+            CoilAreaItems.ItemsSource = BuildAreaElements(
+                driver.Areas.Where(a => a.Area == ModbusArea.Coil));
+
+            RegisterAreaItems.ItemsSource = BuildAreaElements(
+                driver.Areas.Where(a => a.Area is ModbusArea.HoldingRegister or ModbusArea.InputRegister));
+        }
+
+        /// <summary>把同一元件的若干地址区合并成一项；多段时提示里逐段列出范围与点数。</summary>
+        private static List<AreaElement> BuildAreaElements(IEnumerable<AddressArea> areas)
+        {
+            var result = new List<AreaElement>();
+
+            foreach (var group in areas.GroupBy(a => a.Element))
+            {
+                var list = group.ToList();
+                bool multi = list.Count > 1;
+
+                var lines = new List<string> { group.Key };
+                for (int i = 0; i < list.Count; i++)
+                {
+                    AddressArea a = list[i];
+                    // FormatName 按该区进制输出编号（八进制区输出 X0/X77 这类），故传十进制存储值即可
+                    string from = a.FormatName(a.StartIndex);
+                    string to = a.FormatName(a.StartIndex + a.Count - 1);
+                    string prefix = multi ? $"  段{i + 1}  " : "  ";
+                    lines.Add($"{prefix}{from} – {to}   共 {a.Count} 点");
+                }
+
+                result.Add(new AreaElement
+                {
+                    Element = group.Key,
+                    ToolTipText = string.Join("\n", lines),
+                });
+            }
+
+            return result;
         }
 
         private void PollIntervalComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -783,34 +855,38 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 本页点位可能不连续：按最小..最大地址一次读回（FC01），再用偏移回填
-            int min = int.MaxValue;
-            int max = int.MinValue;
-            foreach (IoPoint p in points)
-            {
-                if (p.Address < min)
-                {
-                    min = p.Address;
-                }
+            // 本页点位可能跨多段地址区（如信捷 X 本体 + 扩展模块）：区与区之间的空隙地址从站不接受，
+            // 跨区一次读会回异常响应而被判为断线。故按所属地址区分块，每块读本区最小..最大地址（FC01），再按偏移回填。
+            // 连接期间设备类型下拉已置灰，_currentDriver 不会变化。
+            CommDriver? driver = _currentDriver;
+            var results = new List<(IoPoint[] Points, int Min, bool[] Coils)>();
 
-                if (p.Address > max)
+            foreach (var group in points.GroupBy(p => driver?.FindArea(ModbusArea.Coil, p.Address)))
+            {
+                // 单次 FC01 最多 2000 点；同区跨度超限时再按 2000 切分
+                int baseAddress = group.Min(p => p.Address);
+                foreach (var chunk in group.GroupBy(p => (p.Address - baseAddress) / MaxCoilsPerRead))
                 {
-                    max = p.Address;
+                    IoPoint[] chunkPoints = chunk.ToArray();
+                    int min = chunkPoints.Min(p => p.Address);
+                    int max = chunkPoints.Max(p => p.Address);
+                    bool[] coils = await modbus.ReadCoilsAsync((ushort)min, (ushort)(max - min + 1), token);
+                    results.Add((chunkPoints, min, coils));
                 }
             }
-
-            int count = max - min + 1;
-            bool[] coils = await modbus.ReadCoilsAsync((ushort)min, (ushort)count, token);
 
             // 回到 UI 线程刷新绑定（IoPoint 为 INPC 对象，IsOn 变更驱动灯色）
             await Dispatcher.InvokeAsync(() =>
             {
-                foreach (IoPoint p in points)
+                foreach (var (chunkPoints, min, coils) in results)
                 {
-                    int offset = p.Address - min;
-                    if (offset >= 0 && offset < coils.Length)
+                    foreach (IoPoint p in chunkPoints)
                     {
-                        p.IsOn = coils[offset];
+                        int offset = p.Address - min;
+                        if (offset >= 0 && offset < coils.Length)
+                        {
+                            p.IsOn = coils[offset];
+                        }
                     }
                 }
             });

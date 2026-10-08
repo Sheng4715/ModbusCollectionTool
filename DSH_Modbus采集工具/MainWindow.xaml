@@ -141,6 +141,31 @@
             </Setter>
         </Style>
 
+        <!-- 地址表元件块（设备配置页：线圈区 / 寄存器区） -->
+        <DataTemplate x:Key="AreaChipTemplate">
+            <Border Background="#F3F3F3" BorderBrush="#E8E8E8" BorderThickness="1"
+                    CornerRadius="4" Padding="8,2" Margin="0,0,6,0"
+                    VerticalAlignment="Center"
+                    ToolTip="{Binding ToolTipText}">
+                <TextBlock Text="{Binding Element}"
+                           FontSize="12" FontWeight="SemiBold"
+                           Foreground="#1A1A1A"/>
+            </Border>
+        </DataTemplate>
+
+        <!-- 地址表元件行：横向排列，不换行 -->
+        <Style x:Key="AreaItemsControlStyle" TargetType="ItemsControl">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="ItemTemplate" Value="{StaticResource AreaChipTemplate}"/>
+            <Setter Property="ItemsPanel">
+                <Setter.Value>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- IO 分页按钮（卡片右上角 < >） -->
         <Style x:Key="IoPagerButton" TargetType="Button">
             <Setter Property="Width" Value="26"/>
@@ -179,8 +204,8 @@
                     BorderThickness="1" CornerRadius="3">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="14"/>
-                        <ColumnDefinition Width="30"/>
+                        <ColumnDefinition Width="20"/>
+                        <ColumnDefinition Width="44"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Border Width="10" Height="10" CornerRadius="5"
@@ -432,6 +457,9 @@
                                     </StackPanel>
                                 </Grid>
 
+                                <!-- 分隔线：控件行与 IO 点位表格之间 -->
+                                <Border Height="1" Background="#E8E8E8" Margin="0,0,0,8"/>
+
                                 <!-- 输入监控（X0–X77） -->
                                 <Grid x:Name="IoColumnsGrid">
                                     <Grid.ColumnDefinitions>
@@ -510,7 +538,7 @@
                                                FontSize="14" Foreground="#1A1A1A"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="ConnectionTypeComboBox"
-                                              Width="220"
+                                              Width="200"
                                               VerticalAlignment="Center"
                                               SelectedIndex="0"
                                               SelectionChanged="ConnectionTypeComboBox_SelectionChanged">
@@ -526,7 +554,7 @@
                                                FontSize="14" Foreground="#1A1A1A"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="ProtocolTypeComboBox"
-                                              Width="220"
+                                              Width="200"
                                               VerticalAlignment="Center"
                                               SelectedIndex="0"
                                               SelectionChanged="ProtocolTypeComboBox_SelectionChanged">
@@ -541,7 +569,7 @@
                                                FontSize="14" Foreground="#1A1A1A"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="DeviceTypeComboBox"
-                                              Width="220"
+                                              Width="200"
                                               VerticalAlignment="Center"
                                               SelectionChanged="DeviceTypeComboBox_SelectionChanged"/>
                                 </StackPanel>
@@ -553,7 +581,7 @@
                                                FontSize="14" Foreground="#1A1A1A"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="PollIntervalComboBox"
-                                              Width="220"
+                                              Width="200"
                                               VerticalAlignment="Center"
                                               SelectedIndex="0"
                                               SelectionChanged="PollIntervalComboBox_SelectionChanged">
@@ -574,7 +602,7 @@
                                                    FontSize="14" Foreground="#1A1A1A"
                                                    VerticalAlignment="Center"/>
                                         <ComboBox x:Name="TargetNicComboBox"
-                                                  Width="220"
+                                                  Width="200"
                                                   VerticalAlignment="Center"/>
                                         <Button x:Name="RefreshNicButton"
                                                 Content="刷新"
@@ -593,7 +621,7 @@
                                                    FontSize="14" Foreground="#1A1A1A"
                                                    VerticalAlignment="Center"/>
                                         <TextBox x:Name="IpTextBox"
-                                                 Width="220"
+                                                 Width="200"
                                                  VerticalAlignment="Center"
                                                  VerticalContentAlignment="Center"
                                                  Padding="8,0"
@@ -621,13 +649,13 @@
                                     </StackPanel>
 
                                     <!-- 端口号 -->
-                                    <StackPanel Orientation="Horizontal">
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                         <TextBlock Text="端口号"
                                                    Width="80"
                                                    FontSize="14" Foreground="#1A1A1A"
                                                    VerticalAlignment="Center"/>
                                         <TextBox x:Name="PortTextBox"
-                                                 Width="220"
+                                                 Width="200"
                                                  VerticalAlignment="Center"
                                                  VerticalContentAlignment="Center"
                                                  Padding="8,0"
@@ -636,6 +664,33 @@
                                                  TextChanged="ConfigInput_TextChanged"/>
                                     </StackPanel>
 
+                                </StackPanel>
+
+                                <!-- 分隔线：连接参数与地址表元件（上方 16 由末行表单提供，上下对称；串口模式下末行为采集周期，同样成立） -->
+                                <Border Height="1" Background="#E8E8E8" Margin="0,0,0,16"/>
+
+                                <!-- 地址区标题 -->
+                                <TextBlock Text="设备通讯区域"
+                                           FontSize="14" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                           Margin="0,0,0,12"/>
+
+                                <!-- 当前设备类型的 Modbus 地址表元件（悬停查看各段范围与点数） -->
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <TextBlock Text="线圈区"
+                                               Width="80"
+                                               FontSize="14" Foreground="#1A1A1A"
+                                               VerticalAlignment="Center"/>
+                                    <ItemsControl x:Name="CoilAreaItems"
+                                                  Style="{StaticResource AreaItemsControlStyle}"/>
+                                </StackPanel>
+
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="寄存器区"
+                                               Width="80"
+                                               FontSize="14" Foreground="#1A1A1A"
+                                               VerticalAlignment="Center"/>
+                                    <ItemsControl x:Name="RegisterAreaItems"
+                                                  Style="{StaticResource AreaItemsControlStyle}"/>
                                 </StackPanel>
                             </StackPanel>
                         </Border>
