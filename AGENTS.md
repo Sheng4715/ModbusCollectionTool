@@ -114,6 +114,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 - 字体：全局 `Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI`；标题用 `Segoe UI Variable Display`；图标 `Segoe Fluent Icons, Segoe MDL2 Assets`（资源键 `IconFont`）
 - 表单布局：标签 `Width="80"` + 控件 `Width="200"`、行距 16、控件高与下拉框一致（`SyncInputHeights` 在 Loaded 与面板显示时同步）
 - 修改 UI 后构建验证；用户习惯「构建成功后自动启动应用」
+- `IO模板.xlsx` 仅为**导入功能测试用**模板：其注释列与 `io-comments.json` 的内容都是占位文本（`CommentX0`/`Comment0`），**无业务含义** —— 不必维护、不必恢复，也不要把它当成待处理问题
 
 ## 常见任务速查
 
