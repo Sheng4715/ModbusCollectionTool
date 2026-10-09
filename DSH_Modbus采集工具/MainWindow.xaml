@@ -489,10 +489,15 @@
                                             Style="{StaticResource LogClearButton}"
                                             Click="ClearDeviceLogButton_Click"/>
                                 </Grid>
-                                <ListBox Grid.Row="1" x:Name="DeviceLogList"
-                                         Margin="16,0,8,8"
-                                         Style="{StaticResource DeviceLogListStyle}"
-                                         ItemTemplate="{StaticResource DeviceLogItemTemplate}"/>
+                                <!-- 日志显示区：内嵌框线，与卡片留白区分开 -->
+                                <Border Grid.Row="1" Margin="16,0,10,10"
+                                        Background="#FFFFFF"
+                                        BorderBrush="#C8C8C8" BorderThickness="1"
+                                        CornerRadius="4" Padding="8,6,2,6">
+                                    <ListBox x:Name="DeviceLogList"
+                                             Style="{StaticResource DeviceLogListStyle}"
+                                             ItemTemplate="{StaticResource DeviceLogItemTemplate}"/>
+                                </Border>
                             </Grid>
                         </Border>
                     </Grid>
