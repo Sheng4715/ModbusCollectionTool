@@ -429,8 +429,9 @@
                           Padding="36,4,36,16" Grid.ColumnSpan="2" Margin="112,0,0,0">
                 <StackPanel>
 
-                    <!-- 总览：高度取内容区视口高度，下方 1/4 固定给设备状态日志（贴窗口底部） -->
-                    <Grid x:Name="OverviewPanel" d:Visibility="Collapsed"
+                    <!-- 总览：高度取内容区视口高度，下方 1/4 固定给设备状态日志（贴窗口底部）。
+                         设计器只认 d:Visibility，本页为设计器默认预览页（切换见 AGENTS.md） -->
+                    <Grid x:Name="OverviewPanel" d:Visibility="Visible"
                           Height="{Binding ViewportHeight, ElementName=ContentScrollViewer}">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="3*"/>
@@ -481,8 +482,8 @@
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
                                 <Grid Grid.Row="0" Margin="16,8,10,2">
-                                    <TextBlock Text="设备状态日志"
-                                               FontSize="13" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                    <TextBlock Text="运行日志"
+                                               FontSize="12" FontWeight="SemiBold" Foreground="#1A1A1A"
                                                VerticalAlignment="Center"/>
                                     <Button x:Name="ClearDeviceLogButton" Content="清空"
                                             HorizontalAlignment="Right" VerticalAlignment="Center"
@@ -492,7 +493,7 @@
                                 <!-- 日志显示区：内嵌框线，与卡片留白区分开 -->
                                 <Border Grid.Row="1" Margin="16,0,10,10"
                                         Background="#FFFFFF"
-                                        BorderBrush="#C8C8C8" BorderThickness="1"
+                                        BorderBrush="#E8E8E8" BorderThickness="1"
                                         CornerRadius="4" Padding="8,6,2,6">
                                     <ListBox x:Name="DeviceLogList"
                                              Style="{StaticResource DeviceLogListStyle}"
@@ -503,7 +504,7 @@
                     </Grid>
 
                     <!-- 状态信息 / IO 监控 -->
-                    <StackPanel x:Name="StatusInfoPanel" Visibility="Collapsed" d:Visibility="Visible">
+                    <StackPanel x:Name="StatusInfoPanel" Visibility="Collapsed" d:Visibility="Collapsed">
                         <TextBlock Text="状态信息"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold" Foreground="#1A1A1A"
