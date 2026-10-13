@@ -8,10 +8,12 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using DSH_Modbus采集工具.Drivers;
+using DSH_Modbus采集工具.Modeling;
 
 namespace DSH_Modbus采集工具
 {
@@ -168,6 +170,12 @@ namespace DSH_Modbus采集工具
         /// <summary>正在按设备类型同步字节顺序下拉框（用于区分「程序设置」与「用户改动」）。</summary>
         private bool _syncingByteOrderCombos;
 
+        /// <summary>自由监控项集合（增删改 + 落盘 + 地址解析）。</summary>
+        private readonly MonitorItemSet _monitorSet = new();
+
+        /// <summary>当前显示的是「自由监控」分段（采集跟随可见分段用）。</summary>
+        private volatile bool _freeViewActive;
+
         private readonly List<IoPoint> _xPoints = new();
         private readonly List<IoPoint> _yPoints = new();
 
@@ -253,6 +261,12 @@ namespace DSH_Modbus采集工具
             RebuildIoPoints();
             RefreshDriverAreas();
             SyncByteOrderCombos();
+
+            // 自由监控：载入持久化项 + 绑定列表（解析失败项保留并标红）
+            _monitorSet.SetDriver(_currentDriver);
+            _monitorSet.Load();
+            MonitorItemsControl.ItemsSource = _monitorSet.Items;
+            RefreshMonitorView();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -1171,6 +1185,12 @@ namespace DSH_Modbus采集工具
 
             RefreshDriverAreas();
             SyncByteOrderCombos();
+
+            // 自由监控项也按新驱动重解析（元件可用性与编号范围随品牌变化）
+            _monitorSet.SetDriver(_currentDriver);
+            MonitorItemsControl?.Items.Refresh();
+            RefreshMonitorView();
+
             UpdateOverviewStatus();
         }
 
@@ -1566,12 +1586,361 @@ namespace DSH_Modbus采集工具
             }
 
             bool xView = XViewSegment.IsChecked == true;
-            _yViewActive = !xView; // 采集跟随可见分段：未显示区不读，保留上次数据
-            IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
-            YIoColumnsGrid.Visibility = xView ? Visibility.Collapsed : Visibility.Visible;
+            bool yView = YViewSegment.IsChecked == true;
+            bool freeView = FreeViewSegment?.IsChecked == true;
 
-            // 切段后本段有自己的页号与页数，重新切片绑定
-            ApplyIoPage();
+            // 采集跟随可见分段：未显示区不读，保留上次数据
+            _yViewActive = yView;
+            _freeViewActive = freeView;
+
+            IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
+            YIoColumnsGrid.Visibility = yView ? Visibility.Visible : Visibility.Collapsed;
+
+            if (FreeMonitorPanel != null)
+            {
+                FreeMonitorPanel.Visibility = freeView ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            // 导入 IO 表按钮只在 X/Y 分段下有意义（自由监控有自己的「新增监控项」）
+            if (ImportIoTableButton != null)
+            {
+                ImportIoTableButton.Visibility = freeView ? Visibility.Collapsed : Visibility.Visible;
+            }
+
+            // IO 分页控件在自由监控下无意义
+            if (IoPagerPanel != null && freeView)
+            {
+                IoPagerPanel.Visibility = Visibility.Collapsed;
+            }
+
+            // 空提示只属于 X/Y（自由监控有自己的空提示）
+            if (IoEmptyHint != null && freeView)
+            {
+                IoEmptyHint.Visibility = Visibility.Collapsed;
+            }
+
+            if (freeView)
+            {
+                RefreshMonitorView();
+            }
+            else
+            {
+                // 切段后本段有自己的页号与页数，重新切片绑定
+                ApplyIoPage();
+            }
+        }
+
+        // ---------- 自由监控（P4-2） ----------
+
+        /// <summary>刷新自由监控的空状态与计数（增删后调用）。</summary>
+        private void RefreshMonitorView()
+        {
+            if (MonitorItemsControl == null)
+            {
+                return;
+            }
+
+            int n = _monitorSet.Items.Count;
+            if (MonitorEmptyHint != null)
+            {
+                MonitorEmptyHint.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            if (MonitorHeaderGrid != null)
+            {
+                MonitorHeaderGrid.Visibility = n == 0 ? Visibility.Collapsed : Visibility.Visible;
+            }
+
+            if (MonitorCountText != null)
+            {
+                MonitorCountText.Text = n == 0 ? string.Empty : $"共 {n} 项";
+            }
+        }
+
+        private void AddMonitorItemButton_Click(object sender, RoutedEventArgs e)
+        {
+            // 新建项默认：当前驱动第一个寄存器元件 + 编号 0 + INT + DEC。
+            // 直接给一个「能解析成功」的初值，避免一新增就标红。
+            string element = "D";
+            string index = "0";
+
+            if (_currentDriver != null)
+            {
+                foreach (AddressArea a in _currentDriver.Areas)
+                {
+                    if (a.Area is ModbusArea.HoldingRegister or ModbusArea.InputRegister)
+                    {
+                        element = a.Element;
+                        index = a.StartIndex.ToString();
+                        break;
+                    }
+                }
+            }
+
+            var model = new DataPoint
+            {
+                Element = element,
+                Index = index,
+                Type = DataType.Int,
+                Format = DisplayFormat.Dec,
+                Comment = string.Empty,
+            };
+
+            MonitorItem item = _monitorSet.Add(model);
+            RefreshMonitorView();
+
+            // 新增后滚到底部并聚焦编号框，便于连续录入
+            MonitorItemsControl?.UpdateLayout();
+        }
+
+        private void RemoveMonitorItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.DataContext is MonitorItem item)
+            {
+                _monitorSet.Remove(item);
+                RefreshMonitorView();
+            }
+        }
+
+        /// <summary>
+        /// 行内控件与行数据的桥接：DataTemplate 里的控件拿不到行对象，
+        /// 统一用 Tag 承载行引用（在 <see cref="MonitorRow_Loaded"/> 里挂上）。
+        /// </summary>
+        private static MonitorItem? RowOf(object sender)
+        {
+            if (sender is FrameworkElement fe)
+            {
+                if (fe.DataContext is MonitorItem fromContext)
+                {
+                    return fromContext;
+                }
+
+                if (fe.Tag is MonitorItem fromTag)
+                {
+                    return fromTag;
+                }
+            }
+
+            return null;
+        }
+
+        private void MonitorElement_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is ComboBox cb && cb.SelectedItem is string element)
+            {
+                MonitorItem? item = RowOf(cb);
+                if (item == null || item.Model.Element == element)
+                {
+                    return;
+                }
+
+                item.Model.Element = element;
+                _monitorSet.AfterChange(item);
+                RefreshMonitorView();
+            }
+        }
+
+        private void MonitorIndex_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is TextBox tb)
+            {
+                MonitorItem? item = RowOf(tb);
+                if (item == null)
+                {
+                    return;
+                }
+
+                string text = tb.Text?.Trim() ?? string.Empty;
+                if (item.Model.Index == text)
+                {
+                    return;
+                }
+
+                item.Model.Index = text;
+                _monitorSet.AfterChange(item);
+            }
+        }
+
+        private void MonitorType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is ComboBox cb && cb.SelectedItem is DataTypeSpec spec)
+            {
+                MonitorItem? item = RowOf(cb);
+                if (item == null || item.Model.Type == spec.Type)
+                {
+                    return;
+                }
+
+                item.Model.Type = spec.Type;
+
+                // 换类型后原格式可能不再合法（如 INT 的 DEC 换到 STRING），
+                // 自动落到该类型的默认格式，避免留下一个「非法组合」的项
+                if (!spec.AllowsFormat(item.Model.Format))
+                {
+                    item.Model.Format = spec.DefaultFormat;
+                }
+
+                // STRING 需要长度，给个默认值避免必然报错
+                if (spec.HasVariableLength && item.Model.Length <= 0)
+                {
+                    item.Model.Length = 8;
+                }
+
+                _monitorSet.AfterChange(item);
+
+                // 换类型会改变「格式候选」与「是否需要长度」，就地更新本行控件，
+                // 不重建整行 —— 重建会打断用户正在进行的输入
+                if (cb.Parent is FrameworkElement row)
+                {
+                    ApplyMonitorRowState(row, item);
+                }
+
+                RefreshMonitorView();
+            }
+        }
+
+        private void MonitorFormat_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is ComboBox cb && cb.SelectedItem is DisplayFormat fmt)
+            {
+                MonitorItem? item = RowOf(cb);
+                if (item == null || item.Model.Format == fmt)
+                {
+                    return;
+                }
+
+                item.Model.Format = fmt;
+                _monitorSet.AfterChange(item);
+            }
+        }
+
+        /// <summary>STRING 长度：只接受正整数；非法输入不写回模型（保留上次有效值）。</summary>
+        private void MonitorLength_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is not TextBox tb)
+            {
+                return;
+            }
+
+            MonitorItem? item = RowOf(tb);
+            if (item == null)
+            {
+                return;
+            }
+
+            if (!int.TryParse(tb.Text?.Trim(), out int len) || len <= 0)
+            {
+                // 输入中途（空串、只输了一半）不当作错误，等用户输完
+                return;
+            }
+
+            if (item.Model.Length == len)
+            {
+                return;
+            }
+
+            item.Model.Length = len;
+            _monitorSet.AfterChange(item);
+        }
+
+        /// <summary>
+        /// 行初始化：把行对象挂到 Tag、填充三个下拉框的候选项与当前选中值。
+        /// 下拉框的候选项按行构造（类型候选固定，格式候选随类型变），
+        /// 故不放在 XAML 里静态定义。
+        /// </summary>
+        private void MonitorRow_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement row || row.DataContext is not MonitorItem item)
+            {
+                return;
+            }
+
+            row.Tag = item;
+
+            // 元件符号：由当前驱动提供（线圈类元件与寄存器类元件分开）
+            if (row.FindName("ElementCombo") is ComboBox elementCombo)
+            {
+                elementCombo.ItemsSource = MonitorElementCandidates(item);
+                elementCombo.SelectedItem = item.Model.Element;
+            }
+
+            if (row.FindName("IndexBox") is TextBox indexBox)
+            {
+                indexBox.Text = item.Model.Index;
+            }
+
+            if (row.FindName("TypeCombo") is ComboBox typeCombo)
+            {
+                typeCombo.ItemsSource = item.Model.Type == DataType.Bool && item.Model.Area == ModbusArea.Coil
+                    ? DataTypes.CoilTypes
+                    : DataTypes.RegisterTypes;
+                typeCombo.SelectedItem = DataTypes.Get(item.Model.Type);
+            }
+
+            if (row.FindName("FormatCombo") is ComboBox formatCombo)
+            {
+                formatCombo.ItemsSource = DataTypes.Get(item.Model.Type).AllowedFormats;
+                formatCombo.SelectedItem = item.Model.Format;
+            }
+
+            ApplyMonitorRowState(row, item);
+        }
+
+        /// <summary>
+        /// 让行内控件的可见性/候选项与该行当前类型保持一致（初始化时与换类型后都调）。
+        /// 集中在一处，避免「换类型」路径漏掉某个控件的联动。
+        /// </summary>
+        private static void ApplyMonitorRowState(FrameworkElement row, MonitorItem item)
+        {
+            DataTypeSpec spec = DataTypes.Get(item.Model.Type);
+
+            // STRING 才显示长度输入
+            if (row.FindName("LengthPanel") is FrameworkElement lengthPanel)
+            {
+                lengthPanel.Visibility = spec.HasVariableLength ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            if (row.FindName("LengthBox") is TextBox lengthBox)
+            {
+                // 只在需要时写入：写回会触发 TextChanged，无谓地走一遍落盘
+                if (spec.HasVariableLength && lengthBox.Text != item.Model.Length.ToString())
+                {
+                    lengthBox.Text = item.Model.Length.ToString();
+                }
+            }
+
+            if (row.FindName("FormatCombo") is ComboBox formatCombo)
+            {
+                formatCombo.ItemsSource = spec.AllowedFormats;
+                formatCombo.SelectedItem = item.Model.Format;
+            }
+        }
+
+        /// <summary>本行可选的元件符号：按「线圈 / 寄存器」列出当前驱动中存在的元件（去重）。</summary>
+        private List<string> MonitorElementCandidates(MonitorItem item)
+        {
+            var list = new List<string>();
+            if (_currentDriver == null)
+            {
+                return list;
+            }
+
+            bool coil = item.Model.Type == DataType.Bool;
+            foreach (AddressArea a in _currentDriver.Areas)
+            {
+                bool isCoil = a.Area == ModbusArea.Coil;
+                if (isCoil != coil)
+                {
+                    continue;
+                }
+
+                if (!list.Contains(a.Element))
+                {
+                    list.Add(a.Element);
+                }
+            }
+
+            return list;
         }
 
         private void ImportIoTableButton_Click(object sender, RoutedEventArgs e)

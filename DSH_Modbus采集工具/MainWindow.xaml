@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:DSH_Modbus采集工具"
         mc:Ignorable="d"
         Title="采集工具"
         Height="640" Width="1024"
@@ -26,6 +27,9 @@
 
     <Window.Resources>
         <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+        <!-- 枚举 → 大写名（显示格式 BIN/DEC/HEX/ASCII） -->
+        <local:EnumUpperConverter x:Key="EnumUpperConverter"/>
 
         <!-- 标题栏按钮 -->
         <Style x:Key="CaptionButton" TargetType="Button">
@@ -237,6 +241,143 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- ================= 自由监控 ================= -->
+
+        <!-- 行内小按钮（删除 ×） -->
+        <Style x:Key="MonitorIconButton" TargetType="Button">
+            <Setter Property="Width" Value="26"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#8A8A8A"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E81123"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 行内输入框：无边框，聚焦时才显示下划线，避免表格看起来很「重」 -->
+        <Style x:Key="MonitorInlineTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="2,0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#1A1A1A"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="#D0D0D0"/>
+                </Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="#0067C0"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 枚举 → 大写名（显示格式用；BIN/DEC/HEX/ASCII 按惯例全大写） -->
+        <DataTemplate x:Key="EnumUpperTemplate">
+            <TextBlock Text="{Binding Converter={StaticResource EnumUpperConverter}}"
+                       FontSize="12" Foreground="#1A1A1A"
+                       VerticalAlignment="Center"/>
+        </DataTemplate>
+
+        <!-- 行内下拉框：紧凑，用于类型 / 格式 -->
+        <Style x:Key="MonitorInlineComboBox" TargetType="ComboBox">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+
+        <!-- 自由监控的一行 -->
+        <DataTemplate x:Key="MonitorItemTemplate">
+            <Border Height="30" Margin="0,0,0,2"
+                    Background="Transparent"
+                    BorderBrush="#F0F0F0" BorderThickness="0,0,0,1"
+                    Loaded="MonitorRow_Loaded"
+                    ToolTip="{Binding ToolTipText}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                        <ColumnDefinition Width="150"/>  <!-- 元件：符号↓ + 编号[] -->
+                        <ColumnDefinition Width="152"/>  <!-- 数据类型 ↓（+ STRING 长度） -->
+                        <ColumnDefinition Width="88"/>   <!-- 显示格式 ↓ -->
+                        <ColumnDefinition Width="*"/>    <!-- 当前值 -->
+                        <ColumnDefinition Width="40"/>   <!-- 删除 -->
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="{Binding Id}"
+                               FontSize="12" Foreground="#9A9A9A"
+                               VerticalAlignment="Center"/>
+
+                    <!-- 元件：符号（驱动提供的选项）+ 编号（即时校验范围） -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <ComboBox x:Name="ElementCombo"
+                                  Width="66"
+                                  Style="{StaticResource MonitorInlineComboBox}"
+                                  SelectionChanged="MonitorElement_SelectionChanged"/>
+                        <TextBox x:Name="IndexBox"
+                                 Width="74"
+                                 Margin="4,0,0,0"
+                                 Style="{StaticResource MonitorInlineTextBox}"
+                                 TextChanged="MonitorIndex_TextChanged"/>
+                    </StackPanel>
+
+                    <ComboBox Grid.Column="2" x:Name="TypeCombo"
+                              Width="96"
+                              HorizontalAlignment="Left"
+                              Style="{StaticResource MonitorInlineComboBox}"
+                              DisplayMemberPath="DisplayName"
+                              SelectionChanged="MonitorType_SelectionChanged"/>
+
+                    <!-- STRING 的长度：仅该类型时显示 -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                Visibility="Collapsed" x:Name="LengthPanel">
+                        <TextBlock Text="长" FontSize="11" Foreground="#8A8A8A"
+                                   VerticalAlignment="Center" Margin="0,0,2,0"/>
+                        <TextBox x:Name="LengthBox"
+                                 Width="28"
+                                 Style="{StaticResource MonitorInlineTextBox}"
+                                 TextChanged="MonitorLength_TextChanged"
+                                 ToolTip="字符串字符数 n；占 ⌈n/2⌉ 个连续寄存器"/>
+                    </StackPanel>
+
+                    <ComboBox Grid.Column="3" x:Name="FormatCombo"
+                              Width="76"
+                              Style="{StaticResource MonitorInlineComboBox}"
+                              ItemTemplate="{StaticResource EnumUpperTemplate}"
+                              SelectionChanged="MonitorFormat_SelectionChanged"/>
+
+                    <!-- 当前值：本阶段占位，读取链路属下一步 -->
+                    <TextBlock Grid.Column="4" Text="{Binding CurrentValue}"
+                               FontSize="12"
+                               Foreground="{Binding RowBrush}"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
+
+                    <Button Grid.Column="5"
+                            Content="&#xE711;"
+                            ToolTip="删除本项"
+                            Style="{StaticResource MonitorIconButton}"
+                            Click="RemoveMonitorItem_Click"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
 
         <!-- 细滚动条 -->
         <Style TargetType="ScrollBar">
@@ -506,6 +647,11 @@
                                                              GroupName="IoView"
                                                              Style="{StaticResource IoSegmentRadioButton}"
                                                              Checked="IoView_Checked"/>
+                                                <RadioButton x:Name="FreeViewSegment"
+                                                             Content="自由监控"
+                                                             GroupName="IoView"
+                                                             Style="{StaticResource IoSegmentRadioButton}"
+                                                             Checked="IoView_Checked"/>
                                             </StackPanel>
                                         </Border>
                                         <!-- 导入 IO 点位表（xlsx，替换注释） -->
@@ -591,6 +737,70 @@
                                                   Style="{StaticResource IoItemsControlStyle}"
                                                   ItemTemplate="{StaticResource IoItemTemplate}"/>
                                 </Grid>
+
+                                <!-- ================= 自由监控（默认隐藏） =================
+                                     表格式：表头 + 行。元件符号与编号分开（方案 1），
+                                     输入时即可按驱动校验编号范围，报错比合并式更具体。
+                                     当前值列本阶段为占位「—」—— 读取链路属下一步。 -->
+                                <StackPanel x:Name="FreeMonitorPanel" Visibility="Collapsed">
+
+                                    <!-- 工具行：新增项 -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                        <Button x:Name="AddMonitorItemButton"
+                                                Content="新增监控项"
+                                                Padding="10,5"
+                                                FontSize="12"
+                                                Cursor="Hand"
+                                                VerticalAlignment="Center"
+                                                Click="AddMonitorItemButton_Click"/>
+                                        <TextBlock x:Name="MonitorCountText"
+                                                   FontSize="12" Foreground="#9A9A9A"
+                                                   VerticalAlignment="Center"
+                                                   Margin="10,0,0,0"/>
+                                    </StackPanel>
+
+                                    <!-- 表头 -->
+                                    <Grid x:Name="MonitorHeaderGrid" Margin="0,0,0,4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                                            <ColumnDefinition Width="150"/>  <!-- 元件 -->
+                                            <ColumnDefinition Width="152"/>  <!-- 数据类型（+ STRING 长度） -->
+                                            <ColumnDefinition Width="88"/>   <!-- 显示格式 -->
+                                            <ColumnDefinition Width="*"/>    <!-- 当前值 -->
+                                            <ColumnDefinition Width="40"/>   <!-- 删除 -->
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="#8A8A8A"/>
+                                        <TextBlock Grid.Column="1" Text="元件" FontSize="12" Foreground="#8A8A8A"/>
+                                        <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="#8A8A8A"/>
+                                        <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="#8A8A8A"/>
+                                        <TextBlock Grid.Column="4" Text="当前值" FontSize="12" Foreground="#8A8A8A"/>
+                                    </Grid>
+
+                                    <Border Height="1" Background="#E8E8E8" Margin="0,0,0,4"/>
+
+                                    <!-- 列表：项多时自身滚动，不吃掉卡片外的高度 -->
+                                    <ScrollViewer MaxHeight="380"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl x:Name="MonitorItemsControl"
+                                                      HorizontalContentAlignment="Stretch"
+                                                      ItemTemplate="{StaticResource MonitorItemTemplate}">
+                                            <ItemsControl.ItemContainerStyle>
+                                                <Style TargetType="ContentPresenter">
+                                                    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                                </Style>
+                                            </ItemsControl.ItemContainerStyle>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+
+                                    <!-- 空状态 -->
+                                    <TextBlock x:Name="MonitorEmptyHint"
+                                               Text="尚未添加监控项，点击「新增监控项」开始"
+                                               Visibility="Collapsed"
+                                               FontSize="12"
+                                               Foreground="#9A9A9A"
+                                               Margin="0,10,0,6"/>
+                                </StackPanel>
 
                                 <!-- 空状态占位：未导入 IO 表 / 本分段无点位时显示 -->
                                 <TextBlock x:Name="IoEmptyHint"
