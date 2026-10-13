@@ -17,3 +17,6 @@ Desktop.ini
 # Office 锁文件 / 验证脚本临时目录
 ~$*
 .tmp/
+
+# 文档重排时的临时备份（不进版本库）
+docs_backup_*/
