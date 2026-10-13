@@ -587,7 +587,8 @@ namespace DSH_Modbus采集工具
 
             if (_isConnected)
             {
-                AppendDeviceLog("已断开：用户主动断开", DeviceLogLevel.Neutral);
+                // 日志规则 2：已断开（红）—— 用户主动断开也走红色，与异常断开同色
+                AppendDeviceLog("已断开：用户主动断开", DeviceLogLevel.Disconnected);
                 Disconnect();
                 return;
             }
@@ -639,7 +640,7 @@ namespace DSH_Modbus采集工具
                 ConnectButton.Content = "断开";
                 ConnectButton.IsEnabled = true;
                 SetStatus($"已连接 {ip}:{port}", "#0B7A0B");
-                AppendDeviceLog($"已连接 {ip}:{port}", DeviceLogLevel.Connected);
+                AppendDeviceLog($"已连接：{ip}:{port}", DeviceLogLevel.Connected);
                 StartPolling(client, driver, $"{ip}:{port}");
             }
             catch (OperationCanceledException)
@@ -649,7 +650,7 @@ namespace DSH_Modbus采集工具
                 {
                     SetInputsEnabled(true);
                     SetStatus("连接超时", "#C42B1C");
-                    AppendDeviceLog($"连接失败 {ip}:{port}：连接超时", DeviceLogLevel.Disconnected);
+                    AppendDeviceLog($"连接失败：{ip}:{port} 连接超时", DeviceLogLevel.Disconnected);
                 }
             }
             catch (Exception ex)
@@ -659,7 +660,7 @@ namespace DSH_Modbus采集工具
                 {
                     SetInputsEnabled(true);
                     SetStatus($"连接失败：{ex.Message}", "#C42B1C");
-                    AppendDeviceLog($"连接失败 {ip}:{port}：{ClassifyDisconnectReason(ex.Message)}",
+                    AppendDeviceLog($"连接失败：{ip}:{port} {ClassifyDisconnectReason(ex.Message)}",
                         DeviceLogLevel.Disconnected);
                 }
             }
@@ -749,6 +750,16 @@ namespace DSH_Modbus采集工具
         /// <summary>
         /// 追加一条设备状态日志：超出上限丢弃最旧一条，并滚动到最新一行。
         /// 只在 UI 线程调用（连接/断开/心跳告警回切后均已处于 UI 线程）。
+        /// <para>
+        /// 日志规则（5 种，2026-10-09 定稿）：
+        /// ① 已连接：ip:端口 —— 绿；
+        /// ② 已断开：&lt;原因&gt; —— 红（用户主动断开与异常断开同色同式，不带 ip:端口）；
+        /// ③ 连接失败：ip:端口 &lt;原因&gt; —— 红（现象名后带冒号，地址与原因之间是空格）；
+        /// ④ 通讯异常：&lt;原因&gt; —— 琥珀，**仅当连接仍在**但对端回了合法异常码；
+        /// ⑤ 通讯恢复 —— 绿，心跳重新有响应。
+        /// 注意「完全无响应」不产生第 ④ 条：它由 NotifyConnectionLost 按第 ② 条记红色「已断开」，
+        /// 因此一次断线只产生一条日志。
+        /// </para>
         /// </summary>
         private void AppendDeviceLog(string message, DeviceLogLevel level)
         {
@@ -775,8 +786,7 @@ namespace DSH_Modbus采集工具
             string text = raw.Trim();
 
             const string heartbeatPrefix = "心跳检查失败：";
-            bool fromHeartbeat = text.StartsWith(heartbeatPrefix, StringComparison.Ordinal);
-            if (fromHeartbeat)
+            if (text.StartsWith(heartbeatPrefix, StringComparison.Ordinal))
             {
                 text = text[heartbeatPrefix.Length..].Trim();
             }
@@ -829,9 +839,8 @@ namespace DSH_Modbus采集工具
                 cause = text; // 未归类：原样保留，不吞信息
             }
 
-            return fromHeartbeat && !cause.Contains("心跳", StringComparison.Ordinal)
-                ? $"心跳：{cause}"
-                : cause;
+            // 不再给心跳来源加「心跳：」前缀 —— 会出现「已断开：心跳：对端关闭连接」这种双冒号
+            return cause;
         }
 
         private void RefreshNicButton_Click(object sender, RoutedEventArgs e)
@@ -1005,7 +1014,10 @@ namespace DSH_Modbus采集工具
                         }
                         SetStatus(warning == null ? $"已连接 {endpoint}" : $"已连接；{warning}",
                             warning == null ? "#0B7A0B" : "#B26A00");
-                        AppendDeviceLog(warning == null ? "心跳恢复正常，连接可用" : $"通讯告警：{warning}",
+                        // 日志规则 5/6：连接仍在时的通讯异常（琥珀，对端回了合法异常码）
+                        // 与心跳恢复（绿）。注意「完全无响应」不在这里 —— 它会走到下面的
+                        // NotifyConnectionLost，按规则 2 记红色的「已断开」
+                        AppendDeviceLog(warning == null ? "通讯恢复" : $"通讯异常：{warning}",
                             warning == null ? DeviceLogLevel.Connected : DeviceLogLevel.Warning);
                     });
                 }, token);
@@ -1147,7 +1159,9 @@ namespace DSH_Modbus采集工具
             {
                 if (IsCurrentConnection(client, token))
                 {
-                    AppendDeviceLog($"已断开：通讯异常（{ClassifyDisconnectReason(reason)}）",
+                    // 日志规则 2：已断开（红）—— 异常导致断开，只写「已断开：原因」；
+                    // 「通讯异常」在新规则里专指「连接还在」，不能挂在这句后面
+                    AppendDeviceLog($"已断开：{ClassifyDisconnectReason(reason)}",
                         DeviceLogLevel.Disconnected);
                     Disconnect($"连接已断开：{reason}", "#C42B1C");
                 }
