@@ -6,8 +6,11 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using DSH_Modbus采集工具.Drivers;
 
 namespace DSH_Modbus采集工具
@@ -17,7 +20,29 @@ namespace DSH_Modbus采集工具
         private bool _isOn;
         private string _comment = string.Empty;
 
+        /// <summary>输入（X）点亮色：绿色。</summary>
+        private static readonly Brush InputOnBrush = MakeBrush(0x0B, 0x7A, 0x0B);
+
+        /// <summary>输出（Y）点亮色：橙色 <c>#FFA500</c>，与输入的绿色区分。</summary>
+        private static readonly Brush OutputOnBrush = MakeBrush(0xFF, 0xA5, 0x00);
+
+        /// <summary>灭灯色：浅灰（输入 / 输出共用）。</summary>
+        private static readonly Brush OffBrush = MakeBrush(0xC4, 0xC4, 0xC4);
+
+        private static Brush MakeBrush(byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
+
         public string Name { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 是否为输出元件（Y）。仅影响点亮色：输出用橙色、输入用绿色。
+        /// 创建时由点位名首字母决定，之后不变。
+        /// </summary>
+        public bool IsOutput { get; init; }
 
         /// <summary>Modbus 绝对地址，由当前通讯驱动解析得出；轮询按此回填 <see cref="IsOn"/>。</summary>
         public int Address { get; set; }
@@ -53,9 +78,10 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        public Brush StateBrush => IsOn
-            ? new SolidColorBrush(Color.FromRgb(0x0B, 0x7A, 0x0B))
-            : new SolidColorBrush(Color.FromRgb(0xC4, 0xC4, 0xC4));
+        /// <summary>灯色：灭为浅灰；点亮时输入（X）绿、输出（Y）橙。</summary>
+        public Brush StateBrush => !IsOn
+            ? OffBrush
+            : IsOutput ? OutputOnBrush : InputOnBrush;
 
         public event PropertyChangedEventHandler? PropertyChanged;
     }
@@ -270,6 +296,7 @@ namespace DSH_Modbus采集工具
                 Name = normalized,
                 Address = address,
                 Comment = comment ?? string.Empty,
+                IsOutput = normalized[0] == 'Y',
             };
             return true;
         }
@@ -439,6 +466,86 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        // ---------- 最大化溢出补偿 ----------
+        // 用 WindowChrome 自绘标题栏时，系统会把最大化窗口的四边各外扩一个窗口边框宽度
+        // （本机 150% DPI 实测 11px：窗口 -11,-11 ~ 1931,1219，而工作区 0,0 ~ 1920,1208），
+        // 把窗口底边推到任务栏之下；WindowChrome 下客户区覆盖整个窗口，于是底栏最下一条
+        // 被任务栏遮住（表现为「底栏偏下、被切」）。
+        //
+        // 试过拦 WM_GETMINMAXINFO 把 ptMaxSize 改成工作区 —— 实测无效：系统对带边框的
+        // 最大化窗口仍按自己的规则外扩（钩子确实被调用，写回的值被忽略）。
+        // 故改为确定性补偿：把根 Grid 四边各内缩「外扩量」，内容正好落进工作区。
+
+        private const int MonitorDefaultToNearest = 0x0002;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeRect
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MonitorInfo
+        {
+            public int Size;
+            public NativeRect Monitor;
+            public NativeRect Work;
+            public int Flags;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
+
+        /// <summary>
+        /// 按当前窗口矩形与所在显示器工作区之差，给根 Grid 设/清内缩量。
+        /// 全部用物理像素测量再按窗口 DPI 换算，避免依赖 WPF 布局时序；
+        /// 非最大化时清空内缩。多显示器下由 <c>MonitorFromWindow</c> 取窗口所在那台。
+        /// </summary>
+        private void UpdateMaximizedInset()
+        {
+            if (RootGrid == null)
+            {
+                return;
+            }
+
+            if (WindowState != WindowState.Maximized)
+            {
+                RootGrid.Margin = new Thickness(0);
+                return;
+            }
+
+            IntPtr handle = new WindowInteropHelper(this).Handle;
+            IntPtr monitor = MonitorFromWindow(handle, MonitorDefaultToNearest);
+            if (monitor == IntPtr.Zero)
+            {
+                return;
+            }
+
+            // MONITORINFO 必须填 cbSize，否则 GetMonitorInfo 失败
+            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (!GetMonitorInfo(monitor, ref info) || !GetWindowRect(handle, out NativeRect window))
+            {
+                return;
+            }
+
+            var dpi = VisualTreeHelper.GetDpi(this);
+            double overX = ((window.Right - window.Left) - (info.Work.Right - info.Work.Left)) / 2.0 / dpi.DpiScaleX;
+            double overY = ((window.Bottom - window.Top) - (info.Work.Bottom - info.Work.Top)) / 2.0 / dpi.DpiScaleY;
+
+            RootGrid.Margin = overX > 0 || overY > 0
+                ? new Thickness(Math.Max(0, overX), Math.Max(0, overY), Math.Max(0, overX), Math.Max(0, overY))
+                : new Thickness(0);
+        }
+
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             SyncInputHeights();
@@ -487,9 +594,14 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        /// <summary>
+        /// 刷新底栏右侧的连接参数（驱动 / 连接方式 / 协议 / IP:端口）。
+        /// 底栏左侧的状态点与状态文字由 <see cref="SetStatus"/> 负责，两者互不覆盖：
+        /// 参数随表单变化，状态随连接生命周期变化。
+        /// </summary>
         private void UpdateOverviewStatus()
         {
-            if (OverviewStatusPrefix == null || OverviewStatusState == null
+            if (StatusBarDetail == null
                 || DeviceTypeComboBox == null || ConnectionTypeComboBox == null
                 || ProtocolTypeComboBox == null
                 || IpTextBox == null || PortTextBox == null)
@@ -506,12 +618,7 @@ namespace DSH_Modbus采集工具
                               ?? ProtocolTypeComboBox.Text;
             string ipPort = $"{IpTextBox.Text.Trim()}:{PortTextBox.Text.Trim()}";
 
-            OverviewStatusPrefix.Text = $"{driver}：{connection}  {protocol}  {ipPort}";
-            OverviewStatusPrefix.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1A1A1A")!);
-
-            OverviewStatusState.Text = _isConnected ? "已连接" : "未连接";
-            string colorHex = _isConnected ? "#0B7A0B" : "#C08A00";
-            OverviewStatusState.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
+            StatusBarDetail.Text = $"{driver}：{connection}  {protocol}  {ipPort}";
         }
 
         private void ScanNetworkAdapters()
@@ -1344,6 +1451,10 @@ namespace DSH_Modbus采集工具
             {
                 MaximizeButton.Content = WindowState == WindowState.Maximized ? "\uE923" : "\uE922";
             }
+
+            // 状态刚切换时窗口矩形可能还没落定，故直接算一次、布局后再算一次
+            UpdateMaximizedInset();
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(UpdateMaximizedInset));
         }
 
         // ---------- IO 元件区切换 / IO 表导入（P2） ----------
