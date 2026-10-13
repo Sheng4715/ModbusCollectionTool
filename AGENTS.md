@@ -35,13 +35,25 @@ DSH_Modbus采集工具/
 
 ## 3. 页面与 UI
 
-单窗口两行布局：48px 标题栏 + 主体（导航 224 列 + 内容）。
+单窗口两行布局：48px 标题栏 + 主体（导航 224 列 + 内容），底部另有一条**全局状态栏**（30px，三页都可见）。
+
+```
+Window
+└ Grid x:Name="RootGrid"                         Rows: 48 / *
+   ├ Border       Row=0                                  标题栏（48）
+   └ Grid         Row=1                            主体  Columns: 224 / *
+      ├ Border     Col=0     Margin="0,0,112,0"            左侧导航
+      ├ ScrollViewer ColSpan=2 Margin="112,0,0,30"         内容区
+      └ Border     ColSpan=2 Height=30 VerticalAlignment=Bottom  底栏
+```
+
+> 主体 Grid **没有行定义**：底栏靠 `VerticalAlignment="Bottom"` **叠在内容区之上**，内容区用**下边距 30** 给它让位。详见 §3.5。
 
 ### 3.1 导航
 
 | 导航项 | 面板 | 说明 |
 |---|---|---|
-| `OverviewNav` 总览 | `OverviewPanel` | 状态条 + 底部运行日志卡 |
+| `OverviewNav` 总览 | `OverviewPanel` | 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（X/Y 分段 + 分页） |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `采集配置` | — | 占位项，不切面板 |
@@ -74,17 +86,47 @@ DSH_Modbus采集工具/
 
 ### 3.4 页面细节
 
-- **总览**：状态条 `OverviewStatusPrefix` + `OverviewStatusState`（未连接黄 `#C08A00` / 已连接绿 `#0B7A0B`），由 `UpdateOverviewStatus()` 刷新。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。
+- **总览**：顶部仅「总览」标题（原状态卡已移除，连接状态统一在全局底栏）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。
 - **状态信息**：见 §5 IO 监控。
 - **设备配置**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮。连接中锁定表单（`SetInputsEnabled`）。串口模式仅隐藏以太网面板，**功能未实现**。
 
+### 3.5 全局底栏（连接状态）
+
+30px 高，**三个页面都可见**（在面板之外，不随导航切换显隐）。
+
+| 位置 | 控件 | 内容 |
+|---|---|---|
+| 左 | `StatusDot` + `StatusText` | 状态点 + 状态文字：`未连接` / `已连接 ip:端口` / `正在重连 ip:端口 … Ns（第 M 次）` |
+| 右 | `StatusBarDetail` | 连接参数：`驱动：连接方式  协议  IP:端口` |
+
+- **两个控件名沿用自旧设备配置表单**，故 `SetStatus()` 逻辑无需改动 —— 它写的就是这两个名字
+- `SetStatus(text, colorHex)` 同时设 `StatusText.Text` / `.Foreground` / `StatusDot.Fill`，并顺带调 `UpdateOverviewStatus()`
+- `UpdateOverviewStatus()` 只写 `StatusBarDetail`（表单参数变化时刷新）
+- 栏内边距 16，**不跟随日志卡片的 36 缩进**
+
+**布局要点（改这块务必先读）**：
+
+- 底栏在主体 Grid 内用 `VerticalAlignment="Bottom"` **叠放**，内容区靠 `Margin="112,0,0,30"` 让位；**没有新增行定义**
+- `Margin="112,0,0,0"` 的左缩进 112 = 导航列的视觉右边界（导航是 `Margin="0,0,112,0"`，**右边距** 112）
+- ⚠️ **不要把底栏改成窗口级第 3 行或给它加列定义** —— 前者会切走导航列的高度、后者会在底栏里切一刀导致左下角空缺（两种错法都试过）
+
+### 3.6 最大化溢出补偿
+
+`WindowChrome` 自绘标题栏时，系统把最大化窗口四边**各外扩一个边框宽度**（150% DPI 实测 11px），底边被推到任务栏之下，而 `WindowChrome` 下客户区覆盖整个窗口 → 底栏最下一条被遮住。
+
+- `UpdateMaximizedInset()`：按「窗口矩形 − 所在显示器工作区」算外扩量，给 `RootGrid` 四边各内缩该值；非最大化时清零
+- 由 `Window_StateChanged` 调两次（切换瞬间 + `DispatcherPriority.Loaded` 后），因为状态刚变时窗口矩形可能还没落定
+- 用**物理像素**测量再按 `VisualTreeHelper.GetDpi` 换算，不依赖 WPF 布局时序；多显示器用 `MonitorFromWindow`
+- ⚠️ **拦 `WM_GETMINMAXINFO` 改 `ptMaxSize` 的方案无效**（已试过）：钩子确实被调用，但系统对带边框的最大化窗口仍按自己的规则外扩，写回值被忽略。**不要再走这条路**
+
 ## 4. 代码分工（MainWindow.xaml.cs）
 
-> ⚠️ 单文件已 1380+ 行，采集编排 / 连接生命周期 / 心跳 / 导航 / 导入 / 分页 / 日志混放（见 `Design.md` §9-1）。
+> ⚠️ 单文件已 1650+ 行，采集编排 / 连接生命周期 / 心跳 / 导航 / 导入 / 分页 / 日志混放（见 `Design.md` §8-1）。
 
 | 区块 | 关键成员 |
 |---|---|
-| 连接状态机 | `ConnectButton_Click` / `Disconnect` / `RunConnectionTasksAsync` / `IsCurrentConnection` |
+| 连接状态机 | `ConnectButton_Click` / `Disconnect()` / `Disconnect(status,color)` / `TryConnectAsync` / `RunConnectionTasksAsync` / `IsCurrentConnection` |
+| 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect` / `ReconnectTarget` / `ReconnectDelaysSeconds` |
 | 轮询 | `PollLoopAsync` / `PollOnceAsync`（按地址区分块 + 2000 点切窗） |
 | 心跳编排 | `HeartbeatLoopAsync` / `NotifyConnectionLost` |
 | IO 点位集 | `RebuildIoPoints` / `TryCreateIoPoint` / `NormalizePointName` |
@@ -93,7 +135,8 @@ DSH_Modbus采集工具/
 | 持久化 | `LoadComments` / `SaveComments` |
 | 网卡 | `ScanNetworkAdapters`（`NicInfo`） |
 | 日志 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` |
-| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs`(volatile) / `_currentDriver` / `_xPoints` / `_yPoints` / `_ioPageActive` / `_yViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_comments` / `_deviceLog` |
+| 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset` |
+| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs`(volatile) / `_currentDriver` / `_xPoints` / `_yPoints` / `_ioPageActive` / `_yViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_comments` / `_deviceLog` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt` |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -105,6 +148,12 @@ DSH_Modbus采集工具/
 - **分页**：每页 4 列 × `IoRowsPerColumn`(16) = 64 点，X/Y 各自独立页号；单页时整体隐藏。列宽 `*` 等分；行高 22、行距 2、列距 4
 - **采集跟随可见性**：只读**当前显示分段 + 当前页**（`_visiblePage` 快照，按所属地址区分块 FC01，同区跨度超 2000 点切窗，默认 100ms）；**离开本页停止 IO 采集，独立心跳继续**；断线不清灯色（`IsOn` 保持上次值）
 
+**灯色（`IoPoint.StateBrush`）**：灭灯 `#C4C4C4`；点亮时**输入 X 绿 `#0B7A0B`、输出 Y 橙 `#FFA500`**。
+
+- 由 `IoPoint.IsOutput`（`init` 属性）区分，创建时在 `TryCreateIoPoint` 按点位名首字母定死：`IsOutput = normalized[0] == 'Y'`
+- 三个画刷是 `static readonly` + `Freeze()`，**不要在 `StateBrush` 里 new**（原实现每次取属性都新建对象）
+- XAML 侧不用改：`IoItemTemplate` 的灯仍绑 `Background="{Binding StateBrush}"`
+
 ## 6. 心跳与连接生命周期
 
 - `ModbusHeartbeat.RunAsync` 每 100ms 检查；距上次有效响应满 **1s** 时以 FC01 读**单点线圈**，只读不写
@@ -114,6 +163,26 @@ DSH_Modbus采集工具/
 - 读取超时 2s；空闲失联通常**约 3 秒**检测到（1s 空闲 + 2s 超时 + 调度延迟），不是严格 3s 上限
 - `RunConnectionTasksAsync` 启动时把**连接与驱动快照**传给两个任务，所有回 UI 回调先过 `IsCurrentConnection`（未关窗 && token 未取消 && 仍连着 && `_modbus` 是同一实例）→ 旧连接的后台回调无法误操作新连接
 - `StopPolling` 只取消并置 null，**释放交给任务自身 `finally`**（确认自己仍是当前连接后）；`OnClosed` 统一取消连接尝试、停任务并释放
+
+### 6.1 自动重连（P1-1）
+
+| 项 | 行为 |
+|---|---|
+| 触发 | **仅「异常断开」**（读超时 / 对端关闭 / 帧校验失败等）。**用户主动断开、首次连接失败均不触发** |
+| 退避 | `ReconnectDelaysSeconds = { 1, 2, 4, 8, 10 }`，封顶 10s；连接成功清零 `_reconnectAttempt` |
+| UI | 重连期间**表单保持锁定**（参数已快照，改了不生效，避免误导）；按钮变「取消重连」；底栏逐秒显示 `正在重连 ip:端口 … Ns（第 M 次）` |
+| 日志 | **重连尝试不写日志**（日志只记 5 种设备状态，ADR-14）；连上后记一条常规「已连接：ip:端口」 |
+
+**⚠️ 两种 `Disconnect` 重载语义不同，别用错**：
+
+- `Disconnect()` 无参 → **清空 `_reconnectTarget`** = 「用户主动断开」语义
+- `Disconnect(status, color)` 带参 → **保留目标** = 异常断开，之后才能重连
+
+故 `NotifyConnectionLost` 必须用**带参**版本，再紧跟 `StartReconnect()`。用无参会静默失去重连能力。
+
+- `TryConnectAsync(target, isReconnect, token)` 被首次连接与重连**共用**；失败时的日志只在 `!isReconnect` 时写，避免重连刷屏
+- `ReconnectTarget` 是 IP/端口/驱动/本地端点的**快照**，重连不依赖表单当前值
+- `OnClosed` 顺序：`_windowClosed = true` → `CancelReconnect()` → `Disconnect()`，关窗不残留重连任务
 
 ## 7. 运行日志
 
@@ -181,7 +250,12 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
-| 总览状态格式 | `UpdateOverviewStatus()` |
+| 总览状态格式 | `UpdateOverviewStatus()`（写底栏 `StatusBarDetail`） |
+| 底栏状态文字/颜色 | `SetStatus(text, colorHex)` → `StatusText` + `StatusDot` |
+| 底栏布局/对齐 | `MainWindow.xaml` 主体 Grid 末尾的底栏 `Border`（见 §3.5，**改前必读**） |
+| 最大化底栏被任务栏遮住 | `UpdateMaximizedInset()` + `Window_StateChanged`（见 §3.6） |
+| 自动重连退避/触发/取消 | `ReconnectDelaysSeconds` / `StartReconnect` / `CancelReconnect`（见 §6.1） |
+| IO 灯色（输入绿/输出橙） | `IoPoint.StateBrush` + `InputOnBrush` / `OutputOnBrush` / `OffBrush`；`IsOutput` 在 `TryCreateIoPoint` 定 |
 | IO 点位集构建/排序 | `RebuildIoPoints` → `TryCreateIoPoint` / `NormalizePointName`（按地址升序） |
 | 导入 IO 表 / 解析规则 | `ImportIoTableButton_Click` + `XlsxIoTableReader.cs`（地址→右邻配对，仅首表，不支持合并单元格） |
 | 注释与点位集持久化 | `LoadComments` / `SaveComments` → `io-comments.json` |
