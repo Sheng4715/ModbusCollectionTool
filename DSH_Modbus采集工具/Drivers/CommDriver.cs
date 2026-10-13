@@ -26,6 +26,45 @@ namespace DSH_Modbus采集工具.Drivers
     }
 
     /// <summary>
+    /// 32 位值（<c>DINT</c> / <c>UDINT</c> / <c>REAL</c>）占两个连续寄存器时的字节顺序。
+    /// <para>
+    /// 记号：把该 32 位值的 4 个字节**按重要性**编号，1 = 最高字节（MSB）… 4 = 最低字节（LSB）；
+    /// 名称表示这 4 个字节在**字节流里的排列顺序**。
+    /// 例：<c>3412</c> = 先第 3 字节、再第 4、再第 1、再第 2 —— 即「低字在前、字内大端」。
+    /// </para>
+    /// </summary>
+    public enum ByteOrder32
+    {
+        /// <summary>1234（ABCD）：大端，高字在前 —— 多数 Modbus 库的默认值</summary>
+        Order1234 = 0,
+
+        /// <summary>2143（BADC）：字内字节交换，高字在前</summary>
+        Order2143 = 1,
+
+        /// <summary>3412（CDAB）：字交换，低字在前 —— <b>信捷 XD 实测值</b></summary>
+        Order3412 = 2,
+
+        /// <summary>4321（DCBA）：小端，低字在前</summary>
+        Order4321 = 3,
+    }
+
+    /// <summary>
+    /// 字符串在 16 位寄存器内的字节顺序。
+    /// <para>
+    /// 记号：把寄存器内的 2 个字符**按先后**编号 1、2；名称表示它们在字节流里的顺序。
+    /// <c>12</c> = 第 1 个字符在高字节（寄存器按 Modbus 惯例大端发送）。
+    /// </para>
+    /// </summary>
+    public enum StringByteOrder
+    {
+        /// <summary>12：第 1 个字符在高字节 —— <b>信捷 XD 实测值</b></summary>
+        Order12 = 0,
+
+        /// <summary>21：第 1 个字符在低字节</summary>
+        Order21 = 1,
+    }
+
+    /// <summary>
     /// 标准地址区域定义：一段连续的同类元件映射到一段连续的 Modbus 地址。
     /// 新增品牌时只需为每个元件区提供此结构。
     /// </summary>
@@ -99,6 +138,24 @@ namespace DSH_Modbus采集工具.Drivers
 
         /// <summary>地址区域表</summary>
         public IReadOnlyList<AddressArea> Areas { get; init; } = Array.Empty<AddressArea>();
+
+        /// <summary>
+        /// 32 位整数的字节顺序（品牌约定）。
+        /// 属性初值为信捷 XD 真机实测值；各品牌应在 <see cref="DriverRegistry"/> 里显式声明。
+        /// </summary>
+        public ByteOrder32 Int32ByteOrder { get; init; } = ByteOrder32.Order3412;
+
+        /// <summary>
+        /// 32 位浮点数的字节顺序（品牌约定）。
+        /// 属性初值为信捷 XD 真机实测值；各品牌应在 <see cref="DriverRegistry"/> 里显式声明。
+        /// </summary>
+        public ByteOrder32 FloatByteOrder { get; init; } = ByteOrder32.Order3412;
+
+        /// <summary>
+        /// 字符串在寄存器内的字节顺序（品牌约定）。
+        /// 属性初值为信捷 XD 真机实测值；各品牌应在 <see cref="DriverRegistry"/> 里显式声明。
+        /// </summary>
+        public StringByteOrder StringByteOrder { get; init; } = StringByteOrder.Order12;
 
         /// <summary>
         /// 按元件符号+编号解析 Modbus 地址。

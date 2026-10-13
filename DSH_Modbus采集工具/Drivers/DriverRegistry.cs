@@ -43,6 +43,15 @@ namespace DSH_Modbus采集工具.Drivers
         {
             Key = "xinje_xd",
             DisplayName = "信捷XD/XL系列",
+
+            // ---- 字节顺序：真机实测值（2026-10-13，XD5E-60T10-E @192.168.1.66）----
+            // 32 位：D800=123456 → 读回 D800=0xE240 / D801=0x0001（低字在低地址，字序 3412）
+            // 字符串：D810='abcd' → 读回 0x6162 / 0x6364（每寄存器 2 字符、高字节在前）
+            // 证据见 Design.md §10.3 / §10.4
+            Int32ByteOrder = ByteOrder32.Order3412,
+            FloatByteOrder = ByteOrder32.Order3412,
+            StringByteOrder = StringByteOrder.Order12,
+
             Areas = new[]
             {
                 // ---- 线圈（位）：非 IO 元件 ----
@@ -78,6 +87,14 @@ namespace DSH_Modbus采集工具.Drivers
         {
             Key = "inovance_easy",
             DisplayName = "汇川Easy系列",
+
+            // ⚠️ 字节顺序【未经真机验证】—— 以下取该品牌手册的常见约定（大端、高字在前），
+            //    不是实测值。首次接汇川真机时须按 Design.md §10.3 的方法复验后修正。
+            //    界面上的三个下拉框就是为了让用户在没有实测数据时也能手动纠正。
+            Int32ByteOrder = ByteOrder32.Order1234,
+            FloatByteOrder = ByteOrder32.Order1234,
+            StringByteOrder = StringByteOrder.Order12,
+
             Areas = new[]
             {
                 // ---- 线圈（位）----

@@ -155,6 +155,19 @@ namespace DSH_Modbus采集工具
         private bool _windowClosed;
         private volatile int _pollIntervalMs = 100;
         private CommDriver? _currentDriver;
+
+        /// <summary>
+        /// 字节顺序：设备通讯区域三个下拉框的当前选择（初值 = 当前驱动约定，切换设备类型时重同步）。
+        /// <b>目前仅收集用户选择，尚未被任何数据解释逻辑读取</b> ——
+        /// 具体用途要等 P3-3（数据类型系统）落地，届时按这三个值解释寄存器组。
+        /// </summary>
+        private ByteOrder32 _int32ByteOrder;
+        private ByteOrder32 _floatByteOrder;
+        private StringByteOrder _stringByteOrder;
+
+        /// <summary>正在按设备类型同步字节顺序下拉框（用于区分「程序设置」与「用户改动」）。</summary>
+        private bool _syncingByteOrderCombos;
+
         private readonly List<IoPoint> _xPoints = new();
         private readonly List<IoPoint> _yPoints = new();
 
@@ -239,6 +252,7 @@ namespace DSH_Modbus采集工具
             _ioInitialized = true;
             RebuildIoPoints();
             RefreshDriverAreas();
+            SyncByteOrderCombos();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -696,6 +710,21 @@ namespace DSH_Modbus采集工具
                 DeviceTypeComboBox.Height = comboHeight;
                 PollIntervalComboBox.Height = comboHeight;
 
+                if (Int32OrderComboBox != null)
+                {
+                    Int32OrderComboBox.Height = comboHeight;
+                }
+
+                if (FloatOrderComboBox != null)
+                {
+                    FloatOrderComboBox.Height = comboHeight;
+                }
+
+                if (StringOrderComboBox != null)
+                {
+                    StringOrderComboBox.Height = comboHeight;
+                }
+
                 if (ConnectButton != null)
                 {
                     ConnectButton.Height = comboHeight;
@@ -863,6 +892,21 @@ namespace DSH_Modbus采集工具
             if (PollIntervalComboBox != null)
             {
                 PollIntervalComboBox.IsEnabled = enabled;
+            }
+
+            if (Int32OrderComboBox != null)
+            {
+                Int32OrderComboBox.IsEnabled = enabled;
+            }
+
+            if (FloatOrderComboBox != null)
+            {
+                FloatOrderComboBox.IsEnabled = enabled;
+            }
+
+            if (StringOrderComboBox != null)
+            {
+                StringOrderComboBox.IsEnabled = enabled;
             }
 
             if (TargetNicComboBox != null)
@@ -1126,7 +1170,61 @@ namespace DSH_Modbus采集工具
             }
 
             RefreshDriverAreas();
+            SyncByteOrderCombos();
             UpdateOverviewStatus();
+        }
+
+        /// <summary>
+        /// 把当前驱动的字节顺序约定同步到三个下拉框（切换设备类型时调用）。
+        /// 索引与 <see cref="ByteOrder32"/> / <see cref="StringByteOrder"/> 的枚举值一一对应，
+        /// 故直接按枚举值取下标。
+        /// </summary>
+        private void SyncByteOrderCombos()
+        {
+            if (Int32OrderComboBox == null || FloatOrderComboBox == null || StringOrderComboBox == null)
+            {
+                return;
+            }
+
+            CommDriver? driver = _currentDriver;
+            if (driver == null)
+            {
+                return;
+            }
+
+            _syncingByteOrderCombos = true;
+            try
+            {
+                Int32OrderComboBox.SelectedIndex = (int)driver.Int32ByteOrder;
+                FloatOrderComboBox.SelectedIndex = (int)driver.FloatByteOrder;
+                StringOrderComboBox.SelectedIndex = (int)driver.StringByteOrder;
+            }
+            finally
+            {
+                _syncingByteOrderCombos = false;
+            }
+        }
+
+        /// <summary>
+        /// 三个字节顺序下拉框共用。此处只做「用户改过」的记录 ——
+        /// 具体的数据解释要等 P3-3（数据类型系统）落地后才会被读取，现在仅收集用户选择。
+        /// </summary>
+        private void ByteOrderComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            // 程序化同步（切换设备类型）不算用户改动，跳过
+            if (_syncingByteOrderCombos)
+            {
+                return;
+            }
+
+            if (Int32OrderComboBox == null || FloatOrderComboBox == null || StringOrderComboBox == null)
+            {
+                return;
+            }
+
+            _int32ByteOrder = (ByteOrder32)Math.Max(0, Int32OrderComboBox.SelectedIndex);
+            _floatByteOrder = (ByteOrder32)Math.Max(0, FloatOrderComboBox.SelectedIndex);
+            _stringByteOrder = (StringByteOrder)Math.Max(0, StringOrderComboBox.SelectedIndex);
         }
 
         /// <summary>

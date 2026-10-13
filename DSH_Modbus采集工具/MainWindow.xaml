@@ -749,24 +749,99 @@
                                            FontSize="14" FontWeight="SemiBold" Foreground="#1A1A1A"
                                            Margin="0,0,0,12"/>
 
-                                <!-- 当前设备类型的 Modbus 地址表元件（悬停查看各段范围与点数） -->
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                                    <TextBlock Text="线圈区"
-                                               Width="80"
-                                               FontSize="14" Foreground="#1A1A1A"
-                                               VerticalAlignment="Center"/>
-                                    <ItemsControl x:Name="CoilAreaItems"
-                                                  Style="{StaticResource AreaItemsControlStyle}"/>
-                                </StackPanel>
+                                <!-- ===== 设备通讯区域：左「字节顺序」 | 竖分隔线 | 右「地址表元件」 =====
+                                     左右并排而非上下堆叠 —— 5 行压成 3 行，窗口最小（1024×640）时也能完整显示。
+                                     两栏各自内部纵向排列；分隔线用 1px Border，随该行高度自然拉伸。 -->
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
 
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="寄存器区"
-                                               Width="80"
-                                               FontSize="14" Foreground="#1A1A1A"
-                                               VerticalAlignment="Center"/>
-                                    <ItemsControl x:Name="RegisterAreaItems"
-                                                  Style="{StaticResource AreaItemsControlStyle}"/>
-                                </StackPanel>
+                                    <!-- ===== 左：字节顺序（数据解释方式，随设备类型切换默认值） =====
+                                         仅对「寄存器（字）」类数据有意义；线圈/位无字节序。
+                                         选项文案用 1-2-3-4 记号：1=最高字节 … 4=最低字节，
+                                         名称即这 4 个字节在字节流里的排列顺序。
+                                         字符串只管寄存器内 2 个字符的先后，不涉及字序。 -->
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Top">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                            <TextBlock Text="32位整数字节顺序"
+                                                       Width="140"
+                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       VerticalAlignment="Center"/>
+                                            <ComboBox x:Name="Int32OrderComboBox"
+                                                      Width="200"
+                                                      VerticalAlignment="Center"
+                                                      ToolTip="32 位整数占 2 个连续寄存器。1=最高字节 … 4=最低字节；名称即 4 个字节在字节流里的顺序。信捷 XD 实测为 3412（低字在前）。"
+                                                      SelectionChanged="ByteOrderComboBox_SelectionChanged">
+                                                <ComboBoxItem Content="1234（大端，高字在前）"/>
+                                                <ComboBoxItem Content="2143（字内字节交换，高字在前）"/>
+                                                <ComboBoxItem Content="3412（字交换，低字在前）"/>
+                                                <ComboBoxItem Content="4321（小端，低字在前）"/>
+                                            </ComboBox>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                            <TextBlock Text="32位浮点数字节顺序"
+                                                       Width="140"
+                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       VerticalAlignment="Center"/>
+                                            <ComboBox x:Name="FloatOrderComboBox"
+                                                      Width="200"
+                                                      VerticalAlignment="Center"
+                                                      ToolTip="REAL 与 DINT 是同一个 32 位整数，只是解释方式不同，多数品牌两者字序相同。信捷 XD 实测为 3412。"
+                                                      SelectionChanged="ByteOrderComboBox_SelectionChanged">
+                                                <ComboBoxItem Content="1234（大端，高字在前）"/>
+                                                <ComboBoxItem Content="2143（字内字节交换，高字在前）"/>
+                                                <ComboBoxItem Content="3412（字交换，低字在前）"/>
+                                                <ComboBoxItem Content="4321（小端，低字在前）"/>
+                                            </ComboBox>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="字符串字节顺序"
+                                                       Width="140"
+                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       VerticalAlignment="Center"/>
+                                            <ComboBox x:Name="StringOrderComboBox"
+                                                      Width="200"
+                                                      VerticalAlignment="Center"
+                                                      ToolTip="每个寄存器存 2 个字符（1=第 1 个字符，2=第 2 个字符）。信捷 XD 实测为 12（第 1 个字符在高字节）。字符串只有字节先后，没有字序。"
+                                                      SelectionChanged="ByteOrderComboBox_SelectionChanged">
+                                                <ComboBoxItem Content="12（第 1 个字符在高字节）"/>
+                                                <ComboBoxItem Content="21（第 1 个字符在低字节）"/>
+                                            </ComboBox>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <!-- ===== 中间：竖分隔线 ===== -->
+                                    <Border Grid.Column="1"
+                                            Width="1" Background="#E8E8E8"
+                                            Margin="20,0,20,0"
+                                            VerticalAlignment="Stretch"/>
+
+                                    <!-- ===== 右：当前设备类型的 Modbus 地址表元件（悬停查看各段范围与点数） ===== -->
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Top">
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                            <TextBlock Text="线圈区"
+                                                       Width="80"
+                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       VerticalAlignment="Center"/>
+                                            <ItemsControl x:Name="CoilAreaItems"
+                                                          Style="{StaticResource AreaItemsControlStyle}"/>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="寄存器区"
+                                                       Width="80"
+                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       VerticalAlignment="Center"/>
+                                            <ItemsControl x:Name="RegisterAreaItems"
+                                                          Style="{StaticResource AreaItemsControlStyle}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Grid>
                             </StackPanel>
                         </Border>
                     </StackPanel>
