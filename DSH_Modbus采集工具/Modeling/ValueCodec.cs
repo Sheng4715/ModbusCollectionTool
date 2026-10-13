@@ -1,0 +1,319 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+using DSH_Modbus采集工具.Drivers;
+
+namespace DSH_Modbus采集工具.Modeling
+{
+    /// <summary>
+    /// 原始寄存器/线圈 ↔ 类型值 的编解码，以及值的显示格式化。
+    /// <para>
+    /// <b>字序为「真机定案」的硬事实，不随品牌变化</b>（信捷 XD 实测，见 <c>Design.md</c> §10.3 / §10.4）：
+    /// <list type="bullet">
+    /// <item>32 位值占 2 个连续寄存器，<b>低字在低地址</b>；字节流顺序 <c>3412</c>（CDAB）。</item>
+    /// <item>字符串每寄存器 2 个字符、<b>高字节在前</b>；<c>STRING[n]</c> 占 ⌈n/2⌉ 个寄存器。</item>
+    /// </list>
+    /// 设备配置页的三个下拉框（<see cref="ByteOrder32"/> / <see cref="StringByteOrder"/>）
+    /// 一旦选定，即通过各方法的 <c>byteOrder</c> / <c>stringOrder</c> 参数传入本类 —— 本类不读全局状态。
+    /// </para>
+    /// </summary>
+    public static class ValueCodec
+    {
+        // ==================== 解码：原始 → 值 ====================
+
+        /// <summary>
+        /// 把寄存器原始值解码成「规范化的 64 位整数」。
+        /// <para>
+        /// 返回值刻意用 <see cref="long"/> 而非各自的窄类型：调用方拿到的是<b>位模式</b>，
+        /// 位模式对 <c>INT</c>(−1) 与 <c>UINT</c>(65535) 是同一个 <c>0xFFFF</c>，
+        /// 差异只在格式化时按声明类型解释（见 <see cref="Format"/>）。
+        /// 这样避免在解码处就按错误类型截断，也便于 P4-2 写入时反向还原。
+        /// </para>
+        /// </summary>
+        public static long DecodeInteger(DataType type, ReadOnlySpan<ushort> regs, ByteOrder32 byteOrder)
+        {
+            DataTypeSpec spec = DataTypes.Get(type);
+            switch (type)
+            {
+                case DataType.Int:
+                case DataType.UInt:
+                    Require(regs, 1, type);
+                    return regs[0];
+
+                case DataType.DInt:
+                case DataType.UDInt:
+                    Require(regs, 2, type);
+                    return Assemble32(regs, byteOrder);
+
+                case DataType.Real:
+                    // REAL 与 DINT 是同一个 32 位整数，只是解释方式不同
+                    Require(regs, 2, type);
+                    return Assemble32(regs, byteOrder);
+
+                default:
+                    throw new ArgumentException($"类型 {spec.DisplayName} 不是整数/浮点类型", nameof(type));
+            }
+        }
+
+        /// <summary>把 2 个寄存器按给定字序拼成 32 位值（结果在 <see cref="long"/> 的低 32 位，未做符号扩展）。</summary>
+        private static long Assemble32(ReadOnlySpan<ushort> regs, ByteOrder32 byteOrder)
+        {
+            ushort low, high;
+            switch (byteOrder)
+            {
+                // 低字在低地址（信捷 XD 实测）
+                case ByteOrder32.Order3412:
+                case ByteOrder32.Order4321:
+                    low = regs[0];
+                    high = regs[1];
+                    break;
+
+                // 高字在低地址
+                case ByteOrder32.Order1234:
+                case ByteOrder32.Order2143:
+                    high = regs[0];
+                    low = regs[1];
+                    break;
+
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(byteOrder), byteOrder, "未知字序");
+            }
+
+            // 2143 / 4321 还需在字内交换字节
+            bool swapBytesInWord = byteOrder is ByteOrder32.Order2143 or ByteOrder32.Order4321;
+            if (swapBytesInWord)
+            {
+                low = SwapBytes(low);
+                high = SwapBytes(high);
+            }
+
+            return ((long)high << 16) | low;
+        }
+
+        private static ushort SwapBytes(ushort v) => (ushort)((v >> 8) | ((v & 0xFF) << 8));
+
+        /// <summary>把原始 32 位位模式解释为 <see cref="float"/>（IEEE754）。</summary>
+        public static float DecodeReal(ReadOnlySpan<ushort> regs, ByteOrder32 byteOrder)
+        {
+            long raw = Assemble32(regs, byteOrder);
+            return BitConverter.Int32BitsToSingle(unchecked((int)raw));
+        }
+
+        /// <summary>
+        /// 解码字符串。每寄存器 2 个字符；<paramref name="length"/> 为用户声明的字符数，
+        /// 用于<b>截断</b>（末寄存器可能带填充字节）。
+        /// </summary>
+        public static string DecodeString(ReadOnlySpan<ushort> regs, int length, StringByteOrder order)
+        {
+            if (length <= 0)
+            {
+                return string.Empty;
+            }
+
+            int needed = (length + 1) / 2;
+            if (regs.Length < needed)
+            {
+                throw new ArgumentException($"STRING[{length}] 需要 {needed} 个寄存器，实际只有 {regs.Length} 个", nameof(regs));
+            }
+
+            var sb = new StringBuilder(length);
+            for (int i = 0; i < needed; i++)
+            {
+                ushort w = regs[i];
+                char first = order == StringByteOrder.Order12 ? (char)(w >> 8) : (char)(w & 0xFF);
+                char second = order == StringByteOrder.Order12 ? (char)(w & 0xFF) : (char)(w >> 8);
+
+                sb.Append(first);
+                if (sb.Length < length)
+                {
+                    sb.Append(second);
+                }
+            }
+
+            // 常见约定：遇 NUL 截断（PLC 字符串常用 \0 填充）
+            int nul = sb.ToString().IndexOf('\0');
+            return nul >= 0 ? sb.ToString(0, nul) : sb.ToString();
+        }
+
+        private static void Require(ReadOnlySpan<ushort> regs, int count, DataType type)
+        {
+            if (regs.Length < count)
+            {
+                throw new ArgumentException(
+                    $"{DataTypes.Get(type).DisplayName} 需要 {count} 个寄存器，实际只有 {regs.Length} 个",
+                    nameof(regs));
+            }
+        }
+
+        // ==================== 格式化：值 → 显示文本 ====================
+
+        /// <summary>把寄存器原始值按类型与格式格式化成显示文本。</summary>
+        public static string FormatRegisters(DataType type, ReadOnlySpan<ushort> regs,
+            DisplayFormat format, ByteOrder32 byteOrder, StringByteOrder stringOrder, int stringLength)
+        {
+            DataTypeSpec spec = DataTypes.Get(type);
+            if (!spec.AllowsFormat(format))
+            {
+                throw new ArgumentException($"{spec.DisplayName} 不支持 {format} 格式", nameof(format));
+            }
+
+            if (type == DataType.String)
+            {
+                return DecodeString(regs, stringLength, stringOrder);
+            }
+
+            if (type == DataType.Real)
+            {
+                float f = DecodeReal(regs, byteOrder);
+                return format == DisplayFormat.Hex
+                    ? "0x" + unchecked((uint)BitConverter.SingleToInt32Bits(f)).ToString("X8", CultureInfo.InvariantCulture)
+                    : FormatFloat(f);
+            }
+
+            long raw = DecodeInteger(type, regs, byteOrder);
+            return FormatInteger(type, raw, format);
+        }
+
+        /// <summary>把 <see cref="DecodeInteger"/> 的位模式按声明类型解释并格式化。</summary>
+        public static string FormatInteger(DataType type, long raw, DisplayFormat format)
+        {
+            switch (format)
+            {
+                case DisplayFormat.Bin:
+                    return FormatBinary(type, raw);
+
+                case DisplayFormat.Hex:
+                    return FormatHex(type, raw);
+
+                case DisplayFormat.Dec:
+                    return FormatDecimal(type, raw);
+
+                default:
+                    throw new ArgumentException($"{DataTypes.Get(type).DisplayName} 不支持 {format} 格式", nameof(format));
+            }
+        }
+
+        /// <summary>按声明类型把位模式解释为有符号/无符号十进制。严格按类型，不自动判断。</summary>
+        private static long Interpret(DataType type, long raw) => type switch
+        {
+            DataType.Int => unchecked((short)raw),
+            DataType.UInt => (ushort)raw,
+            DataType.DInt => unchecked((int)raw),
+            DataType.UDInt => (uint)raw,
+            _ => raw,
+        };
+
+        private static string FormatDecimal(DataType type, long raw)
+        {
+            long v = Interpret(type, raw);
+            return v.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatHex(DataType type, long raw)
+        {
+            // 按位宽补零：INT/UINT 4 位，DINT/UDINT 8 位
+            DataTypeSpec spec = DataTypes.Get(type);
+            int digits = spec.BitWidth / 4;
+            ulong bits = spec.BitWidth == 16 ? (ushort)raw : (uint)raw;
+            return "0x" + bits.ToString("X" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatBinary(DataType type, long raw)
+        {
+            DataTypeSpec spec = DataTypes.Get(type);
+            int width = spec.BitWidth;
+            ulong bits = width == 16 ? (ushort)raw : (uint)raw;
+
+            string s = Convert.ToString((long)bits, 2).PadLeft(width, '0');
+            if (s.Length > width)
+            {
+                s = s[^width..];
+            }
+
+            // 每 4 位一组，便于读数
+            var sb = new StringBuilder(width + width / 4);
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (i > 0 && (width - i) % 4 == 0)
+                {
+                    sb.Append(' ');
+                }
+
+                sb.Append(s[i]);
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>浮点显示：默认去掉多余的尾零，兼顾可读性与精度。</summary>
+        private static string FormatFloat(float f)
+        {
+            if (float.IsNaN(f))
+            {
+                return "NaN";
+            }
+
+            if (float.IsPositiveInfinity(f))
+            {
+                return "+∞";
+            }
+
+            if (float.IsNegativeInfinity(f))
+            {
+                return "−∞";
+            }
+
+            // "G9" 是单精度能往返的最短位数；对本项目常见的工程量（如 123.45）已足够
+            return f.ToString("G9", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>格式化线圈（BOOL，只能是 BIN）。</summary>
+        public static string FormatCoil(bool on) => on ? "1" : "0";
+
+        // ==================== 编码：值 → 原始（供 P4-2 写入使用） ====================
+
+        /// <summary>
+        /// 把 32 位值按字序拆成 2 个寄存器。与 <see cref="Assemble32"/> 严格互逆。
+        /// </summary>
+        public static ushort[] Split32(uint value, ByteOrder32 byteOrder)
+        {
+            ushort low = (ushort)(value & 0xFFFF);
+            ushort high = (ushort)(value >> 16);
+
+            bool swapBytesInWord = byteOrder is ByteOrder32.Order2143 or ByteOrder32.Order4321;
+            if (swapBytesInWord)
+            {
+                low = SwapBytes(low);
+                high = SwapBytes(high);
+            }
+
+            return byteOrder switch
+            {
+                ByteOrder32.Order3412 or ByteOrder32.Order4321 => new[] { low, high },
+                ByteOrder32.Order1234 or ByteOrder32.Order2143 => new[] { high, low },
+                _ => throw new ArgumentOutOfRangeException(nameof(byteOrder), byteOrder, "未知字序"),
+            };
+        }
+
+        /// <summary>把字符串按「每寄存器 2 字符、指定字节序」编码成寄存器序列（不足处补 0x00）。</summary>
+        public static ushort[] EncodeString(string text, StringByteOrder order)
+        {
+            text ??= string.Empty;
+            int regCount = (text.Length + 1) / 2;
+            var regs = new ushort[regCount];
+
+            for (int i = 0; i < regCount; i++)
+            {
+                char first = text[i * 2];
+                char second = i * 2 + 1 < text.Length ? text[i * 2 + 1] : '\0';
+
+                regs[i] = order == StringByteOrder.Order12
+                    ? (ushort)((first << 8) | second)
+                    : (ushort)((second << 8) | first);
+            }
+
+            return regs;
+        }
+    }
+}
