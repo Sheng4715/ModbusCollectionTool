@@ -4,7 +4,6 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DSH_Modbus采集工具.Drivers;
-
 namespace DSH_Modbus采集工具.Modeling
 {
     /// <summary>
@@ -160,7 +159,15 @@ namespace DSH_Modbus采集工具.Modeling
             {
                 if (!driver.TryResolve(p.DisplayName, area, out int addr, out string e))
                 {
-                    error = e;
+                    // ⚠️ 只在还没有更具体的原因时才记录。
+                    // 候选区是「保持寄存器 → 输入寄存器」两个，同一元件通常只在前者里定义：
+                    // 若后者失败就无条件覆盖，会把前者算出的「末地址超出区段」这类真原因
+                    // 冲成「驱动未定义元件 D」——而 D 明明存在，用户会被引向错误方向。
+                    if (string.IsNullOrEmpty(error))
+                    {
+                        error = e;
+                    }
+
                     continue;
                 }
 
@@ -189,8 +196,33 @@ namespace DSH_Modbus采集工具.Modeling
             {
                 error = $"{p.DisplayName} 无法解析";
             }
+            else if (error.Contains("驱动未定义元件"))
+            {
+                // 元件确实存在、只是存储区与声明类型对不上时，TryResolve 只会说「未定义元件」——
+                // 这个提示会把用户引向「符号打错了」，而真正的问题是类型选错了。
+                // 方案 2 的元件是自由文本、类型由用户另选，出现这种组合的概率比方案 1 高得多。
+                IReadOnlyList<ModbusArea> actual = driver.AreasOfElement(ExtractElement(p.DisplayName));
+                if (actual.Count > 0)
+                {
+                    error = actual.Contains(ModbusArea.Coil)
+                        ? $"{p.DisplayName} 是线圈元件，只能声明为 BOOL（BIN）；当前为 {spec.DisplayName}"
+                        : $"{p.DisplayName} 是寄存器元件，不能声明为 {spec.DisplayName}；请改用 INT / DINT / REAL / STRING";
+                }
+            }
 
             return false;
+        }
+
+        /// <summary>从完整元件名里取出符号部分（"HD100" → "HD"）。取不出时返回原串。</summary>
+        private static string ExtractElement(string displayName)
+        {
+            int i = 0;
+            while (i < displayName.Length && char.IsLetter(displayName[i]))
+            {
+                i++;
+            }
+
+            return i == 0 ? displayName : displayName[..i];
         }
     }
 }

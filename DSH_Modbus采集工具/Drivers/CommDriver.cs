@@ -194,12 +194,24 @@ namespace DSH_Modbus采集工具.Drivers
         }
 
         /// <summary>
-        /// 解析字符串形式的元件（如 "M100"、"X17"、"D20"）为 Modbus 地址。
-        /// 进制由该元件区的 IndexBase 决定。
+        /// 把 "HD100"、"X17" 这类完整元件名拆成「符号 + 编号」。
+        /// <para>
+        /// 拆分规则：开头连续字母为符号，其余必须是 ASCII 数字。
+        /// 本方法是**唯一**的拆分实现 —— <see cref="TryResolve(string, ModbusArea, out int, out string)"/>
+        /// 与「自由监控」的元件名称输入框（Brief 方案 2）都调用它，
+        /// 避免两处各写一遍而慢慢走偏（方案 2 要靠它把用户输入写回 Element / Index 两个字段）。
+        /// </para>
+        /// <para>
+        /// 校验刻意从严：方案 2 的输入框会把拆分结果**直接写进模型并落盘**，
+        /// 若放行 <c>"D 100"</c>（符号里带空格）、<c>"D-1"</c>、<c>"-5"</c> 这类输入，
+        /// 脏数据会先进 JSON，再被 <see cref="TryResolve"/> 报成「驱动未定义元件 D 」
+        /// —— 报错点离真正的输入错误很远。故在此直接拒绝，文案也更贴切。
+        /// </para>
         /// </summary>
-        public bool TryResolve(string token, ModbusArea area, out int address, out string error)
+        public static bool TrySplitName(string? token, out string element, out string number, out string error)
         {
-            address = 0;
+            element = string.Empty;
+            number = string.Empty;
             error = string.Empty;
 
             if (string.IsNullOrWhiteSpace(token))
@@ -210,20 +222,80 @@ namespace DSH_Modbus采集工具.Drivers
 
             token = token.Trim();
 
-            int split = token.Length;
-            while (split > 0 && char.IsDigit(token[split - 1]))
+            int split = 0;
+            while (split < token.Length && char.IsLetter(token[split]))
             {
-                split--;
+                split++;
             }
 
-            if (split == 0 || split == token.Length)
+            if (split == 0)
             {
-                error = "格式应为 元件+编号，如 M100";
+                error = "格式应为 元件+编号，如 HD100";
                 return false;
             }
 
-            string element = token[..split];
-            string number = token[split..];
+            if (split == token.Length)
+            {
+                error = "缺少元件编号，如 HD100";
+                return false;
+            }
+
+            // 编号只认 ASCII 数字：中文输入法下很容易打出全角数字，
+            // 放进去会一路带到 int.Parse 才失败，报错点离输入点太远
+            for (int i = split; i < token.Length; i++)
+            {
+                if (token[i] < '0' || token[i] > '9')
+                {
+                    error = "编号只能是数字，如 HD100";
+                    return false;
+                }
+            }
+
+            element = token[..split];
+            number = token[split..];
+            return true;
+        }
+
+        /// <summary>
+        /// 元件符号在驱动中定义的全部存储区（去重，按 <see cref="Areas"/> 出现次序）。
+        /// <para>
+        /// 「元件名称」合并输入框靠它判断该元件属于线圈还是寄存器 ——
+        /// <b>只看符号、不看编号</b>，故编号越界时仍能给出正确的类型候选与错误文案
+        /// （若改用「TryResolve 是否成功」判断，越界会被误判成「不是这类元件」）。
+        /// </para>
+        /// </summary>
+        public IReadOnlyList<ModbusArea> AreasOfElement(string? element)
+        {
+            var list = new List<ModbusArea>();
+            if (string.IsNullOrEmpty(element))
+            {
+                return list;
+            }
+
+            foreach (AddressArea a in Areas)
+            {
+                if (a.Element == element && !list.Contains(a.Area))
+                {
+                    list.Add(a.Area);
+                }
+            }
+
+            return list;
+        }
+
+        /// <summary>
+        /// 解析字符串形式的元件（如 "M100"、"X17"、"D20"）为 Modbus 地址。
+        /// 进制由该元件区的 IndexBase 决定。
+        /// </summary>
+        public bool TryResolve(string token, ModbusArea area, out int address, out string error)
+        {
+            address = 0;
+            token = (token ?? string.Empty).Trim();
+
+            if (!TrySplitName(token, out string element, out string number, out error))
+            {
+                return false;
+            }
 
             // 同一元件符号可有多段地址区（如信捷 X 的「本体 / 扩展模块 / BD / ED」），
             // 故需遍历全部匹配区：任一段命中即成功，全部越界才报「超出范围」。

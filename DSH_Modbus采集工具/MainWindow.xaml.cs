@@ -1659,7 +1659,7 @@ namespace DSH_Modbus采集工具
 
         private void AddMonitorItemButton_Click(object sender, RoutedEventArgs e)
         {
-            // 新建项默认：当前驱动第一个寄存器元件 + 编号 0 + INT + DEC。
+            // 新建项默认：当前驱动第一个寄存器元件 + 起始编号 + INT + DEC。
             // 直接给一个「能解析成功」的初值，避免一新增就标红。
             string element = "D";
             string index = "0";
@@ -1671,7 +1671,8 @@ namespace DSH_Modbus采集工具
                     if (a.Area is ModbusArea.HoldingRegister or ModbusArea.InputRegister)
                     {
                         element = a.Element;
-                        index = a.StartIndex.ToString();
+                        // 用 FormatName 取编号：X/Y 是八进制元件，直接 ToString 会给出十进制值
+                        index = a.FormatName(a.StartIndex)[element.Length..];
                         break;
                     }
                 }
@@ -1689,8 +1690,59 @@ namespace DSH_Modbus采集工具
             MonitorItem item = _monitorSet.Add(model);
             RefreshMonitorView();
 
-            // 新增后滚到底部并聚焦编号框，便于连续录入
+            // 新增后滚到底部并聚焦元件名称框，便于连续录入
             MonitorItemsControl?.UpdateLayout();
+            FocusMonitorRowName(item);
+        }
+
+        /// <summary>把焦点移到指定行的元件名称框（新增项后连续录入用）。</summary>
+        private void FocusMonitorRowName(MonitorItem item)
+        {
+            if (MonitorItemsControl == null)
+            {
+                return;
+            }
+
+            // 行容器是 ItemsControl 生成的，需等布局完成后再找
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                for (int i = 0; i < MonitorItemsControl.Items.Count; i++)
+                {
+                    if (MonitorItemsControl.ItemContainerGenerator.ContainerFromIndex(i)
+                            is not DependencyObject container)
+                    {
+                        continue;
+                    }
+
+                    if (container is FrameworkElement fe && fe.DataContext is MonitorItem rowItem
+                        && ReferenceEquals(rowItem, item))
+                    {
+                        FindNameBox(container)?.Focus();
+                        return;
+                    }
+                }
+            }));
+        }
+
+        /// <summary>在可视树里找元件名称输入框（DataTemplate 里的控件不能按名字直接取）。</summary>
+        private static TextBox? FindNameBox(DependencyObject root)
+        {
+            if (root is TextBox tb && tb.Name == "NameBox")
+            {
+                return tb;
+            }
+
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                TextBox? found = FindNameBox(System.Windows.Media.VisualTreeHelper.GetChild(root, i));
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+
+            return null;
         }
 
         private void RemoveMonitorItem_Click(object sender, RoutedEventArgs e)
@@ -1724,41 +1776,125 @@ namespace DSH_Modbus采集工具
             return null;
         }
 
-        private void MonitorElement_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        /// <summary>
+        /// 元件名称（方案 2 的合并输入框）改动：拆成「符号 + 编号」写回模型，再统一重解析 + 落盘。
+        /// <para>
+        /// 拆分失败（如打字途中的 <c>"HD"</c>）只标红、<b>不动模型</b>，等
+        /// <see cref="MonitorName_LostFocus"/> 把输入框恢复成上次有效名称。
+        /// </para>
+        /// </summary>
+        private void MonitorName_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (sender is ComboBox cb && cb.SelectedItem is string element)
+            if (sender is not TextBox tb)
             {
-                MonitorItem? item = RowOf(cb);
-                if (item == null || item.Model.Element == element)
-                {
-                    return;
-                }
-
-                item.Model.Element = element;
-                _monitorSet.AfterChange(item);
-                RefreshMonitorView();
+                return;
             }
+
+            MonitorItem? item = RowOf(tb);
+            if (item == null)
+            {
+                return;
+            }
+
+            string before = item.Model.DisplayName;
+            bool hadError = item.HasError;
+
+            if (!item.SetName(tb.Text, out _))
+            {
+                // 中间态：保留上次有效配置，只让本行标红
+                return;
+            }
+
+            bool changed = item.Model.DisplayName != before;
+
+            // 值没变且本来就没错（行初始化回填、失焦后归一）→ 无事可做。
+            // 这个判断把「回填」与「用户真改了元件」区分开，否则行一加载就走一遍自动纠正类型。
+            // 但**值没变而当前有错**时还要继续：用户可能把打错的名称改回原值（D100 → D → D100），
+            // 此时只有重解析才能清掉那行红字。用「是否有键盘焦点」把这种情况限定为用户正在编辑，
+            // 避免程序回填（行每次实例化都会触发 TextChanged）也去写盘。
+            if (!changed && !(hadError && tb.IsKeyboardFocusWithin))
+            {
+                return;
+            }
+
+            // 元件变了 → 线圈/寄存器归属可能变，类型候选与当前类型要跟着走
+            if (changed && tb.Parent is FrameworkElement row)
+            {
+                SyncMonitorTypeWithElement(row, item);
+            }
+
+            _monitorSet.AfterChange(item);
         }
 
-        private void MonitorIndex_TextChanged(object sender, TextChangedEventArgs e)
+        /// <summary>
+        /// 元件名称输入框失焦：把文本归一成模型的规范写法（符号大写），并重解析一次。
+        /// <para>
+        /// 输入非法时回退到上次有效名称 —— 否则输入框留着半截无效文本、模型却是旧值，
+        /// 用户会以为配置已经改了。
+        /// </para>
+        /// </summary>
+        private void MonitorName_LostFocus(object sender, RoutedEventArgs e)
         {
-            if (sender is TextBox tb)
+            if (sender is not TextBox tb)
             {
-                MonitorItem? item = RowOf(tb);
-                if (item == null)
-                {
-                    return;
-                }
-
-                string text = tb.Text?.Trim() ?? string.Empty;
-                if (item.Model.Index == text)
-                {
-                    return;
-                }
-
-                item.Model.Index = text;
-                _monitorSet.AfterChange(item);
+                return;
             }
+
+            MonitorItem? item = RowOf(tb);
+            if (item == null)
+            {
+                return;
+            }
+
+            string canonical = item.Model.DisplayName;
+            if (tb.Text != canonical)
+            {
+                tb.Text = canonical;   // 触发 TextChanged，但此时拆分必然成功且模型已一致
+            }
+
+            _monitorSet.AfterChange(item);
+        }
+
+        /// <summary>
+        /// 按「元件名称」决定该行可选的数据类型。
+        /// <para>
+        /// 方案 2 里元件是自由文本，故<b>由元件反推类型</b>（方案 1 是反过来的：
+        /// 先选类型、元件下拉只列该类型的元件）。不纠正的话，把 <c>D100</c> 改成 <c>X0</c>
+        /// 会得到「驱动未定义元件 X」这种驴唇不对马嘴的报错。
+        /// </para>
+        /// </summary>
+        /// <param name="autoCorrect">
+        /// true = 用户刚改过元件，类型与元件不符时自动纠正；
+        /// false = 载入持久化数据，只摆好候选、不替用户改声明（不匹配就标红让人看见）。
+        /// </param>
+        private void SyncMonitorTypeWithElement(FrameworkElement row, MonitorItem item, bool autoCorrect = true)
+        {
+            IReadOnlyList<ModbusArea> areas = _currentDriver?.AreasOfElement(item.Model.Element)
+                ?? Array.Empty<ModbusArea>();
+
+            bool coilElement = areas.Contains(ModbusArea.Coil);
+            bool known = areas.Count > 0;
+
+            DataTypeSpec spec = DataTypes.Get(item.Model.Type);
+
+            // 元件不在驱动里（打了一半的输入）→ 保留当前类型所在的候选集，别让下拉框突然空掉
+            if (known && autoCorrect && spec.CoilOnly != coilElement)
+            {
+                item.Model.Type = coilElement ? DataType.Bool : DataType.Int;
+                spec = DataTypes.Get(item.Model.Type);
+                item.Model.Format = spec.DefaultFormat;
+            }
+
+            if (row.FindName("TypeCombo") is ComboBox typeCombo)
+            {
+                // 候选集跟随「元件」；但元件未知（输入未完成）或载入时声明与元件不符时跟随「当前类型」——
+                // 保证下拉框里始终能看到并选中已声明的类型，不会显示成空白
+                bool useCoil = known && autoCorrect ? coilElement : spec.CoilOnly;
+                typeCombo.ItemsSource = useCoil ? DataTypes.CoilTypes : DataTypes.RegisterTypes;
+                typeCombo.SelectedItem = spec;
+            }
+
+            ApplyMonitorRowState(row, item);
         }
 
         private void MonitorType_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1844,9 +1980,8 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 行初始化：把行对象挂到 Tag、填充三个下拉框的候选项与当前选中值。
-        /// 下拉框的候选项按行构造（类型候选固定，格式候选随类型变），
-        /// 故不放在 XAML 里静态定义。
+        /// 行初始化：把行对象挂到 Tag、填入元件名称、按元件推导类型候选与格式候选。
+        /// 候选项按行构造（随元件与类型变），故不放在 XAML 里静态定义。
         /// </summary>
         private void MonitorRow_Loaded(object sender, RoutedEventArgs e)
         {
@@ -1857,33 +1992,15 @@ namespace DSH_Modbus采集工具
 
             row.Tag = item;
 
-            // 元件符号：由当前驱动提供（线圈类元件与寄存器类元件分开）
-            if (row.FindName("ElementCombo") is ComboBox elementCombo)
+            // 元件名称（方案 2：符号 + 编号合并输入）；文本已一致时不写，避免触发无谓的落盘
+            if (row.FindName("NameBox") is TextBox nameBox && nameBox.Text != item.Model.DisplayName)
             {
-                elementCombo.ItemsSource = MonitorElementCandidates(item);
-                elementCombo.SelectedItem = item.Model.Element;
+                nameBox.Text = item.Model.DisplayName;
             }
 
-            if (row.FindName("IndexBox") is TextBox indexBox)
-            {
-                indexBox.Text = item.Model.Index;
-            }
-
-            if (row.FindName("TypeCombo") is ComboBox typeCombo)
-            {
-                typeCombo.ItemsSource = item.Model.Type == DataType.Bool && item.Model.Area == ModbusArea.Coil
-                    ? DataTypes.CoilTypes
-                    : DataTypes.RegisterTypes;
-                typeCombo.SelectedItem = DataTypes.Get(item.Model.Type);
-            }
-
-            if (row.FindName("FormatCombo") is ComboBox formatCombo)
-            {
-                formatCombo.ItemsSource = DataTypes.Get(item.Model.Type).AllowedFormats;
-                formatCombo.SelectedItem = item.Model.Format;
-            }
-
-            ApplyMonitorRowState(row, item);
+            // 载入时不自动纠正类型：持久化里的「元件↔类型」不匹配要留给用户看见（标红），
+            // 悄悄改掉用户的声明比报错更糟
+            SyncMonitorTypeWithElement(row, item, autoCorrect: false);
         }
 
         /// <summary>
@@ -1914,33 +2031,6 @@ namespace DSH_Modbus采集工具
                 formatCombo.ItemsSource = spec.AllowedFormats;
                 formatCombo.SelectedItem = item.Model.Format;
             }
-        }
-
-        /// <summary>本行可选的元件符号：按「线圈 / 寄存器」列出当前驱动中存在的元件（去重）。</summary>
-        private List<string> MonitorElementCandidates(MonitorItem item)
-        {
-            var list = new List<string>();
-            if (_currentDriver == null)
-            {
-                return list;
-            }
-
-            bool coil = item.Model.Type == DataType.Bool;
-            foreach (AddressArea a in _currentDriver.Areas)
-            {
-                bool isCoil = a.Area == ModbusArea.Coil;
-                if (isCoil != coil)
-                {
-                    continue;
-                }
-
-                if (!list.Contains(a.Element))
-                {
-                    list.Add(a.Element);
-                }
-            }
-
-            return list;
         }
 
         private void ImportIoTableButton_Click(object sender, RoutedEventArgs e)

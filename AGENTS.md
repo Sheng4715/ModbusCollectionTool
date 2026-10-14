@@ -25,13 +25,20 @@ DSH_Modbus采集工具/
 ├── App.xaml / App.xaml.cs      # 入口
 ├── MainWindow.xaml             # 全部 UI（单窗口，无 UserControl 拆分）
 ├── MainWindow.xaml.cs          # 交互逻辑（见 §4 分工）
+├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
 ├── XlsxIoTableReader.cs        # xlsx 点位表解析（零依赖 zip+XML）
+├── Modeling/                   # 数据类型系统（P3-3 数据模型层）
+│   ├── DataTypes.cs            # DataType / DisplayFormat 枚举 + DataTypeSpec 规格表
+│   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
+│   └── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
 └── Drivers/
-    ├── CommDriver.cs           # 模型：ModbusArea / NumberBase / AddressArea / CommDriver
-    ├── DriverRegistry.cs       # 品牌地址数据表
+    ├── CommDriver.cs           # 模型：ModbusArea / NumberBase / AddressArea / CommDriver（含字节顺序枚举）
+    ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
     ├── ModbusTcpClient.cs      # Modbus TCP 主站（MBAP + FC01/02/03/04 + 本地端点绑定）
     └── ModbusHeartbeat.cs      # 独立心跳调度与异常分类
 ```
+
+> `ModelingCheck/`（仓库根，**不属于本工程**）是 P3-3 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
 
 ## 3. 页面与 UI
 
@@ -54,7 +61,7 @@ Window
 | 导航项 | 面板 | 说明 |
 |---|---|---|
 | `OverviewNav` 总览 | `OverviewPanel` | 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
-| `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（X/Y 分段 + 分页） |
+| `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `采集配置` | — | 占位项，不切面板 |
 | `设置` | — | **占位项，无 `x:Name`** → 点击会隐藏全部面板，接页面前需先处理 |
@@ -87,8 +94,8 @@ Window
 ### 3.4 页面细节
 
 - **总览**：顶部仅「总览」标题（原状态卡已移除，连接状态统一在全局底栏）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。
-- **状态信息**：见 §5 IO 监控。
-- **设备配置**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮。连接中锁定表单（`SetInputsEnabled`）。串口模式仅隐藏以太网面板，**功能未实现**。
+- **状态信息**：见 §5 IO 监控 / §5.1 自由监控。
+- **设备配置**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 §8.1）。连接中锁定表单（`SetInputsEnabled`）。串口模式仅隐藏以太网面板，**功能未实现**。
 
 ### 3.5 全局底栏（连接状态）
 
@@ -121,7 +128,7 @@ Window
 
 ## 4. 代码分工（MainWindow.xaml.cs）
 
-> ⚠️ 单文件已 1650+ 行，采集编排 / 连接生命周期 / 心跳 / 导航 / 导入 / 分页 / 日志混放（见 `Design.md` §8-1）。
+> ⚠️ 单文件已 **2200+ 行**，采集编排 / 连接生命周期 / 心跳 / 导航 / 导入 / 分页 / 自由监控 / 日志混放（见 `Design.md` §8-1）。
 
 | 区块 | 关键成员 |
 |---|---|
@@ -132,11 +139,12 @@ Window
 | IO 点位集 | `RebuildIoPoints` / `TryCreateIoPoint` / `NormalizePointName` |
 | 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager` |
 | 导入 | `ImportIoTableButton_Click` |
+| **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf`（见 §5.1） |
 | 持久化 | `LoadComments` / `SaveComments` |
 | 网卡 | `ScanNetworkAdapters`（`NicInfo`） |
 | 日志 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` |
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset` |
-| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs`(volatile) / `_currentDriver` / `_xPoints` / `_yPoints` / `_ioPageActive` / `_yViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_comments` / `_deviceLog` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt` |
+| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_xPoints` / `_yPoints` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_comments` / `_monitorSet` / `_deviceLog` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt`（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -153,6 +161,20 @@ Window
 - 由 `IoPoint.IsOutput`（`init` 属性）区分，创建时在 `TryCreateIoPoint` 按点位名首字母定死：`IsOutput = normalized[0] == 'Y'`
 - 三个画刷是 `static readonly` + `Freeze()`，**不要在 `StateBrush` 里 new**（原实现每次取属性都新建对象）
 - XAML 侧不用改：`IoItemTemplate` 的灯仍绑 `Background="{Binding StateBrush}"`
+
+### 5.1 自由监控（P4-2，第三分段）
+
+状态信息页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**。
+
+- **界面采用 Brief「方案 2」**：元件符号与编号**合并为一个输入框**（`NameBox`，如 `HD100`），不再是「符号下拉 + 编号框」
+  - 取舍见 `Design.md` §7.1；存储仍是 `DataPoint.Element` + `Index` 两个字段（旧 `data-points.json` 无损）
+  - 合并输入 → 拆分的**唯一实现**是 `CommDriver.TrySplitName`（`TryResolve` 与它共用同一份规则）
+- **数据类型由元件反推**（方案 1 是反过来的）：`SyncMonitorTypeWithElement` 按 `CommDriver.AreasOfElement` 判断该符号属于线圈还是寄存器 → 线圈只给 `BOOL`，寄存器给 6 种；改元件导致类型不符时自动纠正
+  - ⚠️ `AreasOfElement` **只看符号、不看编号**，故编号越界时仍能给出正确的类型候选与错误文案
+- **输入校验**：`TrySplitName` 从严（编号必须 ASCII 数字，拒 `"D 100"` / `"D-1"` / 全角数字）；拆分失败**只标红、不写模型**（打字途中的 `"HD"` 不能落盘），失焦时回退成上次有效名称
+- **错误提示**：行 `ToolTip` 与 `NameBox` 的 `NameToolTip` 都显示原因 —— 后者**出错时优先显示错误原因**（否则静态格式提示会遮住真原因）
+- 持久化 `data-points.json`（`DataPointStore`），增删改即时落盘；`_monitorSet`（`MonitorItemSet`）负责增删改与 `AfterChange` 重解析
+- ⏳ **未实现**：**当前值仍是占位「—」**（读取链路未接），**写入（FC05/06/16）未做** —— `ModbusTcpClient` 目前只有 FC01–04 读
 
 ## 6. 心跳与连接生命周期
 
@@ -234,6 +256,21 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 - **同一元件可有多段地址区**（信捷 X/Y 即如此）：`TryResolve(string,…)` 遍历**全部**匹配区，任一段命中即成功，全部越界才报「超出驱动定义范围」
 - `StartIndex` 用**十进制**值表达八进制编号（X10000₈ → `4096`）；`Count` 为段内点数；`StartAddress` 为该段起始 Modbus 十进制地址
 
+### 8.1 字节顺序（数据解释方式）
+
+`CommDriver` 上有三个**品牌约定**属性，设备配置页各对应一个下拉框：
+
+| 属性 | 枚举 | 信捷 XD 实测值 |
+|---|---|---|
+| `Int32ByteOrder` | `ByteOrder32`（`1234`/`2143`/`3412`/`4321`） | `Order3412` |
+| `FloatByteOrder` | 同上 | `Order3412` |
+| `StringByteOrder` | `StringByteOrder`（`12`/`21`） | `Order12` |
+
+- 记号含义见 `CommDriver.cs` 的枚举注释：把 4 个字节**按重要性**编号 1=MSB…4=LSB，名称即字节流里的排列顺序
+- **信捷的值是真机定案**（`Design.md` §10.3 / §10.4）；**汇川未实测**，暂用大端 `1234` 并已在代码注释标红
+- 切换设备类型时下拉框按驱动的值重置默认（`ByteOrderComboBox_SelectionChanged`）；这三个值是 `ValueCodec` 各方法的入参，**编解码器不读全局状态**
+- ⚠️ 字符串**不涉及「字序」**：它只是字节序列，没有字的权重之分，别把 `3412` 套到 `STRING` 上
+
 ## 9. 代码约定
 
 - 命名空间 `DSH_Modbus采集工具`（含中文，路径亦含中文，命令行注意编码/引号）
@@ -263,7 +300,13 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 改每页点位数 | `IoRowsPerColumn`（列数固定 4） |
 | IO 采集范围 | `PollOnceAsync` → `_visiblePage` 快照 + `CommDriver.FindArea` 分块（单块 ≤2000） |
 | 改 IO 行高/行距、列宽 | `IoItemTemplate` 的 `Height`/`Margin`；`IoColumnsGrid`/`YIoColumnsGrid`（4×`*`） |
-| 加/改 X-Y 分段切换 | `IoSegmentRadioButton` + `XViewSegment`/`YViewSegment` + `IoView_Checked` |
+| 加/改 X-Y 分段切换 | `IoSegmentRadioButton` + `XViewSegment`/`YViewSegment` + `IoView_Checked`（自由监控 = 第三个 `FreeViewSegment`） |
+| **自由监控增删改/校验** | `MonitorItem.cs`（`MonitorItem` / `MonitorItemSet`）+ `MainWindow.xaml.cs` 的 `Monitor*` 处理器（见 §5.1） |
+| **元件名称输入 → 符号+编号拆分** | `CommDriver.TrySplitName`（`TryResolve` 与自由监控共用） |
+| **数据类型候选（线圈/寄存器）** | `CommDriver.AreasOfElement` + `DataTypes.CoilTypes` / `RegisterTypes` |
+| **监控项持久化** | `DataPointStore`（`data-points.json`）；模型 `Modeling/DataPoint.cs` |
+| **字节顺序（字序/字符串序）** | `CommDriver.Int32ByteOrder` / `FloatByteOrder` / `StringByteOrder` + 设备配置页三个下拉框（见 §8.1） |
+| **类型值编解码与显示格式化** | `Modeling/ValueCodec.cs`（入参传字节顺序，不读全局状态） |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
 | 心跳周期/空闲判断/地址来源 | `Drivers/ModbusHeartbeat.cs` → `RunAsync`；`ModbusTcpClient.HeartbeatIfIdleAsync` |
 | 轮询与断线逻辑 | `PollLoopAsync` / `PollOnceAsync` / `Disconnect(status,color)` |

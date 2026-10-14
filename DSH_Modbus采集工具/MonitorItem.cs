@@ -58,6 +58,50 @@ namespace DSH_Modbus采集工具
         /// <summary>完整点位名，如 <c>HD100</c>。</summary>
         public string DisplayName => Model.DisplayName;
 
+        /// <summary>
+        /// 完整元件名称，如 <c>HD100</c> —— Brief 方案 2 的合并输入框绑定它。
+        /// 持久化仍是 <see cref="DataPoint.Element"/> + <see cref="DataPoint.Index"/> 两个字段
+        /// （故旧 <c>data-points.json</c> 无损），此处只是把两者拼起来给界面用。
+        /// </summary>
+        public string Name => Model.DisplayName;
+
+        /// <summary>
+        /// 把合并输入框的文本拆成「符号 + 编号」写回模型（符号统一转大写）。
+        /// <para>
+        /// <b>拆分失败时不改动模型</b>（保留上次有效值），只置 <see cref="ResolveError"/> 标红 ——
+        /// 用户打字途中必然经过 <c>"HD"</c>、<c>"HD1"</c> 这类中间态，
+        /// 若把中间态也写进模型，会一边打一边把半截配置落盘。
+        /// </para>
+        /// <para>
+        /// 地址解析**不在这里做**：调用方随后统一走 <see cref="MonitorItemSet.AfterChange"/>
+        /// （它负责重解析 + 落盘），避免同一个动作出现两条解析路径。
+        /// </para>
+        /// </summary>
+        public bool SetName(string? text, out string error)
+        {
+            if (!CommDriver.TrySplitName(text, out string element, out string number, out error))
+            {
+                Address = -1;
+                ResolveError = error;
+                return false;
+            }
+
+            element = element.ToUpperInvariant();
+            if (Model.Element == element && Model.Index == number)
+            {
+                return true;
+            }
+
+            Model.Element = element;
+            Model.Index = number;
+
+            OnPropertyChanged(nameof(Name));
+            OnPropertyChanged(nameof(DisplayName));
+            OnPropertyChanged(nameof(Element));
+            OnPropertyChanged(nameof(Index));
+            return true;
+        }
+
         /// <summary>类型显示名（STRING 带长度），如 <c>DINT</c> / <c>STRING[9]</c>。</summary>
         public string TypeDisplayName => Model.TypeDisplayName;
 
@@ -118,6 +162,7 @@ namespace DSH_Modbus采集工具
                     OnPropertyChanged(nameof(HasError));
                     OnPropertyChanged(nameof(RowBrush));
                     OnPropertyChanged(nameof(ToolTipText));
+                    OnPropertyChanged(nameof(NameToolTip));
                 }
             }
         }
@@ -128,6 +173,18 @@ namespace DSH_Modbus采集工具
         public string ToolTipText => HasError
             ? $"配置有误：{_resolveError}"
             : $"{DisplayName} → Modbus 地址 {_address}，读 {RawCount} 个单元";
+
+        /// <summary>
+        /// 元件名称输入框的悬停提示：<b>出错时优先显示错误原因</b>。
+        /// <para>
+        /// 不能只用静态格式提示 —— 方案 2 的元件是自由文本，输错概率高于方案 1 的下拉选择，
+        /// 而用户排查时鼠标第一个停的地方就是这个输入框；
+        /// 若框上恒定显示「如 HD100 / X17」，真正的错误原因（藏在整行 ToolTip 上）就被遮住了。
+        /// </para>
+        /// </summary>
+        public string NameToolTip => HasError
+            ? $"配置有误：{_resolveError}"
+            : "元件名称，如 HD100 / X17（X/Y 为八进制编号）";
 
         /// <summary>行文字颜色：出错标红，正常近黑。</summary>
         public System.Windows.Media.Brush RowBrush => HasError

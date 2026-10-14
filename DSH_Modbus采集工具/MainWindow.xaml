@@ -313,7 +313,7 @@
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                        <ColumnDefinition Width="150"/>  <!-- 元件：符号↓ + 编号[] -->
+                        <ColumnDefinition Width="150"/>  <!-- 元件名称（符号+编号，方案 2） -->
                         <ColumnDefinition Width="152"/>  <!-- 数据类型 ↓（+ STRING 长度） -->
                         <ColumnDefinition Width="88"/>   <!-- 显示格式 ↓ -->
                         <ColumnDefinition Width="*"/>    <!-- 当前值 -->
@@ -324,18 +324,14 @@
                                FontSize="12" Foreground="#9A9A9A"
                                VerticalAlignment="Center"/>
 
-                    <!-- 元件：符号（驱动提供的选项）+ 编号（即时校验范围） -->
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <ComboBox x:Name="ElementCombo"
-                                  Width="66"
-                                  Style="{StaticResource MonitorInlineComboBox}"
-                                  SelectionChanged="MonitorElement_SelectionChanged"/>
-                        <TextBox x:Name="IndexBox"
-                                 Width="74"
-                                 Margin="4,0,0,0"
-                                 Style="{StaticResource MonitorInlineTextBox}"
-                                 TextChanged="MonitorIndex_TextChanged"/>
-                    </StackPanel>
+                    <!-- 元件名称：符号与编号合并输入（方案 2），如 HD100 / X17；
+                         解析失败时本行标红并在 ToolTip 给出原因 -->
+                    <TextBox x:Name="NameBox"
+                             Grid.Column="1"
+                             Style="{StaticResource MonitorInlineTextBox}"
+                             TextChanged="MonitorName_TextChanged"
+                             LostFocus="MonitorName_LostFocus"
+                             ToolTip="{Binding NameToolTip}"/>
 
                     <ComboBox Grid.Column="2" x:Name="TypeCombo"
                               Width="96"
@@ -770,7 +766,7 @@
                                             <ColumnDefinition Width="40"/>   <!-- 删除 -->
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="#8A8A8A"/>
-                                        <TextBlock Grid.Column="1" Text="元件" FontSize="12" Foreground="#8A8A8A"/>
+                                        <TextBlock Grid.Column="1" Text="元件名称" FontSize="12" Foreground="#8A8A8A"/>
                                         <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="#8A8A8A"/>
                                         <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="#8A8A8A"/>
                                         <TextBlock Grid.Column="4" Text="当前值" FontSize="12" Foreground="#8A8A8A"/>
