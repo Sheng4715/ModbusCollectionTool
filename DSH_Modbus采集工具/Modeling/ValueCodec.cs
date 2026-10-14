@@ -246,7 +246,21 @@ namespace DSH_Modbus采集工具.Modeling
             return sb.ToString();
         }
 
-        /// <summary>浮点显示：默认去掉多余的尾零，兼顾可读性与精度。</summary>
+        /// <summary>
+        /// 浮点显示：7 位有效数字。
+        /// <para>
+        /// ⚠️ **为什么不是 <c>G9</c>（单精度唯一往返所需位数）**：
+        /// <c>float</c> 存不下 <c>123.45</c> 这类十进制小数（二进制下 0.45 是无限循环），
+        /// 实际存的是 <c>123.4499969482…</c>。用 <c>G9</c> 会把这个二进制误差**如实打印**
+        /// 成 <c>123.449997</c>，与 PLC（XDPPro 显示 <c>123.45</c>）对不上，
+        /// 用户会误以为通讯或字节序出了问题。**数据本身一直是对的**，只是打印位数不同。
+        /// </para>
+        /// <para>
+        /// <c>G7</c> 与本项目工程量（0~9999.99 这类 6~7 位有效数字）匹配，且尾零自动省略。
+        /// 代价：<c>123456.789</c> 会显示成 <c>123456.8</c>（丢失末位），
+        /// 需要精确往返时请改用 <c>G9</c> —— 显示文本不参与回写，故此处取舍只影响可读性。
+        /// </para>
+        /// </summary>
         private static string FormatFloat(float f)
         {
             if (float.IsNaN(f))
@@ -264,8 +278,7 @@ namespace DSH_Modbus采集工具.Modeling
                 return "−∞";
             }
 
-            // "G9" 是单精度能往返的最短位数；对本项目常见的工程量（如 123.45）已足够
-            return f.ToString("G9", CultureInfo.InvariantCulture);
+            return f.ToString("G7", CultureInfo.InvariantCulture);
         }
 
         /// <summary>格式化线圈（BOOL，只能是 BIN）。</summary>

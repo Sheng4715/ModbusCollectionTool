@@ -41,10 +41,14 @@ ushort[] d802 = { 0xE666, 0x42F6 };
 Check("DecodeReal", ValueCodec.DecodeReal(d802, ByteOrder32.Order3412), 123.45f);
 
 // 注意：123.45f 的单精度实际值是 123.44999694824219，不是数学上的 123.45。
-// 这里用 "G9"（单精度可往返的最短位数）会如实输出 123.449997 —— 这是**正确**行为，
-// 不能为了「看着好看」而丢掉精度。若业务上要定长小数，那是显示层另加格式化的事。
+// 显示曾用 "G9"（单精度可往返的最短位数），会如实输出 123.449997 ——
+// 那在**数值上**是对的，但与 PLC（XDPPro 显示 123.45）对不上，用户会误以为
+// 通讯或字节序有问题。现改为 "G7"：与本项目工程量（6~7 位有效数字）匹配。
+// ⚠️ 解码精度不受影响，见下面 DecodeReal 的断言。
 Check("REAL 解码值 == float 123.45", ValueCodec.DecodeReal(d802, ByteOrder32.Order3412) == 123.45f, true);
-Check("FormatRegisters REAL/DEC 保持精度", ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "123.449997");
+Check("FormatRegisters REAL/DEC 显示为 123.45", ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "123.45");
+// 代价：7 位有效数字以外的末位会被四舍五入（这是选 G7 的已知取舍，不是 bug）
+Check("G7 取舍：1234.567 显示为 1234.567", ValueCodec.FormatRegisters(DataType.Real, new ushort[] { 0x5225, 0x449A }, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "1234.567");
 Check("FormatRegisters REAL/HEX", ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Hex, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "0x42F6E666");
 
 Console.WriteLine();
