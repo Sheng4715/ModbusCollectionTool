@@ -161,6 +161,100 @@ Check("枚举序列化为名字（非数字）", hasTypeName, true);
 Check("Address 不落盘（JsonIgnore 生效）", noAddress, true);
 
 Console.WriteLine();
+Console.WriteLine("=== 10. 写入编码：文本 → 寄存器（FC05/06/16 的入参）===");
+
+// 逐元素比较：Check 用 ToString()，数组只会比出类型名，故数组另用这个
+void CheckRegs(string name, ushort[] actual, ushort[] expected)
+{
+    bool ok = actual.Length == expected.Length;
+    if (ok)
+    {
+        for (int i = 0; i < actual.Length; i++)
+        {
+            if (actual[i] != expected[i]) { ok = false; break; }
+        }
+    }
+
+    string Fmt(ushort[] a) => "[" + string.Join(", ", a) + "]";
+    if (ok) { pass++; Console.WriteLine($"  [PASS] {name,-46} = {Fmt(actual)}"); }
+    else { fail++; Console.WriteLine($"  [FAIL] {name,-46} = {Fmt(actual)}   期望 {Fmt(expected)}"); }
+}
+
+void CheckEncode(string name, DataType t, DisplayFormat f, string text, int len, ByteOrder32 bo, StringByteOrder so, ushort[] expected)
+{
+    bool ok = ValueCodec.TryEncodeRegisters(t, f, text, len, bo, so, out ushort[] regs, out string err);
+    if (!ok) { fail++; Console.WriteLine($"  [FAIL] {name,-46} 解析失败：{err}"); return; }
+    CheckRegs(name, regs, expected);
+}
+
+void CheckReject(string name, DataType t, DisplayFormat f, string text, int len)
+{
+    bool ok = ValueCodec.TryEncodeRegisters(t, f, text, len, xinje.Int32ByteOrder, xinje.StringByteOrder, out _, out string err);
+    if (!ok) { pass++; Console.WriteLine($"  [PASS] {name,-46} 正确拒绝：{err}"); }
+    else { fail++; Console.WriteLine($"  [FAIL] {name,-46} 本应拒绝却通过了"); }
+}
+
+// 整数：必须是 FormatRegisters 的严格逆运算（往返一致）
+CheckEncode("INT  1234 -> 1 个寄存器", DataType.Int, DisplayFormat.Dec, "1234", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 1234 });
+CheckEncode("INT  -1 -> 0xFFFF（补码）", DataType.Int, DisplayFormat.Dec, "-1", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0xFFFF });
+CheckEncode("UINT 65535 -> 0xFFFF", DataType.UInt, DisplayFormat.Dec, "65535", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0xFFFF });
+CheckEncode("INT  HEX 输入 1F", DataType.Int, DisplayFormat.Hex, "1F", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0x001F });
+CheckEncode("INT  HEX 输入 0x1F（带前缀）", DataType.Int, DisplayFormat.Hex, "0x1F", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0x001F });
+CheckEncode("INT  BIN 输入 1010", DataType.Int, DisplayFormat.Bin, "1010", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0b1010 });
+
+// 32 位：真机黄金样本反向 —— 123456 应产出 D800=0xE240, D801=0x0001（字序 3412）
+CheckEncode("DINT 123456 -> 真机两寄存器", DataType.DInt, DisplayFormat.Dec, "123456", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0xE240, 0x0001 });
+CheckEncode("REAL 123.45 -> 真机两寄存器", DataType.Real, DisplayFormat.Dec, "123.45", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0xE666, 0x42F6 });
+CheckEncode("REAL 负数 -1.5", DataType.Real, DisplayFormat.Dec, "-1.5", 0, xinje.Int32ByteOrder, xinje.StringByteOrder,
+    ValueCodec.Split32(unchecked((uint)BitConverter.SingleToInt32Bits(-1.5f)), xinje.Int32ByteOrder));
+
+// 字符串：真机黄金样本 'abcd' -> 0x6162, 0x6364
+CheckEncode("STRING[4] 'abcd' -> 真机两寄存器", DataType.String, DisplayFormat.Ascii, "abcd", 4, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0x6162, 0x6364 });
+
+// ⚠️ 关键：编码必须补齐到声明的寄存器数（EncodeString 按文本长度自算，会少给）
+CheckRegs("STRING[9] 'abc' 补零到 5 个寄存器", ValueCodec.EncodeStringFixed("abc", 9, xinje.StringByteOrder),
+    new ushort[] { 0x6162, 0x6300, 0x0000, 0x0000, 0x0000 });
+CheckRegs("STRING[9] 超长 'abcdefghijkl' 截断到 9 字符", ValueCodec.EncodeStringFixed("abcdefghijkl", 9, xinje.StringByteOrder),
+    new ushort[] { 0x6162, 0x6364, 0x6566, 0x6768, 0x6900 });
+Check("STRING 补零后的寄存器数 == RegistersForLength",
+    ValueCodec.EncodeStringFixed("abc", 9, xinje.StringByteOrder).Length,
+    DataTypes.Get(DataType.String).RegistersForLength(9));
+
+// 范围校验：红字提示要能说清边界
+CheckReject("INT  32768 超上界", DataType.Int, DisplayFormat.Dec, "32768", 0);
+CheckReject("INT  -32769 超下界", DataType.Int, DisplayFormat.Dec, "-32769", 0);
+CheckReject("HEX  '1FFFF' 超出 16 位", DataType.Int, DisplayFormat.Hex, "1FFFF", 0);
+CheckReject("BIN  17 位超 16 位宽", DataType.Int, DisplayFormat.Bin, "10000000000000000", 0);
+CheckReject("UDINT 4294967296 超上界", DataType.UDInt, DisplayFormat.Dec, "4294967296", 0);
+CheckReject("UINT -1 不能为负", DataType.UInt, DisplayFormat.Dec, "-1", 0);
+CheckReject("HEX  非法字面量 'ZZ'", DataType.Int, DisplayFormat.Hex, "ZZ", 0);
+CheckReject("DEC  非法字面量 '12.5'", DataType.Int, DisplayFormat.Dec, "12.5", 0);
+CheckReject("空文本", DataType.Int, DisplayFormat.Dec, "", 0);
+CheckReject("REAL 非法字面量 'abc'", DataType.Real, DisplayFormat.Dec, "abc", 0);
+CheckReject("REAL 拒绝 NaN", DataType.Real, DisplayFormat.Dec, "NaN", 0);
+CheckReject("BOOL 不能作为寄存器写入", DataType.Bool, DisplayFormat.Bin, "1", 0);
+
+// 往返一致性：编码后再解码应回到原值（写入正确性的核心保证）
+void CheckRoundTrip(string name, DataType t, DisplayFormat f, string text)
+{
+    if (!ValueCodec.TryEncodeRegisters(t, f, text, 0, xinje.Int32ByteOrder, xinje.StringByteOrder, out ushort[] regs, out string err))
+    {
+        fail++; Console.WriteLine($"  [FAIL] {name,-46} 编码失败：{err}"); return;
+    }
+
+    string back = ValueCodec.FormatRegisters(t, regs, f, xinje.Int32ByteOrder, xinje.StringByteOrder, 0);
+    Check(name, back, text);
+}
+
+CheckRoundTrip("往返 INT '1234'", DataType.Int, DisplayFormat.Dec, "1234");
+CheckRoundTrip("往返 INT '-1'", DataType.Int, DisplayFormat.Dec, "-1");
+CheckRoundTrip("往返 DINT '123456'", DataType.DInt, DisplayFormat.Dec, "123456");
+CheckRoundTrip("往返 DINT '-123456'", DataType.DInt, DisplayFormat.Dec, "-123456");
+CheckRoundTrip("往返 REAL '123.45'", DataType.Real, DisplayFormat.Dec, "123.45");
+CheckRoundTrip("往返 REAL '-1.5'", DataType.Real, DisplayFormat.Dec, "-1.5");
+CheckRoundTrip("往返 UDINT '4000000000'", DataType.UDInt, DisplayFormat.Dec, "4000000000");
+
+Console.WriteLine();
 Console.WriteLine("============================================================");
 Console.WriteLine($"结果：{pass} 通过 / {fail} 失败");
 Console.WriteLine("============================================================");

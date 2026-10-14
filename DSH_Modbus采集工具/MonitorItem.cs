@@ -38,6 +38,8 @@ namespace DSH_Modbus采集工具
         private string _currentValue = "—";
         private string? _resolveError;
         private string? _readError;
+        private string? _writeError;
+        private bool _isEditing;
         private int _address = -1;
 
         public MonitorItem(DataPoint model)
@@ -177,8 +179,67 @@ namespace DSH_Modbus采集工具
 
         public bool HasReadError => !string.IsNullOrEmpty(_readError);
 
-        /// <summary>「当前值」格的悬停提示：读失败时给出原因，否则显示地址与占用。</summary>
-        public string ValueToolTip => HasReadError ? $"读取失败：{_readError}" : ToolTipText;
+        /// <summary>
+        /// 用户正在编辑「当前值」格时为 true。轮询回填必须跳过该行 ——
+        /// 否则输入到一半就被下一拍读值覆盖，根本没法输入。
+        /// </summary>
+        public bool IsEditing
+        {
+            get => _isEditing;
+            set
+            {
+                if (_isEditing != value)
+                {
+                    _isEditing = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
+        /// <summary>最近一次写入失败的原因；成功或无写入时为 null。与 <see cref="ReadError"/> 分开。</summary>
+        public string? WriteError
+        {
+            get => _writeError;
+            set
+            {
+                if (_writeError != value)
+                {
+                    _writeError = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(HasWriteError));
+                    OnPropertyChanged(nameof(ValueToolTip));
+                    OnPropertyChanged(nameof(ValueBrush));
+                }
+            }
+        }
+
+        public bool HasWriteError => !string.IsNullOrEmpty(_writeError);
+
+        /// <summary>
+        /// 把轮询读到的值写入界面。**正在编辑时跳过** —— 保住用户手上的输入。
+        /// <para>
+        /// ⚠️ **不清 <see cref="WriteError"/>**：写失败的原因（如「该地址不可写」）
+        /// 与读是否成功无关，清掉会让用户还没看到就消失。它只在下次成功写入时清除。
+        /// </para>
+        /// </summary>
+        /// <returns>真正写入了返回 true；因正在编辑而跳过返回 false。</returns>
+        public bool ApplyReadValue(string text)
+        {
+            if (IsEditing)
+            {
+                return false;
+            }
+
+            CurrentValue = text;
+            return true;
+        }
+
+        /// <summary>「当前值」格的悬停提示：读/写失败时给出原因，否则显示地址与占用。</summary>
+        public string ValueToolTip => HasWriteError
+            ? $"写入失败：{_writeError}"
+            : HasReadError
+                ? $"读取失败：{_readError}"
+                : ToolTipText;
 
         /// <summary>解析失败的原因；成功时为 null。非空时界面标红该行。</summary>
         public string? ResolveError
@@ -223,14 +284,18 @@ namespace DSH_Modbus采集工具
             : NormalBrush;
 
         /// <summary>
-        /// 「当前值」格的颜色：读失败标琥珀，否则近黑。
+        /// 「当前值」格的颜色：读或写失败标琥珀，否则近黑。
         /// <para>
         /// 刻意与配置错误（<see cref="RowBrush"/> 的红色）区分开：
-        /// 红＝配置要改，琥珀＝这一拍没读到、配置没问题。
+        /// 红＝配置要改，琥珀＝这一拍没读到/没写进去、配置没问题。
         /// 两者混用会让人去改一个本来正确的地址。
         /// </para>
+        /// <para>
+        /// 读失败与写失败**共用**琥珀：对用户而言都是「通讯侧的事」，
+        /// 具体是读还是写由 ToolTip 文字区分（<see cref="ValueToolTip"/>）。
+        /// </para>
         /// </summary>
-        public System.Windows.Media.Brush ValueBrush => HasReadError
+        public System.Windows.Media.Brush ValueBrush => HasReadError || HasWriteError
             ? ReadErrorBrush
             : NormalBrush;
 
@@ -494,7 +559,7 @@ namespace DSH_Modbus采集工具
                             continue;
                         }
 
-                        e.Item.CurrentValue = ValueCodec.FormatCoil(coils[e.Offset]);
+                        e.Item.ApplyReadValue(ValueCodec.FormatCoil(coils[e.Offset]));
                     }
                     else
                     {
@@ -505,13 +570,13 @@ namespace DSH_Modbus采集工具
                         }
 
                         ReadOnlySpan<ushort> slice = registers.AsSpan(e.Offset, e.Units);
-                        e.Item.CurrentValue = ValueCodec.FormatRegisters(
+                        e.Item.ApplyReadValue(ValueCodec.FormatRegisters(
                             e.Item.Model.Type,
                             slice,
                             e.Item.Model.Format,
                             driver.Int32ByteOrder,
                             driver.StringByteOrder,
-                            e.Item.Model.Length);
+                            e.Item.Model.Length));
                     }
 
                     // 读成功即清掉上一次的读失败标记（含「长度不足」的临时故障）
@@ -532,6 +597,75 @@ namespace DSH_Modbus采集工具
                 item.ReadError = reason;
             }
         }
+
+        /// <summary>
+        /// 生成某一项的写入计划：把界面文本编码成报文参数。
+        /// <para>
+        /// 只读区（输入寄存器 / 离散输入）**不预先拦截** —— 按需求仍可提交，
+        /// 由从站回异常码，让用户看到真实原因（而非被界面挡住）。
+        /// </para>
+        /// </summary>
+        public static bool TryBuildWrite(
+            MonitorItem item,
+            string? text,
+            CommDriver driver,
+            out WritePlan plan,
+            out string error)
+        {
+            plan = default;
+            error = string.Empty;
+
+            if (item.HasError)
+            {
+                error = item.ResolveError ?? "该项配置有误";
+                return false;
+            }
+
+            DataTypeSpec spec = DataTypes.Get(item.Model.Type);
+
+            // 线圈：BOOL 走 FC05，只接受 0 / 1
+            if (spec.CoilOnly)
+            {
+                string s = (text ?? string.Empty).Trim();
+                if (s != "0" && s != "1")
+                {
+                    error = "线圈只能写 0 或 1";
+                    return false;
+                }
+
+                plan = new WritePlan
+                {
+                    Area = item.Model.Area,
+                    Address = item.Address,
+                    IsCoil = true,
+                    CoilValue = s == "1",
+                };
+                return true;
+            }
+
+            if (!ValueCodec.TryEncodeRegisters(
+                    item.Model.Type,
+                    item.Model.Format,
+                    text,
+                    item.Model.Length,
+                    driver.Int32ByteOrder,
+                    driver.StringByteOrder,
+                    out ushort[] regs,
+                    out error))
+            {
+                return false;
+            }
+
+            plan = new WritePlan
+            {
+                Area = item.Model.Area,
+                Address = item.Address,
+                IsCoil = false,
+                Registers = regs,
+            };
+            return true;
+        }
+
         private void Save()
         {
             var models = new List<DataPoint>(_items.Count);
@@ -581,5 +715,24 @@ namespace DSH_Modbus采集工具
         public int Offset { get; init; }
 
         public int Units { get; init; }
+    }
+
+    /// <summary>
+    /// 一次写入的报文参数（由 <see cref="MonitorItemSet.TryBuildWrite"/> 产出）：
+    /// 线圈写 <see cref="CoilValue"/>（FC05），寄存器写 <see cref="Registers"/>（FC06 或 FC16）。
+    /// </summary>
+    public struct WritePlan
+    {
+        public ModbusArea Area { get; init; }
+
+        public int Address { get; init; }
+
+        public bool IsCoil { get; init; }
+
+        /// <summary>线圈目标值（仅 <see cref="IsCoil"/> 为 true 时有效）。</summary>
+        public bool CoilValue { get; init; }
+
+        /// <summary>寄存器值（仅 <see cref="IsCoil"/> 为 false 时有效）；长度 1 走 FC06，否则 FC16。</summary>
+        public ushort[]? Registers { get; init; }
     }
 }

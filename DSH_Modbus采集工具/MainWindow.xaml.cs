@@ -9,6 +9,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -2152,6 +2153,168 @@ namespace DSH_Modbus采集工具
                 item.Model.Format = fmt;
                 _monitorSet.AfterChange(item);
             }
+        }
+
+        /// <summary>
+        /// 每个「当前值」输入框最近一次**已提交**的文本（键为控件本身）。
+        /// 用途：回车与失焦都会触发提交，靠它识别「同一次编辑」避免重复写。
+        /// </summary>
+        private readonly Dictionary<TextBox, string?> _lastCommittedValue = new();
+
+        /// <summary>
+        /// 「当前值」格获得焦点：标记为编辑中，轮询回填会跳过该行，
+        /// 否则用户输入到一半就被下一拍读值覆盖。
+        /// </summary>
+        private void MonitorValue_GotFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (sender is TextBox box && RowOf(box) is MonitorItem item)
+            {
+                item.IsEditing = true;
+
+                // 新一轮编辑：清掉上一轮的去重记录。
+                // 没有这一步，用户写入 100 成功后再想写一次 100 会被当成重复而静默跳过。
+                // 放在 GotFocus（而非写入成功后）是因为：要重新输入必然先聚焦，
+                // 而同一轮编辑内的「回车后失焦」不会再次触发 GotFocus，去重仍然有效。
+                _lastCommittedValue.Remove(box);
+
+                // 选中全部，便于直接覆盖输入（与常见 PLC 上位机的一致做法）
+                box.SelectAll();
+            }
+        }
+
+        /// <summary>「当前值」格失去焦点：解除编辑标记并提交写入。</summary>
+        private void MonitorValue_LostFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (sender is TextBox box && RowOf(box) is MonitorItem item)
+            {
+                item.IsEditing = false;
+                _ = CommitMonitorValueAsync(box, item);
+            }
+        }
+
+        /// <summary>「当前值」格按键：回车提交写入（与失焦提交等价，但不需先点别处）。</summary>
+        private void MonitorValue_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter || sender is not TextBox box || RowOf(box) is not MonitorItem item)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            _ = CommitMonitorValueAsync(box, item);
+        }
+
+        /// <summary>
+        /// 提交「当前值」格的写入。
+        /// <para>
+        /// 流程：文本 → 编码（<see cref="MonitorItemSet.TryBuildWrite"/>）→ 按区选 FC05/06/16 → 写。
+        /// **不回读**：成功后由下一拍轮询自然刷新（需求选择），故只清错误标记，
+        /// 显示值保持不变 —— 不做「假装成功」的本地改写。
+        /// </para>
+        /// <para>
+        /// 与读取不同，写失败**不改动显示值**：让用户还能看到自己输入的内容并修正。
+        /// </para>
+        /// </summary>
+        private async Task CommitMonitorValueAsync(TextBox box, MonitorItem item)
+        {
+            ModbusTcpClient? modbus = _modbus;
+            CommDriver? driver = _currentDriver;
+
+            // 按需求：建立连接后即可写入，不要求自由监控分段可见。
+            if (!_isConnected || modbus == null || driver == null)
+            {
+                item.WriteError = "未连接，无法写入";
+                return;
+            }
+
+            string text = box.Text;
+
+            // 回车与失焦是两条路径，会先后各触发一次提交（回车后焦点转移会连带引得失焦）。
+            // 同一次编辑只写一次：值与上次提交的相同就跳过。
+            if (_lastCommittedValue.TryGetValue(box, out string? last) && last == text)
+            {
+                return;
+            }
+
+            if (!MonitorItemSet.TryBuildWrite(item, text, driver, out WritePlan plan, out string error))
+            {
+                // 编码失败（类型不匹配、越界、非法字面量）——本地就能判定，不发报文。
+                //
+                // ⚠️ 此时**保持编辑态**：否则下一拍轮询立刻用 PLC 的真实值覆盖，
+                // 用户还没看清错误提示，自己输的内容就没了。
+                // 保持编辑态 = 值留在界面上、错误提示留在 ToolTip 里，用户可继续改。
+                item.WriteError = error;
+                item.IsEditing = true;
+                _lastCommittedValue[box] = text; // 同一份非法内容不重复报告
+                return;
+            }
+
+            // 记下本次提交的文本：回车与失焦会先后各触发一次，靠它去重。
+            // ⚠️ 必须在**发报文之前**记下（而不是成功之后）——
+            // 否则第一次成功后清掉记录，紧接着的失焦路径会当作新提交又写一次。
+            _lastCommittedValue[box] = text;
+
+            try
+            {
+                await WriteToDeviceAsync(modbus, plan).ConfigureAwait(true);
+
+                // 成功：清掉错误标记、**解除编辑态**，
+                // 之后由下一拍轮询自然刷成 PLC 的真实值（不回读，按需求）。
+                item.WriteError = null;
+                item.ReadError = null;
+                item.IsEditing = false;
+            }
+            catch (OperationCanceledException)
+            {
+                item.WriteError = "写入已取消";
+                item.IsEditing = true;
+            }
+            catch (Exception ex)
+            {
+                // 只读区（FC02/FC04）会走到这里 —— 从站回异常码，原样展示原因。
+                // 同样保持编辑态，让用户看到自己输的内容与失败原因。
+                item.WriteError = ClassifyWriteError(ex);
+                item.IsEditing = true;
+                _lastCommittedValue[box] = text; // 同一份内容不重复发失败请求
+            }
+        }
+
+        /// <summary>按存储区选择写功能码：线圈 FC05，寄存器按长度选 FC06（单）或 FC16（多）。</summary>
+        private static Task WriteToDeviceAsync(ModbusTcpClient modbus, WritePlan plan)
+        {
+            if (plan.Address < 0)
+            {
+                throw new IOException("地址无效，无法写入");
+            }
+
+            ushort address = (ushort)plan.Address;
+
+            if (plan.IsCoil)
+            {
+                return modbus.WriteSingleCoilAsync(address, plan.CoilValue);
+            }
+
+            ushort[] regs = plan.Registers ?? throw new IOException("写入内容为空");
+            return regs.Length == 1
+                ? modbus.WriteSingleRegisterAsync(address, regs[0])
+                : modbus.WriteMultipleRegistersAsync(address, regs);
+        }
+
+        /// <summary>
+        /// 写入失败的原因文案。与 <see cref="ClassifyDisconnectReason"/> 不同：
+        /// 写失败多为「从站拒绝」（异常码），不涉及断线归类，故单独处理。
+        /// </summary>
+        private static string ClassifyWriteError(Exception ex)
+        {
+            if (ex is ModbusResponseException mre)
+            {
+                // 码 2 出现在只读区是最常见的情况，给出可操作的解释
+                return mre.ExceptionCode == 2
+                    ? "该地址不可写（输入寄存器 / 离散输入为只读区）"
+                    : mre.Message;
+            }
+
+            return ClassifyDisconnectReason(ex.Message);
         }
 
         /// <summary>

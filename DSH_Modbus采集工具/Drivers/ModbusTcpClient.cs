@@ -19,11 +19,15 @@ namespace DSH_Modbus采集工具.Drivers
     }
 
     /// <summary>
-    /// Modbus TCP 主站（只读）：MBAP 报文封装 + 功能码 0x01/0x02/0x03/0x04。
+    /// Modbus TCP 主站：MBAP 报文封装 + 功能码 0x01/0x02/0x03/0x04（读）
+    /// 与 0x05/0x06/0x10（写）。
     /// 单连接、请求串行（信号量），单次请求 2 秒超时。
     /// </summary>
     public sealed class ModbusTcpClient : IDisposable
     {
+        /// <summary>单次 FC16 最多写的寄存器数（协议上限 123）。</summary>
+        public const int MaxRegistersPerWrite = 123;
+
         private readonly SemaphoreSlim _gate = new(1, 1);
         private TcpClient? _tcp;
         private ushort _tid;
@@ -77,6 +81,52 @@ namespace DSH_Modbus采集工具.Drivers
         /// <summary>0x04 读输入寄存器</summary>
         public Task<ushort[]> ReadInputRegistersAsync(ushort startAddress, ushort count, CancellationToken ct = default)
             => ReadRegistersAsync(0x04, startAddress, count, ct);
+
+        /// <summary>0x05 写单个线圈。响应为回显请求（地址 + 值），成功无返回值。</summary>
+        public Task WriteSingleCoilAsync(ushort address, bool on, CancellationToken ct = default)
+        {
+            // 线圈值在报文里是 0xFF00（合）/ 0x0000（分），不是 0/1
+            ushort raw = on ? (ushort)0xFF00 : (ushort)0x0000;
+            return WriteAsync(BuildWriteSinglePdu(0x05, address, raw), 0x05, ct);
+        }
+
+        /// <summary>0x06 写单个保持寄存器。响应为回显请求（地址 + 值），成功无返回值。</summary>
+        public Task WriteSingleRegisterAsync(ushort address, ushort value, CancellationToken ct = default)
+            => WriteAsync(BuildWriteSinglePdu(0x06, address, value), 0x06, ct);
+
+        /// <summary>
+        /// 0x10 写多个保持寄存器。响应只含「起始地址 + 寄存器数」（无数据），
+        /// 故成功校验与单写不同，见 <see cref="WriteAsync"/>。
+        /// </summary>
+        public Task WriteMultipleRegistersAsync(ushort startAddress, ushort[] values, CancellationToken ct = default)
+        {
+            if (values == null || values.Length == 0)
+            {
+                throw new ArgumentException("写入内容不能为空", nameof(values));
+            }
+
+            if (values.Length > MaxRegistersPerWrite)
+            {
+                throw new ArgumentException(
+                    $"单次最多写 {MaxRegistersPerWrite} 个寄存器，实际 {values.Length} 个", nameof(values));
+            }
+
+            int count = values.Length;
+            byte[] pdu = new byte[6 + count * 2];
+            pdu[0] = 0x10;
+            pdu[1] = (byte)(startAddress >> 8);
+            pdu[2] = (byte)startAddress;
+            pdu[3] = (byte)(count >> 8);
+            pdu[4] = (byte)count;
+            pdu[5] = (byte)(count * 2);
+            for (int i = 0; i < count; i++)
+            {
+                pdu[6 + i * 2] = (byte)(values[i] >> 8);
+                pdu[7 + i * 2] = (byte)(values[i] & 0xFF);
+            }
+
+            return WriteAsync(pdu, 0x10, ct, isMultiple: true);
+        }
 
         /// <summary>
         /// 在请求锁内检查空闲时间，只有缺少近期有效响应时才读取一个心跳线圈。
@@ -144,6 +194,47 @@ namespace DSH_Modbus采集工具.Drivers
             (byte)(count >> 8), (byte)count,
         };
 
+        private static byte[] BuildWriteSinglePdu(byte functionCode, ushort address, ushort value) => new[]
+        {
+            functionCode,
+            (byte)(address >> 8), (byte)address,
+            (byte)(value >> 8), (byte)value,
+        };
+
+        /// <summary>
+        /// 三个写功能码的公共路径。写入响应与读响应**格式完全不同**：
+        /// 读回「字节数 + 数据」，写回「功能码 + 地址 + 值/数量」的**回显**（恒 4 字节 PDU），
+        /// 故不能走读的那套长度校验，这里自行校验。
+        /// </summary>
+        private async Task WriteAsync(byte[] pdu, byte functionCode, CancellationToken ct, bool isMultiple = false)
+        {
+            byte[] resp = await RequestAsync(pdu, ct, isWrite: true).ConfigureAwait(false);
+
+            // 响应长度：0x05/0x06 回显地址 + 值；0x10 回显地址 + 寄存器数
+            if (resp.Length != 5)
+            {
+                throw new IOException($"Modbus 写响应长度异常：{resp.Length}");
+            }
+
+            // 回显的地址必须与请求一致（0x10 还要比对数量）——防止应答错位时误判成功
+            if (resp[1] != pdu[1] || resp[2] != pdu[2])
+            {
+                throw new IOException("Modbus 写响应地址与请求不符");
+            }
+
+            if (isMultiple)
+            {
+                if (resp[3] != pdu[3] || resp[4] != pdu[4])
+                {
+                    throw new IOException("Modbus 写响应寄存器数与请求不符");
+                }
+            }
+            else if (resp[3] != pdu[3] || resp[4] != pdu[4])
+            {
+                throw new IOException("Modbus 写响应值与请求不符");
+            }
+        }
+
         private static void ThrowIfException(byte[] resp)
         {
             if (resp.Length >= 1 && (resp[0] & 0x80) != 0)
@@ -174,7 +265,11 @@ namespace DSH_Modbus采集工具.Drivers
         };
 
         /// <summary>发送请求并返回响应 PDU（不含 MBAP/单元号）。请求串行，2 秒超时。</summary>
-        private async Task<byte[]> RequestAsync(byte[] pdu, CancellationToken ct, TimeSpan? idleInterval = null)
+        /// <param name="isWrite">
+        /// true 表示这是写请求，响应是「回显」而非「字节数 + 数据」，
+        /// 故跳过读专用的长度校验（由调用方自行校验）。
+        /// </param>
+        private async Task<byte[]> RequestAsync(byte[] pdu, CancellationToken ct, TimeSpan? idleInterval = null, bool isWrite = false)
         {
             await _gate.WaitAsync(ct).ConfigureAwait(false);
             try
@@ -244,7 +339,7 @@ namespace DSH_Modbus采集工具.Drivers
                         throw new IOException("Modbus 异常响应长度无效");
                     }
                 }
-                else
+                else if (!isWrite)
                 {
                     int count = (pdu[3] << 8) | pdu[4];
                     int expectedBytes = pdu[0] is 0x01 or 0x02 ? (count + 7) / 8 : count * 2;
@@ -252,6 +347,15 @@ namespace DSH_Modbus采集工具.Drivers
                         || respPdu[1] != expectedBytes)
                     {
                         throw new IOException("Modbus 响应功能码或数据长度不匹配");
+                    }
+                }
+                else
+                {
+                    // 写响应是「回显」：功能码 + 地址 + 值/数量，恒 5 字节 PDU。
+                    // 只在这里校验功能码；地址与值的一致性由 WriteAsync 比对。
+                    if (respPdu[0] != pdu[0] || respPdu.Length != 5)
+                    {
+                        throw new IOException("Modbus 写响应功能码或长度不匹配");
                     }
                 }
 

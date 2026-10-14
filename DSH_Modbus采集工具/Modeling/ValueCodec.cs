@@ -328,5 +328,273 @@ namespace DSH_Modbus采集工具.Modeling
 
             return regs;
         }
+
+        /// <summary>
+        /// 把字符串按<b>声明的字符数</b>编码成寄存器序列：
+        /// 超出则截断，不足则补 <c>0x00</c>，使寄存器数恰好等于 <c>RegistersForLength(length)</c>。
+        /// <para>
+        /// ⚠️ 不能直接用 <see cref="EncodeString"/>：它按<b>文本长度</b>自算寄存器数，
+        /// 而用户声明的是 <c>STRING[9]</c>（占 5 个寄存器）。若输入 <c>"abc"</c>，
+        /// <c>EncodeString</c> 只给 2 个寄存器，会把该项占用的后 3 个寄存器漏写
+        /// （那些位置可能残留旧值），与读取侧的 <c>RawCount</c> 对不上。
+        /// </para>
+        /// </summary>
+        public static ushort[] EncodeStringFixed(string text, int length, StringByteOrder order)
+        {
+            if (length <= 0)
+            {
+                throw new ArgumentException("STRING 长度必须大于 0", nameof(length));
+            }
+
+            text ??= string.Empty;
+            int regCount = (length + 1) / 2;
+
+            // 先按声明长度截断字符（避免先把超长文本编码再丢弃寄存器）
+            if (text.Length > length)
+            {
+                text = text.Substring(0, length);
+            }
+
+            ushort[] packed = EncodeString(text, order);
+            if (packed.Length == regCount)
+            {
+                return packed;
+            }
+
+            var regs = new ushort[regCount];
+            Array.Copy(packed, regs, packed.Length);
+            return regs;
+        }
+
+        // ==================== 文本 → 值（写入用） ====================
+
+        /// <summary>
+        /// 解析用户输入的整数字面量，按 <paramref name="format"/> 决定进制：
+        /// <c>HEX</c> 接受 <c>0x1F</c> 或 <c>1F</c>；<c>BIN</c> 接受 <c>1010</c> 或 <c>0b1010</c>；
+        /// <c>DEC</c> 接受可选负号（仅对有符号类型有意义）。
+        /// <para>
+        /// 返回值是<b>位模式</b>（未按类型做符号扩展）：如 <c>INT</c> 的 <c>-1</c> 得到 <c>0xFFFF</c>。
+        /// 范围校验由 <see cref="TryParseInteger"/> 按类型完成。
+        /// </para>
+        /// </summary>
+        public static bool TryParseIntegerLiteral(DataType type, DisplayFormat format, string? text, out long bits, out string error)
+        {
+            bits = 0;
+            error = string.Empty;
+            string s = (text ?? string.Empty).Trim();
+            if (s.Length == 0)
+            {
+                error = "请输入数值";
+                return false;
+            }
+
+            DataTypeSpec spec = DataTypes.Get(type);
+            if (spec.CoilOnly)
+            {
+                error = "线圈只能写 0 / 1";
+                return false;
+            }
+
+            bool signed = type is DataType.Int or DataType.DInt;
+            if (format is not (DisplayFormat.Hex or DisplayFormat.Bin or DisplayFormat.Dec))
+            {
+                error = $"{spec.DisplayName} 不支持 {format} 格式";
+                return false;
+            }
+
+            switch (format)
+            {
+                case DisplayFormat.Hex:
+                {
+                    string body = s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? s[2..] : s;
+                    if (body.Length == 0)
+                    {
+                        error = "请输入十六进制数值，如 1F 或 0x1F";
+                        return false;
+                    }
+
+                    if (!ulong.TryParse(body, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong hex))
+                    {
+                        error = $"「{s}」不是合法的十六进制数";
+                        return false;
+                    }
+
+                    return CheckIntegerRange(type, hex, signed, out bits, out error);
+                }
+
+                case DisplayFormat.Bin:
+                {
+                    string body = s.StartsWith("0b", StringComparison.OrdinalIgnoreCase) ? s[2..] : s;
+                    if (body.Length == 0)
+                    {
+                        error = "请输入二进制数值，如 1010";
+                        return false;
+                    }
+
+                    try
+                    {
+                        ulong bin = Convert.ToUInt64(body, 2);
+                        return CheckIntegerRange(type, bin, signed, out bits, out error);
+                    }
+                    catch (Exception ex) when (ex is FormatException or OverflowException)
+                    {
+                        error = $"「{s}」不是合法的二进制数";
+                        return false;
+                    }
+                }
+
+                default:
+                {
+                    if (!long.TryParse(s, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long dec))
+                    {
+                        error = $"「{s}」不是合法的十进制整数";
+                        return false;
+                    }
+
+                    // ⚠️ 必须在这里就按类型范围校验，**不能**交给 CheckIntegerRange：
+                    // 后者会把值先截断到目标位宽，-32769 截成 0x7FFF 后看起来是合法的 32767。
+                    DataTypeSpec decSpec = DataTypes.Get(type);
+                    if (signed)
+                    {
+                        long min = -(1L << (decSpec.BitWidth - 1));
+                        long max = (1L << (decSpec.BitWidth - 1)) - 1;
+                        if (dec < min || dec > max)
+                        {
+                            error = $"{decSpec.DisplayName} 范围 {min} ~ {max}";
+                            return false;
+                        }
+                    }
+                    else if (dec < 0)
+                    {
+                        error = $"{decSpec.DisplayName} 不能为负";
+                        return false;
+                    }
+                    else if ((ulong)dec > (decSpec.BitWidth == 16 ? ushort.MaxValue : uint.MaxValue))
+                    {
+                        error = $"{decSpec.DisplayName} 范围 0 ~ {(decSpec.BitWidth == 16 ? ushort.MaxValue : uint.MaxValue)}";
+                        return false;
+                    }
+
+                    bits = dec;
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 按类型位宽做范围校验（<b>字面量</b>输入，如 HEX/BIN）。
+        /// <para>
+        /// ⚠️ 判据是「按位宽截断后是否等于原值」+「重新解释符号后在范围内」：
+        /// 只看后者会放过 <c>HEX 1FFFF</c>（截成 <c>0xFFFF</c> 看着合法）。
+        /// 十进制输入不走这里 —— 它在解析时就按类型范围校验过（见 <c>TryParseIntegerLiteral</c>）。
+        /// </para>
+        /// </summary>
+        private static bool CheckIntegerRange(DataType type, ulong magnitude, bool signed, out long bits, out string error)
+        {
+            DataTypeSpec spec = DataTypes.Get(type);
+            int width = spec.BitWidth;
+            error = string.Empty;
+            bits = 0;
+
+            // 位模式：16 位取低 16 位，32 位取低 32 位
+            ulong masked = width == 16 ? (ushort)magnitude : (uint)magnitude;
+
+            // 超出位宽能容纳的范围即越界（截断前后不等说明高位被丢掉了）
+            if (masked != magnitude)
+            {
+                error = width == 16
+                    ? $"{spec.DisplayName} 范围 0x0000 ~ 0xFFFF"
+                    : $"{spec.DisplayName} 范围 0x00000000 ~ 0xFFFFFFFF";
+                return false;
+            }
+
+            if (signed)
+            {
+                long asSigned = width == 16
+                    ? unchecked((short)masked)
+                    : unchecked((int)masked);
+
+                long min = -(1L << (width - 1));
+                long max = (1L << (width - 1)) - 1;
+
+                if (asSigned < min || asSigned > max)
+                {
+                    error = $"{spec.DisplayName} 范围 {min} ~ {max}";
+                    return false;
+                }
+
+                bits = asSigned;
+                return true;
+            }
+
+            bits = unchecked((long)masked);
+            return true;
+        }
+
+        /// <summary>
+        /// 文本 → 寄存器数组（写入的统一入口）。按类型与显示格式解析，
+        /// <c>STRING</c> 走 <see cref="EncodeStringFixed"/>，其余走整数/浮点解析。
+        /// </summary>
+        public static bool TryEncodeRegisters(
+            DataType type,
+            DisplayFormat format,
+            string? text,
+            int stringLength,
+            ByteOrder32 byteOrder,
+            StringByteOrder stringOrder,
+            out ushort[] registers,
+            out string error)
+        {
+            registers = Array.Empty<ushort>();
+            error = string.Empty;
+            DataTypeSpec spec = DataTypes.Get(type);
+
+            if (spec.CoilOnly)
+            {
+                error = "BOOL 只能写线圈（FC05），不能作为寄存器写入";
+                return false;
+            }
+
+            if (type == DataType.String)
+            {
+                if (stringLength <= 0)
+                {
+                    error = "STRING 长度必须大于 0";
+                    return false;
+                }
+
+                registers = EncodeStringFixed(text ?? string.Empty, stringLength, stringOrder);
+                return true;
+            }
+
+            if (type == DataType.Real)
+            {
+                string s = (text ?? string.Empty).Trim();
+                if (!float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out float f))
+                {
+                    error = $"「{s}」不是合法的浮点数";
+                    return false;
+                }
+
+                if (float.IsNaN(f) || float.IsInfinity(f))
+                {
+                    error = "不支持写入 NaN / 无穷大";
+                    return false;
+                }
+
+                registers = Split32(unchecked((uint)BitConverter.SingleToInt32Bits(f)), byteOrder);
+                return true;
+            }
+
+            if (!TryParseIntegerLiteral(type, format, text, out long bits, out error))
+            {
+                return false;
+            }
+
+            registers = spec.BitWidth == 16
+                ? new[] { (ushort)bits }
+                : Split32(unchecked((uint)bits), byteOrder);
+            return true;
+        }
     }
 }

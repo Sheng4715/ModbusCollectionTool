@@ -350,6 +350,59 @@
             </Style.Triggers>
         </Style>
 
+        <!--
+            「当前值」输入框：**框线风格**（白底 + 细边框 + 小圆角），
+            与设备配置页的表单输入框一致 —— 行内下拉框是胶囊、这一格是输入框，
+            两者本来就不该长得一样。
+            读/写失败时边框与文字转琥珀（与 ValueBrush 同色系）。
+        -->
+        <Style x:Key="MonitorValueTextBox" TargetType="TextBox">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Foreground" Value="{Binding ValueBrush}"/>
+            <Setter Property="Padding" Value="6,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="#C8C8C8"
+                                BorderThickness="1"
+                                CornerRadius="4">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center"
+                                          Focusable="False"
+                                          HorizontalScrollBarVisibility="Hidden"
+                                          VerticalScrollBarVisibility="Hidden"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#9A9A9A"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#0067C0"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Background" Value="#F3F3F3"/>
+                                <Setter Property="Foreground" Value="#9A9A9A"/>
+                            </Trigger>
+                            <!-- 读/写失败：琥珀描边，与文字同色系 -->
+                            <DataTrigger Binding="{Binding HasReadError}" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#B26A00"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding HasWriteError}" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#B26A00"/>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 枚举 → 大写名（显示格式用；BIN/DEC/HEX/ASCII 按惯例全大写） -->
         <DataTemplate x:Key="EnumUpperTemplate">
             <TextBlock Text="{Binding Converter={StaticResource EnumUpperConverter}}"
@@ -634,16 +687,19 @@
                               SelectionChanged="MonitorFormat_SelectionChanged"/>
 
                     <!--
-                        当前值：只有本分段可见时才读（跟随可见性，见 PollFreeMonitorAsync）。
-                        读到前是占位「—」；读失败转琥珀色并在 ToolTip 给出原因
-                        （与配置错误的红色区分：红＝配置要改，琥珀＝这一拍没读到）。
+                        当前值：可直接编辑，回车或失焦时写入 PLC。
+                        轮询回填会跳过正在编辑的格（MonitorItem.IsEditing），
+                        否则输入到一半就被下一拍读值覆盖。
+                        读/写失败转琥珀色 + ToolTip 给原因（红＝配置要改，琥珀＝通讯侧的事）。
                     -->
-                    <TextBlock Grid.Column="4" Text="{Binding CurrentValue}"
-                               FontSize="12"
-                               Foreground="{Binding ValueBrush}"
-                               ToolTip="{Binding ValueToolTip}"
-                               VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis"/>
+                    <TextBox Grid.Column="4"
+                             x:Name="ValueBox"
+                             Text="{Binding CurrentValue, UpdateSourceTrigger=PropertyChanged}"
+                             Style="{StaticResource MonitorValueTextBox}"
+                             ToolTip="{Binding ValueToolTip}"
+                             GotKeyboardFocus="MonitorValue_GotFocus"
+                             LostKeyboardFocus="MonitorValue_LostFocus"
+                             KeyDown="MonitorValue_KeyDown"/>
 
                     <Button Grid.Column="5"
                             Content="&#xE711;"
