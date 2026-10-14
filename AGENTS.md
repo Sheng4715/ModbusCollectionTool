@@ -86,6 +86,14 @@ Window
 | `IoItemTemplate` | IO 点位单元格（灯 10×10、注释 MinWidth 144；`Comment` 为 INPC） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
 | `IoPagerButton` | 分页箭头（26×26，首末页置灰） |
+| `IoCardButton` | **通用文字按钮**（浅灰实底胶囊 `#EDEDED`／圆角 6／高 26／字号 12） |
+| `FormButton` | 设备配置页按钮，`BasedOn` `IoCardButton`，仅字号 14、内边距 14 |
+| `FormComboBox` | 设备配置页下拉框：**胶囊**（灰底无边框圆角 6 + chevron），字号 14／高 26 |
+| `FormComboItem` | 表单下拉项容器（含 `ItemContainerStyle`，勿漏） |
+| `FormTextBox` | 设备配置页输入框：**框线**（白底 `#C8C8C8` 圆角 4），字号 14／高 26 |
+| `MonitorInlineComboBox` / `MonitorTypeCombo` | 自由监控行内下拉框：胶囊，字号 12／高 22 |
+| `MonitorComboItem` | 行内下拉项容器 |
+| `MonitorInlineTextBox` / `MonitorValueTextBox` | 自由监控行内输入框：框线，字号 12／高 22 |
 | `LogClearButton` | 日志卡「清空」按钮 |
 | `DeviceLogItemTemplate` | 日志行（时间戳灰 + 消息按级别着色） |
 | `DeviceLogListStyle` | 日志列表（透明底/无边框/无选中底色） |
@@ -172,8 +180,11 @@ Window
   - 合并输入 → 拆分的**唯一实现**是 `CommDriver.TrySplitName`（`TryResolve` 与它共用同一份规则）
 - **数据类型由元件反推**（方案 1 是反过来的）：`SyncMonitorTypeWithElement` 按 `CommDriver.AreasOfElement` 判断该符号属于线圈还是寄存器 → 线圈只给 `BOOL`，寄存器给 6 种；改元件导致类型不符时自动纠正
   - ⚠️ `AreasOfElement` **只看符号、不看编号**，故编号越界时仍能给出正确的类型候选与错误文案
-- **输入校验**：`TrySplitName` 从严（编号必须 ASCII 数字，拒 `"D 100"` / `"D-1"` / 全角数字）；拆分失败**只标红、不写模型**（打字途中的 `"HD"` 不能落盘），失焦时回退成上次有效名称
-- **错误提示**：行 `ToolTip` 与 `NameBox` 的 `NameToolTip` 都显示原因 —— 后者**出错时优先显示错误原因**（否则静态格式提示会遮住真原因）
+- **输入校验**：`TrySplitName` 从严（编号必须 ASCII 数字，拒 `"D 100"` / `"D-1"` / 全角数字）
+- **提交时机＝失焦**（不是打字时）：`MonitorName_TextChanged` **只做视觉标红**（`SetPreviewError`），**绝不写模型** —— 打字途中若 `SetName` 就落盘，下一拍轮询会拿半成品名称去采集，而磁盘上仍是旧值（内存/磁盘不一致，实测表现为从站读 `800` 而 json 还是 `100`）
+  - `MonitorName_LostFocus` 是**唯一提交点**：拆分失败→静默回退到上次有效名称（不弹窗）；成功则解析，**若越界弹 `MessageBox`**（标题「元件名称无效」，正文含名称、原因与「请检查编号范围或重新选择设备类型。」），确认后同样回退且**不污染 json**
+- **悬停提示已全部移除**：整行 `ToolTipText`、`NameBox` 的 `NameToolTip`、`ValueToolTip` **三者恒为 `null`** —— 监控表格是常驻界面，鼠标划过是高频动作，悬停弹提示纯属干扰。错误改由**颜色**表达（见下），越界改由**弹窗**表达。属性保留是为了将若要恢复只改一处、不动 XAML
+- **「当前值」初值为空字符串**（不是 `—`）：输入框里放破折号既不是有效值、还得先删掉才能输，而「空」本身已表达"还没读到"
 - 持久化 `data-points.json`（`DataPointStore`），增删改即时落盘；`_monitorSet`（`MonitorItemSet`）负责增删改与 `AfterChange` 重解析
 - **读取已实现**（跟随可见性，见 §5 与 `Design.md` §5.6）：仅在**本分段可见**时读，`BuildReadPlan` 按 `ModbusArea` 分组 + 地址连续性分块（单块 ≤2000），按区选 FC01/FC03/FC04，经 `ValueCodec.FormatRegisters` 按各行类型/格式/字节顺序格式化后写入 `CurrentValue`
   - ⚠️ **必须按区分组**：信捷 `D0`（保持寄存器）与 `M0`（线圈）**绝对地址都是 0**，只按地址归并会把两者塞进同一次请求 → 从站回异常码
@@ -294,12 +305,40 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 - 颜色：主色 `#0067C0`、背景 `#F3F3F3`、顶栏 `#E7E7E7`、卡片白底 + `#E8E8E8` 边框圆角 8
 - 字体：`Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI`；标题用 `Segoe UI Variable Display`；图标 `Segoe Fluent Icons, Segoe MDL2 Assets`（资源键 `IconFont`）
 - 表单：标签 `Width="80"` + 控件 `Width="200"`、行距 16；`SyncInputHeights` 在 Loaded 与面板显示时同步控件高
+
+### 9.1 控件风格约定（新增控件必读）
+
+**全应用统一一套视觉语言，新增任何输入框 / 下拉框 / 按钮都必须套用现成样式，不要手写外观。**
+
+| 控件 | 用哪个样式 | 外观 |
+|---|---|---|
+| 下拉框 | `FormComboBox`（表单）／ `MonitorInlineComboBox`（行内） | **胶囊**：灰底 `#EDEDED`、无边框、圆角 6、右侧 chevron |
+| 输入框 | `FormTextBox`（表单）／ `MonitorInlineTextBox`、`MonitorValueTextBox`（行内） | **框线**：白底、`#C8C8C8` 1px 边框、圆角 4 |
+| 按钮 | `FormButton`（表单）／ `IoCardButton`（其它） | **灰底胶囊** `#EDEDED`、圆角 6 |
+
+尺寸只有两档，**按所在场景选**，不要另立数值：
+
+| 场景 | 字号 | 高 | 例 |
+|---|---|---|---|
+| 表单 | 14 | 26 | 设备配置页 |
+| 行内 / 卡片 | 12 | 22 | 自由监控表格行 |
+
+**几条容易踩的**：
+
+- **下拉框必须同时给 `ItemContainerStyle`**（已写进 `FormComboBox` 样式里，别在控件上覆盖）—— 漏了展开项会用系统默认蓝条，与胶囊风格明显不搭
+- ⚠️ **不要给 ComboBox 设 `DisplayMemberPath`**：它与自定义模板里的 `SelectionBoxItemTemplate` 不合成，闭合态会显示成类型名
+- `ComboBoxItem` 模板里的 `ContentPresenter` **必须写 `ContentSource="Content"`**，否则条目退化成对象的 `ToString()`
+- **下拉项的左边距 = `ComboBox.Padding` − 2**（因为 item 的 `Border` 还有 `Margin="2,1"`）：改了一边必须同步另一边，否则展开时文字比闭合态偏右、切换选项会横向跳一下
+- 颜色的三个语义出口：**红 `#C42B1C`＝配置要改**、**琥珀 `#B26A00`＝通讯侧的事**、主色 `#0067C0`＝聚焦
+- XML 注释里**不能出现连续两个减号**（Markdown 表格分隔行会直接编译失败 `MC3000`）
+
 - `IO模板.xlsx` 仅**导入功能测试用**，其注释列与 `io-comments.json` 都是占位文本（`CommentX0`/`Comment0`），**无业务含义** —— 不必维护、不必恢复，也不是待处理问题
 
 ## 10. 任务速查
 
 | 需求 | 位置 |
 |------|------|
+| **加输入框 / 下拉框 / 按钮（新增控件必读）** | 套用现成样式，别手写外观 —— 见 **§9.1 控件风格约定** |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
