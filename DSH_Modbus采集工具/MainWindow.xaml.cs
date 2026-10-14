@@ -173,6 +173,14 @@ namespace DSH_Modbus采集工具
         /// <summary>自由监控项集合（增删改 + 落盘 + 地址解析）。</summary>
         private readonly MonitorItemSet _monitorSet = new();
 
+        /// <summary>STRING 长度的允许范围（选 STRING 时弹框校验用）。</summary>
+        private const int StringLengthMin = 1;
+
+        private const int StringLengthMax = 128;
+
+        /// <summary>新建 STRING 时的默认长度（弹框的初值）。</summary>
+        private const int StringLengthDefault = 8;
+
         /// <summary>当前显示的是「自由监控」分段（采集跟随可见分段用）。</summary>
         private volatile bool _freeViewActive;
 
@@ -1932,40 +1940,95 @@ namespace DSH_Modbus采集工具
 
         private void MonitorType_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (sender is ComboBox cb && cb.SelectedItem is DataTypeSpec spec)
+            if (sender is not ComboBox cb || cb.SelectedItem is not DataTypeSpec spec)
             {
-                MonitorItem? item = RowOf(cb);
-                if (item == null || item.Model.Type == spec.Type)
+                return;
+            }
+
+            MonitorItem? item = RowOf(cb);
+            if (item == null || item.Model.Type == spec.Type)
+            {
+                return;
+            }
+
+            // ⚠️ 不要在 SelectionChanged 的调用栈里直接 ShowDialog：
+            // 此刻下拉 Popup 尚未关闭，模态窗口会在「应用仍在处理 Popup 关闭」的
+            // 派发上下文里创建，窗口拿不到显示/激活，表现为弹框不按预期出现。
+            //
+            // 解法：先让 Popup 关掉、并等一轮渲染真正落定，再在**渲染之后**的
+            // 独立派发上下文里弹框。用 Render 优先级 + 再转一次 Normal，
+            // 确保完全脱离 Popup 的生命周期。
+            //
+            // ⚠️ 也不要在延后之前动 cb.IsDropDownOpen / cb.SelectedItem：
+            // 那会把本次选择撤销，延后执行时类型已经一致，于是整件事被跳过
+            // （实测：加了 IsDropDownOpen=false 之后完全不弹了）。
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Render,
+                new Action(() =>
                 {
+                    Dispatcher.BeginInvoke(
+                        System.Windows.Threading.DispatcherPriority.Normal,
+                        new Action(() => ApplyTypeChangeWithPrompt(cb, item, spec)));
+                }));
+        }
+
+        /// <summary>
+        /// 换类型：选 STRING 时先弹框问长度，取消则整件事作废（类型与格式都不动）。
+        /// 由 <see cref="MonitorType_SelectionChanged"/> 用 BeginInvoke 延后调用。
+        /// </summary>
+        private void ApplyTypeChangeWithPrompt(ComboBox cb, MonitorItem item, DataTypeSpec spec)
+        {
+            // 延后执行期间用户可能又改了；类型已一致就不用再问
+            if (item.Model.Type == spec.Type)
+            {
+                return;
+            }
+
+            DataType previousType = item.Model.Type;
+
+            if (spec.HasVariableLength)
+            {
+                int initial = item.Model.Length > 0
+                    ? item.Model.Length
+                    : StringLengthDefault;
+
+                int? len = NumberInputDialog.Ask(
+                    this,
+                    "字符串长度",
+                    $"请输入 STRING 的字符数（{StringLengthMin} ~ {StringLengthMax}）。",
+                    initial,
+                    StringLengthMin,
+                    StringLengthMax);
+
+                if (len == null)
+                {
+                    // 作废：把下拉框退回原类型
+                    cb.SelectedItem = DataTypes.Get(previousType);
                     return;
                 }
 
-                item.Model.Type = spec.Type;
-
-                // 换类型后原格式可能不再合法（如 INT 的 DEC 换到 STRING），
-                // 自动落到该类型的默认格式，避免留下一个「非法组合」的项
-                if (!spec.AllowsFormat(item.Model.Format))
-                {
-                    item.Model.Format = spec.DefaultFormat;
-                }
-
-                // STRING 需要长度，给个默认值避免必然报错
-                if (spec.HasVariableLength && item.Model.Length <= 0)
-                {
-                    item.Model.Length = 8;
-                }
-
-                _monitorSet.AfterChange(item);
-
-                // 换类型会改变「格式候选」与「是否需要长度」，就地更新本行控件，
-                // 不重建整行 —— 重建会打断用户正在进行的输入
-                if (cb.Parent is FrameworkElement row)
-                {
-                    ApplyMonitorRowState(row, item);
-                }
-
-                RefreshMonitorView();
+                item.Model.Length = len.Value;
             }
+
+            item.Model.Type = spec.Type;
+
+            // 换类型后原格式可能不再合法（如 INT 的 DEC 换到 STRING），
+            // 自动落到该类型的默认格式，避免留下一个「非法组合」的项
+            if (!spec.AllowsFormat(item.Model.Format))
+            {
+                item.Model.Format = spec.DefaultFormat;
+            }
+
+            _monitorSet.AfterChange(item);
+
+            // 换类型会改变「格式候选」，就地更新本行控件，
+            // 不重建整行 —— 重建会打断用户正在进行的输入
+            if (cb.Parent is FrameworkElement row)
+            {
+                ApplyMonitorRowState(row, item);
+            }
+
+            RefreshMonitorView();
         }
 
         private void MonitorFormat_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1981,35 +2044,6 @@ namespace DSH_Modbus采集工具
                 item.Model.Format = fmt;
                 _monitorSet.AfterChange(item);
             }
-        }
-
-        /// <summary>STRING 长度：只接受正整数；非法输入不写回模型（保留上次有效值）。</summary>
-        private void MonitorLength_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (sender is not TextBox tb)
-            {
-                return;
-            }
-
-            MonitorItem? item = RowOf(tb);
-            if (item == null)
-            {
-                return;
-            }
-
-            if (!int.TryParse(tb.Text?.Trim(), out int len) || len <= 0)
-            {
-                // 输入中途（空串、只输了一半）不当作错误，等用户输完
-                return;
-            }
-
-            if (item.Model.Length == len)
-            {
-                return;
-            }
-
-            item.Model.Length = len;
-            _monitorSet.AfterChange(item);
         }
 
         /// <summary>
@@ -2043,21 +2077,6 @@ namespace DSH_Modbus采集工具
         private static void ApplyMonitorRowState(FrameworkElement row, MonitorItem item)
         {
             DataTypeSpec spec = DataTypes.Get(item.Model.Type);
-
-            // STRING 才显示长度输入
-            if (row.FindName("LengthPanel") is FrameworkElement lengthPanel)
-            {
-                lengthPanel.Visibility = spec.HasVariableLength ? Visibility.Visible : Visibility.Collapsed;
-            }
-
-            if (row.FindName("LengthBox") is TextBox lengthBox)
-            {
-                // 只在需要时写入：写回会触发 TextChanged，无谓地走一遍落盘
-                if (spec.HasVariableLength && lengthBox.Text != item.Model.Length.ToString())
-                {
-                    lengthBox.Text = item.Model.Length.ToString();
-                }
-            }
 
             if (row.FindName("FormatCombo") is ComboBox formatCombo)
             {

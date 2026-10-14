@@ -357,12 +357,230 @@
                        VerticalAlignment="Center"/>
         </DataTemplate>
 
-        <!-- 行内下拉框：紧凑，用于类型 / 格式 -->
+        <!--
+            数据类型下拉的显示模板（等价于原 DisplayMemberPath="DisplayName"）。
+            改成显式 DataTemplate 是因为自定义 ComboBox 模板下
+            DisplayMemberPath 不与 SelectionBoxItemTemplate 合成，
+            闭合态会退化成 ToString()（实测显示成 "DSH_Modbu"）。
+        -->
+        <DataTemplate x:Key="MonitorTypeItemTemplate">
+            <TextBlock Text="{Binding DisplayName}"
+                       FontSize="12" Foreground="#1A1A1A"
+                       VerticalAlignment="Center"/>
+        </DataTemplate>
+
+        <!--
+            行内下拉框：外观向「分段切换控件」（IoSegmentRadioButton）看齐 ——
+            灰底胶囊 #EDEDED + 圆角 6、无边框、无系统立体感，与表头那两个切换项同族。
+            仍需保留下拉（类型 6 项 / 格式 4 项），故只重做**闭合态**外观，
+            去掉系统上下微调箭头，只留一个淡淡的 chevron。
+        -->
         <Style x:Key="MonitorInlineComboBox" TargetType="ComboBox">
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Height" Value="26"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#1A1A1A"/>
+            <Setter Property="Padding" Value="8,0"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border x:Name="Bd"
+                                    Background="#EDEDED"
+                                    CornerRadius="6">
+                                <Grid Margin="{TemplateBinding Padding}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <!--
+                                        ⚠️ 闭合态文字必须走 SelectionBoxItem + SelectionBoxItemTemplate
+                                        这一对（WPF 默认模板就是这么接的）。只绑 SelectionBoxItem
+                                        会退化成 ToString()（实测类型列显示成 "DSH_Modbu"）。
+                                        ⚠️ 同时**不要**在 ComboBox 上用 DisplayMemberPath：
+                                        它与自定义模板的 SelectionBoxItemTemplate 不合成，
+                                        正确做法是改用 ItemTemplate 指定要显示的属性（见下方控件）。
+
+                                        ⚠️ 这里显示的是 DataTypeSpec.DisplayName（如 INT），
+                                        而 **类型列** 要显示 STRING[20]（带长度）—— DataTypeSpec 是共享的
+                                        静态目录、没有长度，故类型列另有一套模板，
+                                        把文字换成行内 MonitorItem.TypeDisplayName（见 MonitorTypeCombo）。
+                                    -->
+                                    <ContentPresenter x:Name="ContentSite"
+                                                      Grid.Column="0"
+                                                      Content="{TemplateBinding SelectionBoxItem}"
+                                                      ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                      ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                                      VerticalAlignment="Center"
+                                                      HorizontalAlignment="Left"
+                                                      IsHitTestVisible="False"/>
+                                    <!-- chevron: Segoe Fluent Icons E70D -->
+                                    <TextBlock x:Name="Chev"
+                                               Grid.Column="1"
+                                               Text="&#xE70D;"
+                                               FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                               FontSize="9"
+                                               Foreground="#6A6A6A"
+                                               VerticalAlignment="Center"
+                                               Margin="4,1,0,0"/>
+                                </Grid>
+                            </Border>
+                            <ToggleButton x:Name="PART_Toggle"
+                                          Background="Transparent"
+                                          BorderThickness="0"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent"/>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   Placement="Bottom"
+                                   VerticalOffset="2"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   PopupAnimation="Fade"
+                                   Focusable="False">
+                                <Border Background="#FFFFFF"
+                                        BorderBrush="#D6D6D6" BorderThickness="1"
+                                        CornerRadius="6"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="260">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                            </Trigger>
+                            <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#B0B0B0"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 下拉项：去系统高亮，选中行浅灰，与胶囊风格一致 -->
+        <Style x:Key="MonitorComboItem" TargetType="ComboBoxItem">
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Ib" Background="Transparent" CornerRadius="4"
+                                Padding="{TemplateBinding Padding}" Margin="2,1">
+                            <!--
+                                ⚠️ 必须写 ContentSource="Content"：裸 <ContentPresenter/> 不会
+                                套用 ComboBox 的 ItemTemplate，条目会退化成对象的 ToString()
+                                （实测下拉里显示成 "DSH_Modbus采集工具.Modeling.DataTypeSpec"）。
+                            -->
+                            <ContentPresenter ContentSource="Content"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Ib" Property="Background" Value="#EDEDED"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Ib" Property="Background" Value="#DCE9F7"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+            数据类型列的专用模板：闭合态文字取**行内** MonitorItem.TypeDisplayName，
+            而不是共享的 DataTypeSpec.DisplayName —— 因为 STRING 要显示成 STRING[20]，
+            长度是每行自己的（DataTypeSpec 目录里没有长度）。
+            下拉项仍显示纯类型名（候选集不该带某行的长度）。
+        -->
+        <Style x:Key="MonitorTypeCombo" TargetType="ComboBox"
+               BasedOn="{StaticResource MonitorInlineComboBox}">
+            <Setter Property="ItemTemplate" Value="{StaticResource MonitorTypeItemTemplate}"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource MonitorComboItem}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border x:Name="Bd" Background="#EDEDED" CornerRadius="6">
+                                <Grid Margin="{TemplateBinding Padding}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <!-- 行内显示名（STRING[9]）；数据上下文即该行的 MonitorItem -->
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding TypeDisplayName}"
+                                               FontSize="12" Foreground="#1A1A1A"
+                                               VerticalAlignment="Center"
+                                               HorizontalAlignment="Left"
+                                               IsHitTestVisible="False"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="&#xE70D;"
+                                               FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                               FontSize="9"
+                                               Foreground="#6A6A6A"
+                                               VerticalAlignment="Center"
+                                               Margin="4,1,0,0"/>
+                                </Grid>
+                            </Border>
+                            <ToggleButton x:Name="PART_Toggle"
+                                          Background="Transparent"
+                                          BorderThickness="0"
+                                          Focusable="False"
+                                          ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent"/>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <Popup x:Name="PART_Popup"
+                                   AllowsTransparency="True"
+                                   Placement="Bottom"
+                                   VerticalOffset="2"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   PopupAnimation="Fade"
+                                   Focusable="False">
+                                <Border Background="#FFFFFF"
+                                        BorderBrush="#D6D6D6" BorderThickness="1"
+                                        CornerRadius="6"
+                                        MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="260">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                            </Trigger>
+                            <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- 自由监控的一行 -->
@@ -376,7 +594,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
                         <ColumnDefinition Width="150"/>  <!-- 元件名称（符号+编号，方案 2） -->
-                        <ColumnDefinition Width="152"/>  <!-- 数据类型 ↓（+ STRING 长度） -->
+                        <ColumnDefinition Width="100"/>  <!-- 数据类型（STRING[128] 需要放得下） -->
                         <ColumnDefinition Width="88"/>   <!-- 显示格式 ↓ -->
                         <ColumnDefinition Width="*"/>    <!-- 当前值 -->
                         <ColumnDefinition Width="40"/>   <!-- 删除 -->
@@ -396,30 +614,22 @@
                              LostFocus="MonitorName_LostFocus"
                              ToolTip="{Binding NameToolTip}"/>
 
+                    <!--
+                        数据类型。选 STRING 时会弹框问长度，确认后本框显示 STRING[n]
+                        （见 MonitorType_SelectionChanged / DataPoint.TypeDisplayName）。
+                        行内不再放长度输入框 —— 改长度＝重选一次 STRING。
+                    -->
                     <ComboBox Grid.Column="2" x:Name="TypeCombo"
                               Width="96"
                               HorizontalAlignment="Left"
-                              Style="{StaticResource MonitorInlineComboBox}"
-                              DisplayMemberPath="DisplayName"
+                              Style="{StaticResource MonitorTypeCombo}"
                               SelectionChanged="MonitorType_SelectionChanged"/>
-
-                    <!-- STRING 的长度：仅该类型时显示 -->
-                    <StackPanel Grid.Column="2" Orientation="Horizontal"
-                                HorizontalAlignment="Right" VerticalAlignment="Center"
-                                Visibility="Collapsed" x:Name="LengthPanel">
-                        <TextBlock Text="长" FontSize="11" Foreground="#8A8A8A"
-                                   VerticalAlignment="Center" Margin="0,0,2,0"/>
-                        <TextBox x:Name="LengthBox"
-                                 Width="28"
-                                 Style="{StaticResource MonitorInlineTextBox}"
-                                 TextChanged="MonitorLength_TextChanged"
-                                 ToolTip="字符串字符数 n；占 ⌈n/2⌉ 个连续寄存器"/>
-                    </StackPanel>
 
                     <ComboBox Grid.Column="3" x:Name="FormatCombo"
                               Width="76"
                               HorizontalAlignment="Left"
                               Style="{StaticResource MonitorInlineComboBox}"
+                              ItemContainerStyle="{StaticResource MonitorComboItem}"
                               ItemTemplate="{StaticResource EnumUpperTemplate}"
                               SelectionChanged="MonitorFormat_SelectionChanged"/>
 
@@ -846,7 +1056,7 @@
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="34"/>   <!-- 序号 -->
                                                     <ColumnDefinition Width="150"/>  <!-- 元件 -->
-                                                    <ColumnDefinition Width="152"/>  <!-- 数据类型（+ STRING 长度） -->
+                                                    <ColumnDefinition Width="100"/>  <!-- 数据类型（+ STRING 长度） -->
                                                     <ColumnDefinition Width="88"/>   <!-- 显示格式 -->
                                                     <ColumnDefinition Width="*"/>    <!-- 当前值 -->
                                                     <ColumnDefinition Width="40"/>   <!-- 行内删除列（表头留空） -->

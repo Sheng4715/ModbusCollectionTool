@@ -204,6 +204,12 @@ namespace DSH_Modbus采集工具
         /// <summary>按当前驱动重新解析地址（切换设备类型或改动元件时调用）。</summary>
         public bool Resolve(CommDriver? driver, out string error)
         {
+            // 类型 / 长度 / 格式 改了要让界面上的类型列（含 STRING[n]）与当前值跟随更新。
+            // 放在这里而不是各个调用点，是因为所有改动都经 AfterChange → Resolve 这一条路径。
+            OnPropertyChanged(nameof(TypeDisplayName));
+            OnPropertyChanged(nameof(FormatDisplayName));
+            OnPropertyChanged(nameof(RawCount));
+
             if (driver == null)
             {
                 ResolveError = "未选择设备类型";
