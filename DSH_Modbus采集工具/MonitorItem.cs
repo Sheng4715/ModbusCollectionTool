@@ -285,6 +285,18 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        /// <summary>清空全部监控项并落盘（「全部删除」按钮）。调用方负责先做二次确认。</summary>
+        public void Clear()
+        {
+            if (_items.Count == 0)
+            {
+                return;
+            }
+
+            _items.Clear();
+            Save();
+        }
+
         /// <summary>某项的类型 / 格式 / 编号 / 备注被改动后调用：重解析 + 落盘。</summary>
         public void AfterChange(MonitorItem item)
         {

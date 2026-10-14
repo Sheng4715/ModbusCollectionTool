@@ -1632,7 +1632,7 @@ namespace DSH_Modbus采集工具
 
         // ---------- 自由监控（P4-2） ----------
 
-        /// <summary>刷新自由监控的空状态与计数（增删后调用）。</summary>
+        /// <summary>刷新自由监控的计数与按钮可用性（增删后调用）。</summary>
         private void RefreshMonitorView()
         {
             if (MonitorItemsControl == null)
@@ -1641,20 +1641,53 @@ namespace DSH_Modbus采集工具
             }
 
             int n = _monitorSet.Items.Count;
+
+            // ⚠️ 表头**不随空列表隐藏**：它是这一页的列说明，也是「+」按钮的落点 ——
+            // 藏起来会让人以为此页坏掉了，且没有地方能加第一项。
             if (MonitorEmptyHint != null)
             {
                 MonitorEmptyHint.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
             }
 
-            if (MonitorHeaderGrid != null)
+            // 「全部删除」在空列表下无意义，置灰防空点（Style 里 IsEnabled=False 会一并去掉手型光标）
+            if (ClearMonitorItemsButton != null)
             {
-                MonitorHeaderGrid.Visibility = n == 0 ? Visibility.Collapsed : Visibility.Visible;
+                ClearMonitorItemsButton.IsEnabled = n > 0;
             }
 
             if (MonitorCountText != null)
             {
                 MonitorCountText.Text = n == 0 ? string.Empty : $"共 {n} 项";
             }
+        }
+
+        /// <summary>
+        /// 删除全部监控项。此操作会**立即清空并落盘**，误点代价是整份配置，
+        /// 故先弹确认框（本项目汇报类交互统一用 <see cref="MessageBox"/>）。
+        /// </summary>
+        private void ClearMonitorItems_Click(object sender, RoutedEventArgs e)
+        {
+            int n = _monitorSet.Items.Count;
+            if (n == 0)
+            {
+                return;
+            }
+
+            MessageBoxResult answer = MessageBox.Show(
+                this,
+                $"确定要删除全部 {n} 个监控项吗？此操作无法撤销。",
+                "删除全部监控项",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Warning,
+                MessageBoxResult.Cancel);
+
+            if (answer != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            _monitorSet.Clear();
+            RefreshMonitorView();
         }
 
         private void AddMonitorItemButton_Click(object sender, RoutedEventArgs e)

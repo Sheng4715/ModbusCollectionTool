@@ -269,6 +269,68 @@
             </Setter>
         </Style>
 
+        <!--
+            表头操作列的图标按钮。与行内 MonitorIconButton 的区别是**悬停配色**：
+            行内那个是「删除本项」，悬停变红是对的；表头这两个一个是「新增」（加法，
+            变红会让人以为点下去是破坏性操作）、一个是「全部删除」（确实是破坏性，
+            但和行内的单行删除共用红色会分不清后果轻重）。
+            Add 用主色 #0067C0（与聚焦下划线同色，表示「正向操作」），
+            ClearAll 用浅红 #FDE7E9 底 + #C42B1C 字（与日志「已断开」同色系），
+            都比整块实心红更克制。
+        -->
+        <Style x:Key="MonitorHeaderIconButton" TargetType="Button">
+            <Setter Property="Width" Value="26"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="#8A8A8A"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#0067C0"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <!-- 无监控项时不可用（全部删除无意义） -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#C8C8C8"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 「全部删除」：悬停浅红底 + 深红字，与「新增」的主色底区分破坏性语义 -->
+        <Style x:Key="MonitorClearAllButton" TargetType="Button"
+               BasedOn="{StaticResource MonitorHeaderIconButton}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FDE7E9"/>
+                                <Setter Property="Foreground" Value="#C42B1C"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#C8C8C8"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 行内输入框：无边框，聚焦时才显示下划线，避免表格看起来很「重」 -->
         <Style x:Key="MonitorInlineTextBox" TargetType="TextBox">
             <Setter Property="Background" Value="Transparent"/>
@@ -307,7 +369,7 @@
         <DataTemplate x:Key="MonitorItemTemplate">
             <Border Height="30" Margin="0,0,0,2"
                     Background="Transparent"
-                    BorderBrush="#F0F0F0" BorderThickness="0,0,0,1"
+                    BorderBrush="#E8E8E8" BorderThickness="0,0,0,1"
                     Loaded="MonitorRow_Loaded"
                     ToolTip="{Binding ToolTipText}">
                 <Grid>
@@ -329,6 +391,7 @@
                     <TextBox x:Name="NameBox"
                              Grid.Column="1"
                              Style="{StaticResource MonitorInlineTextBox}"
+                             Padding="0"
                              TextChanged="MonitorName_TextChanged"
                              LostFocus="MonitorName_LostFocus"
                              ToolTip="{Binding NameToolTip}"/>
@@ -355,6 +418,7 @@
 
                     <ComboBox Grid.Column="3" x:Name="FormatCombo"
                               Width="76"
+                              HorizontalAlignment="Left"
                               Style="{StaticResource MonitorInlineComboBox}"
                               ItemTemplate="{StaticResource EnumUpperTemplate}"
                               SelectionChanged="MonitorFormat_SelectionChanged"/>
@@ -686,7 +750,18 @@
                                 </Grid>
 
                                 <!-- 分隔线：控件行与 IO 点位表格之间 -->
-                                <Border Height="1" Background="#E8E8E8" Margin="0,0,0,8"/>
+                                <Border Height="1" Background="#E8E8E8">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Margin" Value="0,0,0,8"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsChecked, ElementName=FreeViewSegment}" Value="True">
+                                                    <Setter Property="Margin" Value="0"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                </Border>
 
                                 <!-- 输入监控（X0–X77） -->
                                 <Grid x:Name="IoColumnsGrid">
@@ -735,44 +810,81 @@
                                 </Grid>
 
                                 <!-- ================= 自由监控（默认隐藏） =================
-                                     表格式：表头 + 行。元件符号与编号分开（方案 1），
-                                     输入时即可按驱动校验编号范围，报错比合并式更具体。
+                                     表格式：表头 + 行。元件名称合并输入（方案 2），
+                                     按驱动校验元件名，报错给出具体原因。
                                      当前值列本阶段为占位「—」—— 读取链路属下一步。 -->
                                 <StackPanel x:Name="FreeMonitorPanel" Visibility="Collapsed">
 
-                                    <!-- 工具行：新增项 -->
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                                        <Button x:Name="AddMonitorItemButton"
-                                                Content="新增监控项"
-                                                Padding="10,5"
-                                                FontSize="12"
-                                                Cursor="Hand"
-                                                VerticalAlignment="Center"
-                                                Click="AddMonitorItemButton_Click"/>
-                                        <TextBlock x:Name="MonitorCountText"
-                                                   FontSize="12" Foreground="#9A9A9A"
-                                                   VerticalAlignment="Center"
-                                                   Margin="10,0,0,0"/>
-                                    </StackPanel>
+                                    <!--
+                                        表头行。外层 Grid 把「列表头」与「计数 + 全部删除」叠在同一行里，
+                                        不必再手工估负边距（那样两边按钮会差几像素），
+                                        也不必往列表头里加列（那样会挤窄 `*` 列使「+」错位）。
 
-                                    <!-- 表头 -->
-                                    <Grid x:Name="MonitorHeaderGrid" Margin="0,0,0,4">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                                            <ColumnDefinition Width="150"/>  <!-- 元件 -->
-                                            <ColumnDefinition Width="152"/>  <!-- 数据类型（+ STRING 长度） -->
-                                            <ColumnDefinition Width="88"/>   <!-- 显示格式 -->
-                                            <ColumnDefinition Width="*"/>    <!-- 当前值 -->
-                                            <ColumnDefinition Width="40"/>   <!-- 删除 -->
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="#8A8A8A"/>
-                                        <TextBlock Grid.Column="1" Text="元件名称" FontSize="12" Foreground="#8A8A8A"/>
-                                        <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="#8A8A8A"/>
-                                        <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="#8A8A8A"/>
-                                        <TextBlock Grid.Column="4" Text="当前值" FontSize="12" Foreground="#8A8A8A"/>
-                                    </Grid>
+                                        ⚠️ 垂直几何：表头与数据行都用「Border + 自身下边框」，
+                                        而不是「自然高度文本 + 另加一条 Border 分隔线」——
+                                        后者文本行高随字体变化，分隔线又带独立 Margin，
+                                        结果表头文字既不对齐行内容、也不居中于上下两条线。
 
-                                    <Border Height="1" Background="#E8E8E8" Margin="0,0,0,4"/>
+                                        ⚠️ 分隔线颜色用 `#E8E8E8`（卡片边框色），**不要用 `#F0F0F0`**：
+                                        后者与卡片底色 `#F3F3F3` 只差 3 级，在 150% DPI 下经缩放
+                                        混色后几乎看不见，表头就会显得「悬空」。
+
+                                        自由监控时将上分隔线的 8 DIP 下边距并入原 38 DIP 表头，
+                                        使文字和按钮在两条线之间居中，同时保持分隔线与数据行位置不变。 -->
+                                    <Border x:Name="MonitorHeaderGrid"
+                                            Height="46"
+                                            Margin="0,0,0,2"
+                                            Background="Transparent"
+                                            BorderBrush="#E8E8E8"
+                                            BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <!--
+                                                列表头（列定义必须与 MonitorItemTemplate 完全一致：
+                                                同 6 列、同宽度。多一列会挤窄 `*`，使整条横向错位）。
+                                            -->
+                                            <Grid x:Name="MonitorHeaderColumns">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                                                    <ColumnDefinition Width="150"/>  <!-- 元件 -->
+                                                    <ColumnDefinition Width="152"/>  <!-- 数据类型（+ STRING 长度） -->
+                                                    <ColumnDefinition Width="88"/>   <!-- 显示格式 -->
+                                                    <ColumnDefinition Width="*"/>    <!-- 当前值 -->
+                                                    <ColumnDefinition Width="40"/>   <!-- 行内删除列（表头留空） -->
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="1" Text="元件名称" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="4" Text="当前值" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
+                                                <!-- 第 5 列留空：与行内 × 同列，保留列宽使「当前值」宽度与行一致 -->
+                                            </Grid>
+
+                                            <!--
+                                                表头操作区：靠右叠放，**不参与**列表头的列布局。
+                                                顺序按用户要求：计数 → 🗑 全部删除 → + 新增（+ 在最右）。
+                                            -->
+                                            <StackPanel Orientation="Horizontal"
+                                                        HorizontalAlignment="Right"
+                                                        Margin="0,0,7,0"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock x:Name="MonitorCountText"
+                                                           FontSize="12" Foreground="#9A9A9A"
+                                                           VerticalAlignment="Center"
+                                                           Margin="0,0,8,0"/>
+                                                <Button x:Name="ClearMonitorItemsButton"
+                                                        Content="&#xE74D;"
+                                                        ToolTip="删除全部监控项"
+                                                        Style="{StaticResource MonitorClearAllButton}"
+                                                        Click="ClearMonitorItems_Click"/>
+                                                <Button x:Name="AddMonitorItemButton"
+                                                        Content="&#xE710;"
+                                                        ToolTip="新增监控项"
+                                                        Margin="6,0,0,0"
+                                                        Style="{StaticResource MonitorHeaderIconButton}"
+                                                        Click="AddMonitorItemButton_Click"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
 
                                     <!-- 列表：项多时自身滚动，不吃掉卡片外的高度 -->
                                     <ScrollViewer MaxHeight="380"
@@ -791,7 +903,7 @@
 
                                     <!-- 空状态 -->
                                     <TextBlock x:Name="MonitorEmptyHint"
-                                               Text="尚未添加监控项，点击「新增监控项」开始"
+                                               Text="尚未添加监控项，点击右上角 + 添加"
                                                Visibility="Collapsed"
                                                FontSize="12"
                                                Foreground="#9A9A9A"
