@@ -1933,75 +1933,117 @@ namespace DSH_Modbus采集工具
         /// <see cref="MonitorName_LostFocus"/> 把输入框恢复成上次有效名称。
         /// </para>
         /// </summary>
+        /// <summary>
+        /// 元件名称输入框**打字中**：只做即时视觉反馈，**不提交、不采集**。
+        /// <para>
+        /// 采集与落盘一律等到<b>失焦</b>（<see cref="MonitorName_LostFocus"/>）——
+        /// 否则用户输入 <c>D100</c> 的过程中，<c>D</c>、<c>D1</c>、<c>D10</c> 都会各自
+        /// 成为一次"有效配置"并参与采集，既发无谓报文、又让列表内容闪烁。
+        /// </para>
+        /// <para>
+        /// 这里仍要读一次 <see cref="MonitorItem.SetName"/> 是为了**实时标红** ——
+        /// 输入明显非法（如 <c>D 100</c>）时立刻给反馈，不必等到失焦。
+        /// 但失败只标红，绝不写模型（打字途中的 <c>HD</c> 不能落盘）。
+        /// </para>
+        /// </summary>
         private void MonitorName_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (sender is not TextBox tb)
+            if (sender is not TextBox tb || RowOf(tb) is not MonitorItem item)
             {
                 return;
             }
 
-            MonitorItem? item = RowOf(tb);
-            if (item == null)
+            // 程序回填（行初始化、失焦后归一）不参与校验，否则会误标红
+            if (!tb.IsKeyboardFocusWithin)
             {
                 return;
             }
 
-            string before = item.Model.DisplayName;
-            bool hadError = item.HasError;
-
-            if (!item.SetName(tb.Text, out _))
-            {
-                // 中间态：保留上次有效配置，只让本行标红
-                return;
-            }
-
-            bool changed = item.Model.DisplayName != before;
-
-            // 值没变且本来就没错（行初始化回填、失焦后归一）→ 无事可做。
-            // 这个判断把「回填」与「用户真改了元件」区分开，否则行一加载就走一遍自动纠正类型。
-            // 但**值没变而当前有错**时还要继续：用户可能把打错的名称改回原值（D100 → D → D100），
-            // 此时只有重解析才能清掉那行红字。用「是否有键盘焦点」把这种情况限定为用户正在编辑，
-            // 避免程序回填（行每次实例化都会触发 TextChanged）也去写盘。
-            if (!changed && !(hadError && tb.IsKeyboardFocusWithin))
-            {
-                return;
-            }
-
-            // 元件变了 → 线圈/寄存器归属可能变，类型候选与当前类型要跟着走
-            if (changed && tb.Parent is FrameworkElement row)
-            {
-                SyncMonitorTypeWithElement(row, item);
-            }
-
-            _monitorSet.AfterChange(item);
+            // 只用「拆分能否成功」做即时标红，**不写模型** ——
+            // 写了模型就等于提交了一半：下一拍轮询会拿这个半成品去采集，
+            // 而磁盘上还是旧值（内存/磁盘不一致）。
+            // 提交（含越界校验、落盘）统一在失焦时做。
+            item.SetPreviewError(CommDriver.TrySplitName(tb.Text, out _, out _, out string nameError)
+                ? null
+                : $"配置有误：{nameError}");
         }
 
         /// <summary>
-        /// 元件名称输入框失焦：把文本归一成模型的规范写法（符号大写），并重解析一次。
+        /// 元件名称输入框失焦：**这是唯一提交点** —— 归一文本、重解析、落盘，
+        /// 之后该行才参与采集（见 <see cref="MonitorName_TextChanged"/>）。
         /// <para>
-        /// 输入非法时回退到上次有效名称 —— 否则输入框留着半截无效文本、模型却是旧值，
-        /// 用户会以为配置已经改了。
+        /// 三种结果：① 归一成功且落在驱动范围内 → 提交并开始采集；
+        /// ② 归一成功但**编号越界 / 元件不在该驱动** → <b>弹窗提示</b>，且**不提交**（保持上次有效值）；
+        /// ③ 拆分失败（如 <c>D 100</c>）→ 回退文本到上次有效名称，不弹窗（打字错误，行内红字已够）。
+        /// </para>
+        /// <para>
+        /// 越界之所以要弹窗：行内 ToolTip 与红字容易被忽略，而"我以为配上了、
+        /// 实际一直在读别的地址"是会产生错误判断的静默失效。
         /// </para>
         /// </summary>
         private void MonitorName_LostFocus(object sender, RoutedEventArgs e)
         {
-            if (sender is not TextBox tb)
+            if (sender is not TextBox tb || RowOf(tb) is not MonitorItem item)
             {
                 return;
             }
 
-            MonitorItem? item = RowOf(tb);
-            if (item == null)
+            string previous = item.Model.DisplayName;
+            string typed = tb.Text;
+
+            if (!item.SetName(typed, out _))
             {
+                // ③ 拆分失败（如 "D 100"）：回退到上次有效名称。
+                // 不弹窗 —— 这是打字错误，行内红字 + ToolTip 已足够，弹窗会打断连续录入。
+                tb.Text = previous;
+                item.SetName(previous, out _);
+                _monitorSet.ResolveOnly(item);   // 清掉错误态，不动落盘
                 return;
             }
 
+            // 归一（符号大写）后回填输入框
             string canonical = item.Model.DisplayName;
             if (tb.Text != canonical)
             {
-                tb.Text = canonical;   // 触发 TextChanged，但此时拆分必然成功且模型已一致
+                tb.Text = canonical;
             }
 
+            // 名称归一后与落盘值一致、且当前没有预览错误 → 真的什么都没变，不必提交。
+            // 注意判据用 previous（SetName 之前的值）而不是"模型当前值"，
+            // 否则一旦模型被别处改过就会误判"没变化"而漏掉落盘。
+            if (canonical == previous && !item.HasError)
+            {
+                item.SetPreviewError(null);
+                return;
+            }
+
+            // 元件变了 → 线圈/寄存器归属可能变，类型候选与当前类型要跟着走
+            if (tb.Parent is FrameworkElement row && canonical != previous)
+            {
+                SyncMonitorTypeWithElement(row, item);
+            }
+
+            // ② 名称合法但**不在驱动范围内**（编号越界 / 该驱动无此元件）→ 弹窗且**不提交**。
+            // 先只解析不落盘：越界的配置不该进 data-points.json，
+            // 否则下次启动会带着一个永远读不到的项。
+            item.Resolve(_currentDriver!, out string resolveError);
+            if (item.HasError)
+            {
+                MessageBox.Show(
+                    this,
+                    $"元件名称「{canonical}」不可用：\n\n{resolveError}\n\n请检查编号范围",
+                    "元件名称无效",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+
+                // 回退到上次有效名称并重解析，界面上不留一个坏配置
+                tb.Text = previous;
+                item.SetName(previous, out _);
+                _monitorSet.ResolveOnly(item);
+                return;
+            }
+
+            // ① 提交：落盘，下一拍轮询即开始采集该地址
             _monitorSet.AfterChange(item);
         }
 

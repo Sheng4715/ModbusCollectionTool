@@ -35,7 +35,9 @@ namespace DSH_Modbus采集工具
     /// </summary>
     public sealed class MonitorItem : INotifyPropertyChanged
     {
-        private string _currentValue = "—";
+        // 初值刻意留空而不是「—」：输入框里放个破折号既不是有效值、又要用户先删掉才能输，
+        // 而「空」本身已经表达了"还没读到"。
+        private string _currentValue = string.Empty;
         private string? _resolveError;
         private string? _readError;
         private string? _writeError;
@@ -138,7 +140,7 @@ namespace DSH_Modbus采集工具
 
         /// <summary>
         /// 当前值文本。显示的是最近一次**成功读取**的结果；
-        /// 未读到（未连接、不在本分段、解析失败）时保持原值或占位「—」。
+        /// 未读到（未连接、不在本分段、解析失败）时保持原值，从未读到过则为<b>空</b>。
         /// </summary>
         public string CurrentValue
         {
@@ -234,12 +236,19 @@ namespace DSH_Modbus采集工具
             return true;
         }
 
-        /// <summary>「当前值」格的悬停提示：读/写失败时给出原因，否则显示地址与占用。</summary>
-        public string ValueToolTip => HasWriteError
-            ? $"写入失败：{_writeError}"
-            : HasReadError
-                ? $"读取失败：{_readError}"
-                : ToolTipText;
+        /// <summary>
+        /// 「当前值」格的悬停提示：**恒为空**。
+        /// <para>
+        /// 本表格是常驻监控界面，鼠标划过是高频动作，悬停弹提示属于干扰。
+        /// 读/写失败改由**琥珀色**表达（<see cref="ValueBrush"/>）——
+        /// 红＝配置要改，琥珀＝这一拍没读到/没写进去、配置没问题。
+        /// </para>
+        /// <para>
+        /// 之所以还留这个属性：XAML 里仍绑着它，将来若要恢复「出错时给原因」
+        /// 只需改这里一处，不必动 XAML。
+        /// </para>
+        /// </summary>
+        public string? ValueToolTip => null;
 
         /// <summary>解析失败的原因；成功时为 null。非空时界面标红该行。</summary>
         public string? ResolveError
@@ -261,22 +270,34 @@ namespace DSH_Modbus采集工具
 
         public bool HasError => !string.IsNullOrEmpty(_resolveError);
 
-        /// <summary>悬停提示：正常显示地址与占用，出错显示原因。</summary>
-        public string ToolTipText => HasError
-            ? $"配置有误：{_resolveError}"
-            : $"{DisplayName} → Modbus 地址 {_address}，读 {RawCount} 个单元";
-
         /// <summary>
-        /// 元件名称输入框的悬停提示：<b>出错时优先显示错误原因</b>。
+        /// 打字途中的**纯视觉**错误态：只改标红与提示，<b>不碰模型、不碰地址</b>。
         /// <para>
-        /// 不能只用静态格式提示 —— 方案 2 的元件是自由文本，输错概率高于方案 1 的下拉选择，
-        /// 而用户排查时鼠标第一个停的地方就是这个输入框；
-        /// 若框上恒定显示「如 HD100 / X17」，真正的错误原因（藏在整行 ToolTip 上）就被遮住了。
+        /// 存在的理由是「内存/磁盘不一致」—— 若打字时就 <see cref="SetName"/> 写模型，
+        /// 下一拍轮询会拿这个半成品名称去采集，而磁盘上仍是旧值。
+        /// 传 null 清除。
         /// </para>
         /// </summary>
-        public string NameToolTip => HasError
-            ? $"配置有误：{_resolveError}"
-            : "元件名称，如 HD100 / X17（X/Y 为八进制编号）";
+        public void SetPreviewError(string? error) => ResolveError = error;
+
+        /// <summary>
+        /// 整行的悬停提示：**恒为空**。
+        /// <para>
+        /// 监控表格是常驻界面，鼠标划过是高频动作，悬停弹提示纯属干扰。
+        /// 原来正常态显示「地址 / 占用」也没人看，出错态的原因则已有两个更好的出口：
+        /// <b>元件名称越界 → 失焦时弹窗</b>（见 <c>MonitorName_LostFocus</c>）；
+        /// <b>读取失败 → 「当前值」格转琥珀色</b>（见 <see cref="ValueBrush"/>）。
+        /// </para>
+        /// </summary>
+        public string? ToolTipText => null;
+
+        /// <summary>
+        /// 元件名称输入框的悬停提示：**恒为空**。
+        /// <para>
+        /// 名称无效时会在<b>失焦那一刻弹窗</b>说明原因，比悬停提示更不容易被忽略。
+        /// </para>
+        /// </summary>
+        public string? NameToolTip => null;
 
         /// <summary>行文字颜色：配置出错标红，正常近黑。</summary>
         public System.Windows.Media.Brush RowBrush => HasError
@@ -417,6 +438,15 @@ namespace DSH_Modbus采集工具
         {
             item.Resolve(Driver, out _);
             Save();
+        }
+
+        /// <summary>
+        /// 只重解析、**不落盘**。用于「试算」场景 ——
+        /// 例如失焦时先判断新名称是否越界，越界就不该写进 data-points.json。
+        /// </summary>
+        public void ResolveOnly(MonitorItem item)
+        {
+            item.Resolve(Driver, out _);
         }
 
         public void ReResolveAll()
