@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using DSH_Modbus采集工具.Drivers;
 using DSH_Modbus采集工具.Modeling;
@@ -36,6 +37,7 @@ namespace DSH_Modbus采集工具
     {
         private string _currentValue = "—";
         private string? _resolveError;
+        private string? _readError;
         private int _address = -1;
 
         public MonitorItem(DataPoint model)
@@ -133,8 +135,8 @@ namespace DSH_Modbus采集工具
         public string AddressText => _address < 0 ? "—" : _address.ToString();
 
         /// <summary>
-        /// 当前值文本。**本阶段为占位**「—」——
-        /// 读取链路（FC03/FC01 组读）属于下一步，本次只做界面与增删改持久化。
+        /// 当前值文本。显示的是最近一次**成功读取**的结果；
+        /// 未读到（未连接、不在本分段、解析失败）时保持原值或占位「—」。
         /// </summary>
         public string CurrentValue
         {
@@ -148,6 +150,35 @@ namespace DSH_Modbus采集工具
                 }
             }
         }
+
+        /// <summary>
+        /// 最近一次读取失败的原因；成功或无读取时为 null。
+        /// <para>
+        /// 与 <see cref="ResolveError"/>（配置错误，标红整行）刻意分开：
+        /// 读取失败只针对「当前值」这一格，不代表配置写错了 ——
+        /// 例如从站临时回异常码、或读的瞬间断线，配置本身没问题。
+        /// </para>
+        /// </summary>
+        public string? ReadError
+        {
+            get => _readError;
+            set
+            {
+                if (_readError != value)
+                {
+                    _readError = value;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(HasReadError));
+                    OnPropertyChanged(nameof(ValueToolTip));
+                    OnPropertyChanged(nameof(ValueBrush));
+                }
+            }
+        }
+
+        public bool HasReadError => !string.IsNullOrEmpty(_readError);
+
+        /// <summary>「当前值」格的悬停提示：读失败时给出原因，否则显示地址与占用。</summary>
+        public string ValueToolTip => HasReadError ? $"读取失败：{_readError}" : ToolTipText;
 
         /// <summary>解析失败的原因；成功时为 null。非空时界面标红该行。</summary>
         public string? ResolveError
@@ -186,12 +217,25 @@ namespace DSH_Modbus采集工具
             ? $"配置有误：{_resolveError}"
             : "元件名称，如 HD100 / X17（X/Y 为八进制编号）";
 
-        /// <summary>行文字颜色：出错标红，正常近黑。</summary>
+        /// <summary>行文字颜色：配置出错标红，正常近黑。</summary>
         public System.Windows.Media.Brush RowBrush => HasError
             ? ErrorBrush
             : NormalBrush;
 
+        /// <summary>
+        /// 「当前值」格的颜色：读失败标琥珀，否则近黑。
+        /// <para>
+        /// 刻意与配置错误（<see cref="RowBrush"/> 的红色）区分开：
+        /// 红＝配置要改，琥珀＝这一拍没读到、配置没问题。
+        /// 两者混用会让人去改一个本来正确的地址。
+        /// </para>
+        /// </summary>
+        public System.Windows.Media.Brush ValueBrush => HasReadError
+            ? ReadErrorBrush
+            : NormalBrush;
+
         private static readonly System.Windows.Media.Brush ErrorBrush = MakeFrozen(0xC4, 0x2B, 0x1C);
+        private static readonly System.Windows.Media.Brush ReadErrorBrush = MakeFrozen(0xB2, 0x6A, 0x00);
         private static readonly System.Windows.Media.Brush NormalBrush = MakeFrozen(0x1A, 0x1A, 0x1A);
 
         private static System.Windows.Media.Brush MakeFrozen(byte r, byte g, byte b)
@@ -318,6 +362,176 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        /// <summary>
+        /// 生成一次读取计划：把当前可读的项按「区域 + 是否连续」归并成若干次报文。
+        /// <para>
+        /// 归并规则与 IO 轮询同源（<c>PollOnceAsync</c>）：
+        /// 不同 <see cref="ModbusArea"/> 不能混在一次请求里（区间空隙地址从站不接受），
+        /// 故先按区分组；同区内再按<b>地址连续性</b>分块 —— 自由监控的项彼此可能
+        /// 隔很远（D0 与 D8000），一次跨越上千点既慢又易超 2000 上限。
+        /// </para>
+        /// <para>
+        /// 只返回<b>解析成功</b>的项；解析失败的项由调用方标「配置有误」，
+        /// 不发报文（地址未知，发了也没意义）。
+        /// </para>
+        /// </summary>
+        public List<ReadBlock> BuildReadPlan()
+        {
+            var plan = new List<ReadBlock>();
+
+            foreach (var areaGroup in ReadableItems().GroupBy(x => x.Item.Model.Area))
+            {
+                // 区内按地址排序后顺序扫描，地址不连续的断开成新块
+                var ordered = areaGroup.OrderBy(x => x.Item.Address).ToList();
+                var current = new List<(MonitorItem Item, int Units)>();
+
+                foreach (var entry in ordered)
+                {
+                    int start = entry.Item.Address;
+                    int units = UnitsOf(entry.Item);
+
+                    if (current.Count > 0)
+                    {
+                        // 与本块已有范围的末地址相比，紧邻或重叠则并入；有空洞则断开
+                        int curEnd = 0;
+                        foreach (var c in current)
+                        {
+                            int end = c.Item.Address + c.Units;
+                            if (end > curEnd)
+                            {
+                                curEnd = end;
+                            }
+                        }
+
+                        int blockStart = current.Min(c => c.Item.Address);
+                        bool adjacent = start <= curEnd;
+                        bool withinLimit = (Math.Max(curEnd, start + units) - blockStart) <= MaxUnitsPerRead;
+
+                        if (!adjacent || !withinLimit)
+                        {
+                            plan.Add(MakeBlock(areaGroup.Key, blockStart, current));
+                            current = new List<(MonitorItem, int)>();
+                        }
+                    }
+
+                    current.Add((entry.Item, units));
+                }
+
+                if (current.Count > 0)
+                {
+                    plan.Add(MakeBlock(areaGroup.Key, current.Min(c => c.Item.Address), current));
+                }
+            }
+
+            return plan;
+        }
+
+        private IEnumerable<(MonitorItem Item, int Units)> ReadableItems()
+        {
+            foreach (MonitorItem item in _items)
+            {
+                if (item.Address >= 0 && !item.HasError)
+                {
+                    yield return (item, UnitsOf(item));
+                }
+            }
+        }
+
+        /// <summary>本项占用的读取单元数：线圈恒为 1，寄存器按类型与 STRING 长度算。</summary>
+        private static int UnitsOf(MonitorItem item)
+        {
+            DataTypeSpec spec = DataTypes.Get(item.Model.Type);
+            return spec.CoilOnly ? 1 : spec.RegistersForLength(item.Model.Length);
+        }
+
+        private static ReadBlock MakeBlock(ModbusArea area, int start, List<(MonitorItem Item, int Units)> entries)
+        {
+            int end = start;
+            foreach (var e in entries)
+            {
+                int e2 = e.Item.Address + e.Units;
+                if (e2 > end)
+                {
+                    end = e2;
+                }
+            }
+
+            return new ReadBlock
+            {
+                Area = area,
+                StartAddress = start,
+                Count = end - start,
+                Entries = entries.Select(e => new ReadEntry
+                {
+                    Item = e.Item,
+                    Offset = e.Item.Address - start,
+                    Units = e.Units,
+                }).ToList(),
+            };
+        }
+
+        /// <summary>单次报文最多读取的单元数（线圈/寄存器分别有 2000 上限，取小者统一约束）。</summary>
+        private const int MaxUnitsPerRead = 2000;
+
+        /// <summary>
+        /// 把一次读到的原始单元回填到块内各项，按各行的类型/格式/字节顺序格式化成显示文本。
+        /// <para>
+        /// 逐项 try/catch：某一项解码失败（理论上不该发生，解析阶段已校验过长度）
+        /// 只标该项读失败，不能连累同块其它项的值。
+        /// </para>
+        /// </summary>
+        public static void ApplyBlock(ReadBlock block, bool[]? coils, ushort[]? registers, CommDriver driver)
+        {
+            foreach (ReadEntry e in block.Entries)
+            {
+                try
+                {
+                    if (block.Area is ModbusArea.Coil or ModbusArea.DiscreteInput)
+                    {
+                        if (coils == null || e.Offset >= coils.Length)
+                        {
+                            e.Item.ReadError = "响应长度不足";
+                            continue;
+                        }
+
+                        e.Item.CurrentValue = ValueCodec.FormatCoil(coils[e.Offset]);
+                    }
+                    else
+                    {
+                        if (registers == null || e.Offset + e.Units > registers.Length)
+                        {
+                            e.Item.ReadError = "响应长度不足";
+                            continue;
+                        }
+
+                        ReadOnlySpan<ushort> slice = registers.AsSpan(e.Offset, e.Units);
+                        e.Item.CurrentValue = ValueCodec.FormatRegisters(
+                            e.Item.Model.Type,
+                            slice,
+                            e.Item.Model.Format,
+                            driver.Int32ByteOrder,
+                            driver.StringByteOrder,
+                            e.Item.Model.Length);
+                    }
+
+                    // 读成功即清掉上一次的读失败标记（含「长度不足」的临时故障）
+                    e.Item.ReadError = null;
+                }
+                catch (Exception ex)
+                {
+                    e.Item.ReadError = ex.Message;
+                }
+            }
+        }
+
+        /// <summary>把本集合内所有项标记为读失败（整条连接读崩时用，如断开瞬间）。</summary>
+        public void MarkAllReadFailed(string reason)
+        {
+            foreach (MonitorItem item in _items)
+            {
+                item.ReadError = reason;
+            }
+        }
         private void Save()
         {
             var models = new List<DataPoint>(_items.Count);
@@ -342,5 +556,30 @@ namespace DSH_Modbus采集工具
 
             return max + 1;
         }
+    }
+
+    /// <summary>
+    /// 一次 Modbus 读请求的规划：读 <see cref="Area"/> 区从 <see cref="StartAddress"/> 起
+    /// <see cref="Count"/> 个单元，再按 <see cref="Entries"/> 的偏移回填各项。
+    /// </summary>
+    public sealed class ReadBlock
+    {
+        public ModbusArea Area { get; init; }
+
+        public int StartAddress { get; init; }
+
+        public int Count { get; init; }
+
+        public List<ReadEntry> Entries { get; init; } = new();
+    }
+
+    /// <summary>块内某一项：从块起始地址的偏移（单元数）与自身占用长度。</summary>
+    public sealed class ReadEntry
+    {
+        public MonitorItem Item { get; init; } = null!;
+
+        public int Offset { get; init; }
+
+        public int Units { get; init; }
     }
 }

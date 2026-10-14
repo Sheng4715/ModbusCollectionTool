@@ -134,7 +134,7 @@ Window
 |---|---|
 | 连接状态机 | `ConnectButton_Click` / `Disconnect()` / `Disconnect(status,color)` / `TryConnectAsync` / `RunConnectionTasksAsync` / `IsCurrentConnection` |
 | 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect` / `ReconnectTarget` / `ReconnectDelaysSeconds` |
-| 轮询 | `PollLoopAsync` / `PollOnceAsync`（按地址区分块 + 2000 点切窗） |
+| 轮询 | `PollLoopAsync` / `PollOnceAsync`（按地址区分块 + 2000 点切窗）/ `PollFreeMonitorAsync`（自由监控，按区选 FC01/03/04） |
 | 心跳编排 | `HeartbeatLoopAsync` / `NotifyConnectionLost` |
 | IO 点位集 | `RebuildIoPoints` / `TryCreateIoPoint` / `NormalizePointName` |
 | 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager` |
@@ -155,6 +155,7 @@ Window
 - 导入校验：**仅接受 X / Y 元件**，地址须落在当前驱动范围内；结果**一律用 `MessageBox`** 汇报（0 项有效则警告框且拒绝替换）
 - **分页**：每页 4 列 × `IoRowsPerColumn`(16) = 64 点，X/Y 各自独立页号；单页时整体隐藏。列宽 `*` 等分；行高 22、行距 2、列距 4
 - **采集跟随可见性**：只读**当前显示分段 + 当前页**（`_visiblePage` 快照，按所属地址区分块 FC01，同区跨度超 2000 点切窗，默认 100ms）；**离开本页停止 IO 采集，独立心跳继续**；断线不清灯色（`IsOn` 保持上次值）
+- **三个分段统一「跟随可见性」**（输入 X / 输出 Y / 自由监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开状态信息页则全停）。详见 §5.1 与 `Design.md` §5.6
 
 **灯色（`IoPoint.StateBrush`）**：灭灯 `#C4C4C4`；点亮时**输入 X 绿 `#0B7A0B`、输出 Y 橙 `#FFA500`**。
 
@@ -174,7 +175,12 @@ Window
 - **输入校验**：`TrySplitName` 从严（编号必须 ASCII 数字，拒 `"D 100"` / `"D-1"` / 全角数字）；拆分失败**只标红、不写模型**（打字途中的 `"HD"` 不能落盘），失焦时回退成上次有效名称
 - **错误提示**：行 `ToolTip` 与 `NameBox` 的 `NameToolTip` 都显示原因 —— 后者**出错时优先显示错误原因**（否则静态格式提示会遮住真原因）
 - 持久化 `data-points.json`（`DataPointStore`），增删改即时落盘；`_monitorSet`（`MonitorItemSet`）负责增删改与 `AfterChange` 重解析
-- ⏳ **未实现**：**当前值仍是占位「—」**（读取链路未接），**写入（FC05/06/16）未做** —— `ModbusTcpClient` 目前只有 FC01–04 读
+- **读取已实现**（跟随可见性，见 §5 与 `Design.md` §5.6）：仅在**本分段可见**时读，`BuildReadPlan` 按 `ModbusArea` 分组 + 地址连续性分块（单块 ≤2000），按区选 FC01/FC03/FC04，经 `ValueCodec.FormatRegisters` 按各行类型/格式/字节顺序格式化后写入 `CurrentValue`
+  - ⚠️ **必须按区分组**：信捷 `D0`（保持寄存器）与 `M0`（线圈）**绝对地址都是 0**，只按地址归并会把两者塞进同一次请求 → 从站回异常码
+  - **单块读失败不触发断线**，只把原因写到该块的各项上（与 IO 轮询的断线策略**刻意不同**）；一个配错的地址不该拖垮整条连接
+  - **读失败（`ReadError`，琥珀 `#B26A00`）与配置错误（`ResolveError`，红 `#C42B1C`）是两个独立通道** —— 红＝去改配置，琥珀＝配置没问题、是通讯侧的事
+  - 切换竞态：`_freeViewActive` 由 UI 线程改、轮询在后台读，故在**每块发送前**与**回填前**各复查一次可见性
+- ⏳ **未实现**：**写入（FC05/06/16）未做** —— `ModbusTcpClient` 目前只有 FC01–04 读
 
 ## 6. 心跳与连接生命周期
 
@@ -299,6 +305,9 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | IO 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（`_xPageIndex`/`_yPageIndex` 独立） |
 | 改每页点位数 | `IoRowsPerColumn`（列数固定 4） |
 | IO 采集范围 | `PollOnceAsync` → `_visiblePage` 快照 + `CommDriver.FindArea` 分块（单块 ≤2000） |
+| **自由监控读取（分块规划）** | `MonitorItemSet.BuildReadPlan`（按 `ModbusArea` 分组 + 地址连续性分块）+ `MonitorItemSet.ApplyBlock`（偏移切片 + 格式化回填） |
+| **自由监控轮询入口** | `PollOnceAsync` 开头按 `_freeViewActive` 分流 → `PollFreeMonitorAsync`（按区选 FC01/FC03/FC04，单块失败不断线） |
+| **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | 改 IO 行高/行距、列宽 | `IoItemTemplate` 的 `Height`/`Margin`；`IoColumnsGrid`/`YIoColumnsGrid`（4×`*`） |
 | 加/改 X-Y 分段切换 | `IoSegmentRadioButton` + `XViewSegment`/`YViewSegment` + `IoView_Checked`（自由监控 = 第三个 `FreeViewSegment`） |
 | **自由监控增删改/校验** | `MonitorItem.cs`（`MonitorItem` / `MonitorItemSet`）+ `MainWindow.xaml.cs` 的 `Monitor*` 处理器（见 §5.1） |
@@ -310,7 +319,6 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
 | 心跳周期/空闲判断/地址来源 | `Drivers/ModbusHeartbeat.cs` → `RunAsync`；`ModbusTcpClient.HeartbeatIfIdleAsync` |
 | 轮询与断线逻辑 | `PollLoopAsync` / `PollOnceAsync` / `Disconnect(status,color)` |
-| 采集跟随页面/分段/页 | `_ioPageActive` + `_yViewActive` + `_visiblePage` → `PollOnceAsync` 开头 |
 | 网卡扫描/绑定 | `ScanNetworkAdapters` + `ConnectButton_Click`（`NicInfo`） |
 | 采集周期档位 | `PollIntervalComboBox` + `_pollIntervalMs` |
 | 日志追加/清空/上限 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `MaxDeviceLogEntries` |

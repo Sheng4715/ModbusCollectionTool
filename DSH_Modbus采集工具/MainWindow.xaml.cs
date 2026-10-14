@@ -1469,9 +1469,17 @@ namespace DSH_Modbus采集工具
 
         private async Task PollOnceAsync(ModbusTcpClient modbus, CommDriver driver, CancellationToken token)
         {
-            // 离开状态信息页仅停采 IO；独立心跳继续工作，灯保留上次采集数据。
+            // 离开状态信息页仅停采；独立心跳继续工作，各分段保留上次采集数据。
             if (!_ioPageActive)
             {
+                return;
+            }
+
+            // 状态信息页的三个分段**都跟随可见性**：输入 X / 输出 Y 走 IO 点位集，
+            // 自由监控走 _monitorSet —— 只有当前显示的那一个才读，其余不读也不清值。
+            if (_freeViewActive)
+            {
+                await PollFreeMonitorAsync(modbus, driver, token);
                 return;
             }
 
@@ -1518,6 +1526,106 @@ namespace DSH_Modbus采集工具
                             p.IsOn = coils[offset];
                         }
                     }
+                }
+            });
+        }
+
+        /// <summary>
+        /// 读当前「自由监控」分段的所有监控项（跟随可见性：仅该分段显示时调用）。
+        /// <para>
+        /// 与 IO 轮询的两点差异：
+        /// </para>
+        /// <list type="bullet">
+        /// <item>线圈区用 FC01、寄存器区按驱动区段选 FC03/FC04（IO 只有线圈，恒 FC01）；</item>
+        /// <item>读取失败**不触发断线**，只把原因写到该行的「当前值」格 ——
+        /// 一个配错的地址不该拖垮整条连接（与心跳遇异常码保持连接的做法一致）。</item>
+        /// </list>
+        /// </summary>
+        private async Task PollFreeMonitorAsync(ModbusTcpClient modbus, CommDriver driver, CancellationToken token)
+        {
+            List<ReadBlock> plan = _monitorSet.BuildReadPlan();
+            if (plan.Count == 0)
+            {
+                return;
+            }
+
+            var results = new List<(ReadBlock Block, bool[]? Coils, ushort[]? Registers, string? Error)>();
+
+            foreach (ReadBlock block in plan)
+            {
+                // 逐块复查可见性：用户切走分段后立即停发剩余报文，
+                // 不必等本拍走完（块数可能不少，白白占总线）。
+                if (!_freeViewActive || !_ioPageActive)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (block.Area is ModbusArea.Coil)
+                    {
+                        bool[] coils = await modbus.ReadCoilsAsync(
+                            (ushort)block.StartAddress, (ushort)block.Count, token);
+                        results.Add((block, coils, null, null));
+                    }
+                    else if (block.Area == ModbusArea.DiscreteInput)
+                    {
+                        bool[] inputs = await modbus.ReadDiscreteInputsAsync(
+                            (ushort)block.StartAddress, (ushort)block.Count, token);
+                        results.Add((block, inputs, null, null));
+                    }
+                    else if (block.Area == ModbusArea.HoldingRegister)
+                    {
+                        ushort[] regs = await modbus.ReadHoldingRegistersAsync(
+                            (ushort)block.StartAddress, (ushort)block.Count, token);
+                        results.Add((block, null, regs, null));
+                    }
+                    else
+                    {
+                        ushort[] regs = await modbus.ReadInputRegistersAsync(
+                            (ushort)block.StartAddress, (ushort)block.Count, token);
+                        results.Add((block, null, regs, null));
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // 单块失败只标该块内的项，继续读下一块（其它地址可能正常）
+                    results.Add((block, null, null, ClassifyDisconnectReason(ex.Message)));
+                }
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (!IsCurrentConnection(modbus, token))
+                {
+                    return;
+                }
+
+                // 复查可见性：本拍可能跨越了用户的切换动作（_freeViewActive 由 UI 线程改，
+                // 而上面读计划的判断发生在切换**之前**）。已切走就丢弃本拍结果 ——
+                // 值保持上一次的，符合「离开分段停读且保留上次值」。
+                if (!_freeViewActive || !_ioPageActive)
+                {
+                    return;
+                }
+
+                foreach (var (block, coils, regs, error) in results)
+                {
+                    if (error != null)
+                    {
+                        foreach (ReadEntry e in block.Entries)
+                        {
+                            e.Item.ReadError = error;
+                        }
+
+                        continue;
+                    }
+
+                    MonitorItemSet.ApplyBlock(block, coils, regs, driver);
                 }
             });
         }

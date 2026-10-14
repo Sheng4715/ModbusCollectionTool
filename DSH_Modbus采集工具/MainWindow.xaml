@@ -633,10 +633,15 @@
                               ItemTemplate="{StaticResource EnumUpperTemplate}"
                               SelectionChanged="MonitorFormat_SelectionChanged"/>
 
-                    <!-- 当前值：本阶段占位，读取链路属下一步 -->
+                    <!--
+                        当前值：只有本分段可见时才读（跟随可见性，见 PollFreeMonitorAsync）。
+                        读到前是占位「—」；读失败转琥珀色并在 ToolTip 给出原因
+                        （与配置错误的红色区分：红＝配置要改，琥珀＝这一拍没读到）。
+                    -->
                     <TextBlock Grid.Column="4" Text="{Binding CurrentValue}"
                                FontSize="12"
-                               Foreground="{Binding RowBrush}"
+                               Foreground="{Binding ValueBrush}"
+                               ToolTip="{Binding ValueToolTip}"
                                VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
 
