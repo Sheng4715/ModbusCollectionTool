@@ -14,6 +14,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using DSH_Modbus采集工具.Drivers;
+using DSH_Modbus采集工具.Io;
 using DSH_Modbus采集工具.Modeling;
 using DSH_Modbus采集工具.Polling;
 
@@ -190,18 +191,12 @@ namespace DSH_Modbus采集工具
         /// <summary>当前显示的是「自由监控」分段（采集跟随可见分段用）。</summary>
         private volatile bool _freeViewActive;
 
-        private readonly List<IoPoint> _xPoints = new();
-        private readonly List<IoPoint> _yPoints = new();
-
-        /// <summary>每页 4 列 × 16 行 = 64 点；本分段点位超出一页即分页。</summary>
-        private const int IoRowsPerColumn = 16;
-        private const int IoPageSize = 4 * IoRowsPerColumn;
-
         /// <summary>
         /// 采集编排器（轮询 + 心跳）。不持有 WPF 控件，与窗口之间只走
         /// <see cref="ICollectorHost"/> 与 <see cref="PollSnapshot"/> 两条通道 —— 见 <c>Polling/</c>。
         /// </summary>
         private readonly ModbusPoller _poller;
+
 
         /// <summary>当前页号（0 基）；X / Y 两分段各自独立记页。</summary>
         private volatile int _xPageIndex;
@@ -209,9 +204,10 @@ namespace DSH_Modbus采集工具
 
         /// <summary>
         /// 当前可见页的点位快照：UI 线程在切页/切段/重建点位时整体替换，
-        /// 后台轮询只读该数组（不直接触碰 <see cref="_xPoints"/><see cref="_yPoints"/>，避免与重建竞态）。
+        /// 后台轮询只读该数组（不直接触碰点位集里的列表，避免与重建竞态）。
         /// </summary>
         private volatile IoPoint[] _visiblePage = Array.Empty<IoPoint>();
+
 
         /// <summary>构造期结束标志：此后切换设备类型才需要按新驱动重建点位地址。</summary>
         private bool _ioInitialized;
@@ -225,8 +221,9 @@ namespace DSH_Modbus采集工具
         /// <summary>
         /// 点位集 + 注释表（键 = 点位名如 "X17"，值 = 注释）。**IO 监控列表完全由它驱动**：
         /// 启动时从 exe 旁的 io-comments.json 载入，导入 IO 表后整体替换并写回；未导入则为空（界面显示空列表）。
+        /// 见 <c>Io/IoPointSet.cs</c>。
         /// </summary>
-        private Dictionary<string, string> _comments = new(StringComparer.OrdinalIgnoreCase);
+        private readonly IoPointSet _ioSet = new();
 
         /// <summary>设备状态日志（总览页底部展示）。只在 UI 线程追加。</summary>
         private readonly ObservableCollection<LogEntry> _deviceLog = new();
@@ -291,77 +288,20 @@ namespace DSH_Modbus采集工具
         // ---------- IO 点位集构建 / 分页 ----------
 
         /// <summary>
-        /// 按当前点位集（<see cref="_comments"/>）重建 X / Y 监控列表：归一化点位名、用当前通讯驱动
-        /// 换算出 Modbus 地址、按地址升序排序，并复位到第 1 页。未通过驱动校验的条目忽略（导入时已过滤，此处兜底）。
+        /// 重建 X / Y 监控列表并复位到第 1 页。点位名归一化、地址换算与排序规则见
+        /// <see cref="IoPointSet.Rebuild"/>（<c>Io/IoPointSet.cs</c>）。
         /// </summary>
         private void RebuildIoPoints()
         {
-            _xPoints.Clear();
-            _yPoints.Clear();
-
-            foreach (string name in _comments.Keys)
-            {
-                if (TryCreateIoPoint(name, out IoPoint? point))
-                {
-                    (point!.Name[0] == 'Y' ? _yPoints : _xPoints).Add(point);
-                }
-            }
-
-            // 地址升序：八进制编号解析后即数值序，与轮询回填时的偏移一致
-            _xPoints.Sort(static (a, b) => a.Address.CompareTo(b.Address));
-            _yPoints.Sort(static (a, b) => a.Address.CompareTo(b.Address));
+            _ioSet.Rebuild(_currentDriver);
 
             _xPageIndex = 0;
             _yPageIndex = 0;
             ApplyIoPage();
         }
 
-        /// <summary>把 "X17" 这类点位名转成 IoPoint：仅接受 X / Y 元件，且地址须在当前驱动定义范围内。</summary>
-        private bool TryCreateIoPoint(string name, out IoPoint? point)
-        {
-            point = null;
-            CommDriver? driver = _currentDriver;
-            if (driver == null || string.IsNullOrWhiteSpace(name))
-            {
-                return false;
-            }
-
-            string normalized = NormalizePointName(name);
-            if (normalized.Length < 2 || (normalized[0] != 'X' && normalized[0] != 'Y'))
-            {
-                return false;
-            }
-
-            if (!driver.TryResolve(normalized, ModbusArea.Coil, out int address, out _))
-            {
-                return false;
-            }
-
-            _comments.TryGetValue(normalized, out string? comment);
-            point = new IoPoint
-            {
-                Name = normalized,
-                Address = address,
-                Comment = comment ?? string.Empty,
-                IsOutput = normalized[0] == 'Y',
-            };
-            return true;
-        }
-
-        /// <summary>归一化点位名：元件符号转大写（"x17" → "X17"、"sm5" → "SM5"），编号部分原样保留。</summary>
-        private static string NormalizePointName(string name)
-        {
-            int i = 0;
-            while (i < name.Length && char.IsLetter(name[i]))
-            {
-                i++;
-            }
-
-            return name[..i].ToUpperInvariant() + name[i..];
-        }
-
         /// <summary>当前显示的分段（true=输出 Y / false=输入 X）的点位列表。</summary>
-        private List<IoPoint> ActiveSegmentPoints => _yViewActive ? _yPoints : _xPoints;
+        private List<IoPoint> ActiveSegmentPoints => _ioSet.PointsFor(_yViewActive);
 
         /// <summary>当前分段的页号（0 基）。</summary>
         private int ActivePageIndex
@@ -381,8 +321,7 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>总页数；空列表也算 1 页，便于统一处理分页控件显隐。</summary>
-        private static int PageCountOf(List<IoPoint> points) =>
-            Math.Max(1, (points.Count + IoPageSize - 1) / IoPageSize);
+        private static int PageCountOf(List<IoPoint> points) => IoPager.PageCountOf(points);
 
         /// <summary>
         /// 把当前页切片绑定到 4 个纵向 ItemsControl（每列固定 16 行，末页不满留空），
@@ -397,22 +336,11 @@ namespace DSH_Modbus采集工具
             }
 
             List<IoPoint> points = ActiveSegmentPoints;
-            int pages = PageCountOf(points);
+            int pages = IoPager.PageCountOf(points);
 
-            if (ActivePageIndex > pages - 1)
-            {
-                ActivePageIndex = pages - 1;
-            }
+            ActivePageIndex = IoPager.ClampPage(ActivePageIndex, pages);
 
-            if (ActivePageIndex < 0)
-            {
-                ActivePageIndex = 0;
-            }
-
-            List<IoPoint> page = points
-                .Skip(ActivePageIndex * IoPageSize)
-                .Take(IoPageSize)
-                .ToList();
+            List<IoPoint> page = IoPager.Slice(points, ActivePageIndex);
 
             // 只给「当前显示的分段」对应的 4 个列控件绑定（另一分段的网格保持原内容，切回时重新绑定）
             BindIoColumn(_yViewActive ? YIoColumn0 : IoColumn0, page, 0);
@@ -429,10 +357,7 @@ namespace DSH_Modbus采集工具
         /// <summary>取本页第 col 列的 16 个点（不足则少）绑定到对应 ItemsControl。</summary>
         private static void BindIoColumn(System.Windows.Controls.ItemsControl target, List<IoPoint> page, int col)
         {
-            target.ItemsSource = page
-                .Skip(col * IoRowsPerColumn)
-                .Take(IoRowsPerColumn)
-                .ToList();
+            target.ItemsSource = IoPager.SliceColumn(page, col);
         }
 
         /// <summary>分页控件：只有一页时整体隐藏；首/末页把对应箭头置灰。</summary>
@@ -444,7 +369,7 @@ namespace DSH_Modbus采集工具
             }
 
             IoPagerPanel.Visibility = pages > 1 ? Visibility.Visible : Visibility.Collapsed;
-            IoPageText.Text = $"{ActivePageIndex + 1}/{pages}";
+            IoPageText.Text = IoPager.PageText(ActivePageIndex, pages);
             IoPrevPageButton.IsEnabled = ActivePageIndex > 0;
             IoNextPageButton.IsEnabled = ActivePageIndex < pages - 1;
         }
@@ -464,8 +389,8 @@ namespace DSH_Modbus采集工具
 
         private void ChangeIoPage(int delta)
         {
-            int next = ActivePageIndex + delta;
-            if (next < 0 || next >= PageCountOf(ActiveSegmentPoints))
+            int next = IoPager.NextPage(ActivePageIndex, PageCountOf(ActiveSegmentPoints), delta);
+            if (next < 0)
             {
                 return;
             }
@@ -475,43 +400,10 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>读取 exe 旁的 io-comments.json；文件不存在或损坏时保持内置默认，不阻断启动。</summary>
-        private void LoadComments()
-        {
-            try
-            {
-                if (!File.Exists(CommentsFilePath))
-                {
-                    return;
-                }
-
-                var loaded = System.Text.Json.JsonSerializer
-                    .Deserialize<Dictionary<string, string>>(File.ReadAllText(CommentsFilePath));
-                if (loaded != null)
-                {
-                    _comments = new Dictionary<string, string>(loaded, StringComparer.OrdinalIgnoreCase);
-                }
-            }
-            catch
-            {
-                // 损坏/不可读 → 回退内置注释
-            }
-        }
+        private void LoadComments() => _ioSet.Load();
 
         /// <summary>整表写回 io-comments.json（导入后调用）。失败仅意味着下次启动不记得本次导入，不提示打断。</summary>
-        private void SaveComments()
-        {
-            try
-            {
-                string json = System.Text.Json.JsonSerializer.Serialize(
-                    _comments,
-                    new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(CommentsFilePath, json);
-            }
-            catch
-            {
-                // 忽略写入失败
-            }
-        }
+        private void SaveComments() => _ioSet.Save();
 
         // ---------- 最大化溢出补偿 ----------
         // 用 WindowChrome 自绘标题栏时，系统会把最大化窗口的四边各外扩一个窗口边框宽度
@@ -2242,10 +2134,10 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            List<(string Address, string Comment)> rows;
+            IoImportResult result;
             try
             {
-                rows = XlsxIoTableReader.Read(dialog.FileName);
+                result = IoTableImporter.Read(_currentDriver, dialog.FileName);
             }
             catch (Exception ex)
             {
@@ -2254,7 +2146,7 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            if (rows.Count == 0)
+            if (result.SourceRowCount == 0)
             {
                 MessageBox.Show(this,
                     "未在表中识别到点位地址（应形如 X0 / Y37），当前注释未变更。",
@@ -2262,141 +2154,29 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 全量替换：以表为权威重建注释字典。
-            // 每行先按当前通讯驱动校验地址是否落在驱动定义范围内（超范围即失败），
-            // 再确认是 IO 监控页上的点位；任一环节不通过都计入「失败」，不写入注释表。
-            var next = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var failures = new List<string>();
-
-            foreach ((string address, string comment) in rows)
-            {
-                string name = address.Trim();
-                if (!TryValidateIoPoint(name, out string reason))
-                {
-                    failures.Add($"{name} —— {reason}");
-                    continue;
-                }
-
-                next[name] = comment.Trim();
-            }
-
-            int ok = next.Count;
+            int ok = result.OkCount;
 
             if (ok == 0)
             {
                 MessageBox.Show(this,
-                    $"成功导入 0 项，失败 {failures.Count} 项。\n\n{FormatFailures(failures)}\n\n当前注释未变更。",
+                    $"成功导入 0 项，失败 {result.FailureCount} 项。\n\n" +
+                    $"{IoTableImporter.FormatFailures(result.Failures)}\n\n当前注释未变更。",
                     "导入 IO 表", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            _comments = next;
+            _ioSet.Replace(result.Comments);
             SaveComments();
             RebuildIoPoints(); // 点位集随之变化：重建监控列表并复位到第 1 页
 
-            string message = $"成功导入 {ok} 项，失败 {failures.Count} 项。";
-            if (failures.Count > 0)
+            string message = $"成功导入 {ok} 项，失败 {result.FailureCount} 项。";
+            if (result.FailureCount > 0)
             {
-                message += $"\n\n失败明细：\n{FormatFailures(failures)}";
+                message += $"\n\n失败明细：\n{IoTableImporter.FormatFailures(result.Failures)}";
             }
 
             MessageBox.Show(this, message, "导入 IO 表", MessageBoxButton.OK,
-                failures.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
-        }
-
-        /// <summary>
-        /// 校验点位能否生效：① 形如 X0/Y37；② 元件在当前通讯驱动中已定义、且编号未超出该区范围；
-        /// ③ 属于 IO 监控页上的点位（X0–X77 / Y0–Y77）。失败时输出中文原因。
-        /// </summary>
-        private bool TryValidateIoPoint(string name, out string reason)
-        {
-            reason = string.Empty;
-
-            if (!IsPointName(name))
-            {
-                reason = "格式无效，应为「元件+编号」如 X0";
-                return false;
-            }
-
-            string normalized = NormalizePointName(name);
-            if (normalized[0] != 'X' && normalized[0] != 'Y')
-            {
-                reason = "非 IO 监控点位（IO 监控仅支持输入 X / 输出 Y）";
-                return false;
-            }
-
-            CommDriver? driver = _currentDriver;
-            if (driver == null)
-            {
-                reason = "尚未选择设备类型（通讯驱动）";
-                return false;
-            }
-
-            // IO 监控页采集的是线圈（FC01），故按 Coil 区校验地址范围
-            if (!driver.TryResolve(normalized, ModbusArea.Coil, out _, out string error))
-            {
-                reason = DescribeResolveFailure(driver, normalized, error);
-                return false;
-            }
-
-            return true;
-        }
-
-        /// <summary>把驱动层的解析失败翻译得更具体：未定义元件 / 非线圈元件 / 编号越界或进制非法。</summary>
-        private static string DescribeResolveFailure(CommDriver driver, string name, string error)
-        {
-            int split = 0;
-            while (split < name.Length && char.IsLetter(name[split]))
-            {
-                split++;
-            }
-
-            string element = name[..split];
-            var areas = driver.Areas.Where(a => a.Element == element).ToList();
-
-            if (areas.Count == 0)
-            {
-                return $"驱动「{driver.DisplayName}」未定义元件 {element}";
-            }
-
-            if (areas.All(a => a.Area != ModbusArea.Coil))
-            {
-                return $"元件 {element} 不是线圈，IO 监控仅支持线圈点位";
-            }
-
-            return error;
-        }
-
-        /// <summary>失败明细文本：最多列前 12 条，其余折叠为一行汇总。</summary>
-        private static string FormatFailures(List<string> failures)
-        {
-            const int maxShown = 12;
-            var lines = failures.Take(maxShown).ToList();
-            if (failures.Count > maxShown)
-            {
-                lines.Add($"…… 其余 {failures.Count - maxShown} 项从略");
-            }
-
-            return string.Join("\n", lines);
-        }
-
-        /// <summary>形如 X0 / Y37：字母开头、其后全为数字（表头「地址」、说明文字在此被排除）。</summary>
-        private static bool IsPointName(string name)
-        {
-            if (name.Length < 2 || !char.IsLetter(name[0]))
-            {
-                return false;
-            }
-
-            for (int i = 1; i < name.Length; i++)
-            {
-                if (!char.IsDigit(name[i]))
-                {
-                    return false;
-                }
-            }
-
-            return true;
+                result.FailureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
         }
 
         private void RadioButton_Checked(object sender, RoutedEventArgs e)
