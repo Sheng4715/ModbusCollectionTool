@@ -74,8 +74,5 @@ namespace DSH_Modbus采集工具
                 return $"Windows {Environment.OSVersion.Version} ({bits})";
             }
         }
-
-        /// <summary>支持的 Modbus 功能码（只读 + 写，按实现列出）。</summary>
-        public static string FunctionCodes => "FC01/02/03/04 读，FC05/06/16 写";
     }
 }

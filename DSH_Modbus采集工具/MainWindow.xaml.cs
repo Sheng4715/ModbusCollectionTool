@@ -859,17 +859,6 @@ namespace DSH_Modbus采集工具
             InfoVersionText.Text = $"v{AppInfo.Version}";
             InfoBuildDateText.Text = AppInfo.BuildDate;
             InfoRuntimeText.Text = $"{AppInfo.Runtime}　·　{AppInfo.OperatingSystem}";
-            InfoDriversText.Text = BuildDriverSummary();
-        }
-
-        /// <summary>
-        /// 从驱动注册表现算「已支持驱动」摘要（不写死字符串）——
-        /// 以后加品牌，项目信息卡自动跟着变，不会漏改。
-        /// </summary>
-        private static string BuildDriverSummary()
-        {
-            var names = Drivers.DriverRegistry.All.Select(d => d.DisplayName).ToArray();
-            return $"{string.Join(" / ", names)}（{AppInfo.FunctionCodes}）";
         }
 
         /// <summary>

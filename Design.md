@@ -360,7 +360,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 | **结构重构（P5 步骤 1、2）** | 采集编排 → `Polling/`；IO 点位集/分页/导入 → `Io/`（**均不引用 WPF**）。自由监控**刻意未抽**（12 处直接碰控件） | ✅（ADR-21） |
 | **主题外观（P5-1，中）** | 新增 `Themes/`（`Light.xaml` + `Dark.xaml` 同键字典 + `ThemeManager`）；UI 侧把颜色字面量全部换成 `{DynamicResource}`；设置页新增三分段控件 | ✅ **已实现**（ADR-23/24/25；验证见 §10.5） |
 | **日志保存（P5-2，中）** | 落盘点挂在 `AppendDeviceLog`（5 种设备状态的唯一出口）；写入器 `Logging/DeviceLogFileWriter.cs`（**不引用 WPF**，独立工程 `LoggingCheck` 链接源码验证）；默认 `AppContext.BaseDirectory\Log\`，文件名 = 日期，纯文本 `.log`，每行 `[时间] [级别] 消息`；设置存 `app-settings.json` | ✅ **已实现**（ADR-26/27/28/29；验证见 §10.6） |
-| **项目信息（P5-3，低）** | `csproj` 补 `Version` / `FileVersion` 与 `<Product>` 元数据 + 编译期生成构建日期常量；`AppInfo.cs` 只读程序集元数据；设置页第三卡 `RefreshProjectInfo()` 回显 | ✅ **已实现**（ADR-30；验证见 §10.7） |
+| **项目信息（P5-3，低）** | `csproj` 补 `Version` / `FileVersion` 与 `<Product>` 元数据 + 编译期生成构建日期常量；`AppInfo.cs` 只读程序集元数据；设置页第三卡 `RefreshProjectInfo()` 回显 **名称 / 版本 / 构建日期 / 运行环境** | ✅ **已实现**（ADR-30；验证见 §10.7） |
 
 ### 7.1 待设计项的关键约束（来自 Brief）
 
@@ -771,27 +771,32 @@ public const string BuildDate = "2026-10-15 11:50:12";
 
 > `ProductVersion` 这一行正是 ADR-30 里"砍 `+` 之后部分"的实证来源 —— 若不处理，界面会显示 `v0.6.0+b9d0a08…`。
 
-**2. UIA 读回界面（`.tmp\p53-verify.ps1`，全通过）**
+**2. UIA 读回界面（`.tmp\p53-verify.ps1`）**
 
 ```
 InfoProductText  = DSH Modbus 采集工具
 InfoVersionText  = v0.6.0                    ← +<sha> 已正确剥离
-InfoBuildDateText= 2026-10-15 11:50:12
+InfoBuildDateText= 2026-10-15 11:59:41
 InfoRuntimeText  = .NET 8.0.14　·　Windows 10.0.26100.0 (64 位)
-InfoDriversText  = 信捷XD/XL系列 / 汇川Easy系列（FC01/02/03/04 读，FC05/06/16 写）
 present LogSaveOnSegment / LogSaveOffSegment / LogDirectoryTextBox / LogSaveStatusText
 ```
 
-- 五格全部有值且与来源一致；**支持驱动列表与 `DriverRegistry.All` 的注册项吻合**（现算而非硬编码）✓
+- 四格全部有值且与来源一致；同一页的日志保存卡控件无回归 ✓
 - 截图核对 `.tmp\shots\p53-light.png` / `p53-dark.png`：深浅两主题下标签/取值对齐、对比度正常 ✓
-
-> ⚠️ **过程中修掉的问题**：`BuildDriverSummary` 首次编译报 `CS0122: "DriverRegistry.Drivers"不可访问` —— 那三个字符的字段是 `private static readonly List<CommDriver> Drivers`，公开访问器是 **`DriverRegistry.All`**。这类错误说明"现算"这条路走对了：硬编码的话不会有编译期提醒，而会在加驱动品牌后静默过期。
 
 **3. 构建**
 
 `--no-incremental` 全量重编 **0 警告 0 错误**。测试后已恢复用户配置（IP `192.168.1.100`、日志开启、目录默认）。
 
-> 另记一条诊断经验：`InfoRuntimeText` 里的 `Environment.OSVersion` 在**未声明支持 Win10+ 的清单**下会虚报为 `10.0.26100.0`（当前机器实为 Win11 内核同一版本线），故这格是**纯诊断信息**，不参与任何逻辑判断。
+> 另记一条诊断经验：`InfoRuntimeText` 里的 `Environment.OSVersion` 报 `10.0.26100.0`，而本机是 Windows 11 —— 这**不是**读错，而是 Win32 版本 API 为兼容性一直把主/次版本固定为 `10.0`，Win10 与 Win11 只靠 build 号（26100 = Win11 24H2）区分。故这格是**纯诊断信息**，不要拿它判断系统代次（真要区分需查 build 号阈值或注册表 `CurrentBuildNumber`）。
+
+**4. 后续调整：删掉「支持驱动」行（同日）**
+
+初版还有第五行「支持驱动」，显示 `DriverRegistry.All` 现算的驱动列表 + 功能码。用户看图后要求**连同标签一起去掉**，同时去掉日志保存卡的说明文字。随之删除的还有 `BuildDriverSummary()` 与 `AppInfo.FunctionCodes`（只服务于那一行），**保留** `AppInfo` 其余成员。
+
+> ⚠️ 删除时注意一个布局细节：末行原本靠 `Margin="0,0,0,0"` 与其余行的 `,8` 区分，删掉第五行后**第四行必须把底边距也改成 0**，否则卡片底部会多出一段 8px 空白。这类「删一行」的改动，边距是容易漏的一处。
+>
+> 另：`BuildDriverSummary` 曾在首次编译报 `CS0122: "DriverRegistry.Drivers"不可访问` —— 那个字段是 `private static readonly List<CommDriver>`，公开访问器是 **`DriverRegistry.All`**。记录于此备查（该函数现已删除）。
 
 ## 11. 构建与运行
 
