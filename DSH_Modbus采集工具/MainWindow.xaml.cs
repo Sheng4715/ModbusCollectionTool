@@ -17,6 +17,7 @@ using DSH_Modbus采集工具.Drivers;
 using DSH_Modbus采集工具.Io;
 using DSH_Modbus采集工具.Modeling;
 using DSH_Modbus采集工具.Polling;
+using DSH_Modbus采集工具.Themes;
 
 namespace DSH_Modbus采集工具
 {
@@ -26,13 +27,13 @@ namespace DSH_Modbus采集工具
         private string _comment = string.Empty;
 
         /// <summary>输入（X）点亮色：绿色。</summary>
-        private static readonly Brush InputOnBrush = MakeBrush(0x0B, 0x7A, 0x0B);
+        private static readonly Brush InputOnFallback = MakeBrush(0x0B, 0x7A, 0x0B);
 
         /// <summary>输出（Y）点亮色：橙色 <c>#FFA500</c>，与输入的绿色区分。</summary>
-        private static readonly Brush OutputOnBrush = MakeBrush(0xFF, 0xA5, 0x00);
+        private static readonly Brush OutputOnFallback = MakeBrush(0xFF, 0xA5, 0x00);
 
         /// <summary>灭灯色：浅灰（输入 / 输出共用）。</summary>
-        private static readonly Brush OffBrush = MakeBrush(0xC4, 0xC4, 0xC4);
+        private static readonly Brush OffFallback = MakeBrush(0xC4, 0xC4, 0xC4);
 
         private static Brush MakeBrush(byte r, byte g, byte b)
         {
@@ -83,10 +84,24 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        /// <summary>灯色：灭为浅灰；点亮时输入（X）绿、输出（Y）橙。</summary>
+        /// <summary>
+        /// 灯色：灭为浅灰；点亮时输入（X）绿、输出（Y）橙。
+        /// 每次取都按**当前主题**解析（深色下绿色/灰色都要提亮，否则与深底融在一起）；
+        /// 主题资源拿不到时回退到浅色字面值。画刷由 ResourceDictionary 缓存，
+        /// 这里不会每次新建对象。
+        /// </summary>
         public Brush StateBrush => !IsOn
-            ? OffBrush
-            : IsOutput ? OutputOnBrush : InputOnBrush;
+            ? Themes.ThemeManager.GetBrush("Io.Off") ?? OffFallback
+            : IsOutput
+                ? Themes.ThemeManager.GetBrush("Io.Output.On") ?? OutputOnFallback
+                : Themes.ThemeManager.GetBrush("Io.Input.On") ?? InputOnFallback;
+
+        /// <summary>
+        /// 通知界面重取 <see cref="StateBrush"/>。换主题时由窗口调用 ——
+        /// StateBrush 是只读派生属性，没有 setter，只能靠变更通知驱动绑定重算。
+        /// </summary>
+        public void RaiseStateBrushChanged() =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StateBrush)));
 
         public event PropertyChangedEventHandler? PropertyChanged;
     }
@@ -116,21 +131,18 @@ namespace DSH_Modbus采集工具
         Warning,
     }
 
-    /// <summary>设备状态日志的一行（不可变），供总览页底部的 ListBox 绑定。</summary>
+    /// <summary>设备状态日志的一行，供总览页底部的 ListBox 绑定。</summary>
     public sealed class LogEntry
     {
+        private readonly DateTime _time;
+
         public LogEntry(DateTime time, string message, DeviceLogLevel level)
         {
+            _time = time;
             TimeText = $"[{time:yyyy-MM-dd HH:mm:ss}]";
             Message = message;
-            Color color = level switch
-            {
-                DeviceLogLevel.Connected => Color.FromRgb(0x0B, 0x7A, 0x0B),
-                DeviceLogLevel.Disconnected => Color.FromRgb(0xC4, 0x2B, 0x1C),
-                DeviceLogLevel.Warning => Color.FromRgb(0xB2, 0x6A, 0x00),
-                _ => Color.FromRgb(0x5D, 0x5D, 0x5D),
-            };
-            LevelBrush = new SolidColorBrush(color);
+            Level = level;
+            LevelBrush = MakeLevelBrush(level);
         }
 
         /// <summary>形如 "[2026-10-08 10:23:45]"，固定灰色显示。</summary>
@@ -138,7 +150,45 @@ namespace DSH_Modbus采集工具
 
         public string Message { get; }
 
+        /// <summary>级别（换主题时按它重算颜色）。</summary>
+        public DeviceLogLevel Level { get; }
+
         public Brush LevelBrush { get; }
+
+        /// <summary>
+        /// 按当前主题取该级别的画刷。走 <see cref="Themes.ThemeManager.GetBrush"/>，
+        /// 取不到时回退到浅色字面值，保证任何时候都有颜色。
+        /// </summary>
+        private static Brush MakeLevelBrush(DeviceLogLevel level)
+        {
+            string key = level switch
+            {
+                DeviceLogLevel.Connected => "Brush.Success",
+                DeviceLogLevel.Disconnected => "Brush.Danger",
+                DeviceLogLevel.Warning => "Brush.Warning",
+                _ => "Brush.Text.Secondary",
+            };
+
+            return Themes.ThemeManager.GetBrush(key) ?? Fallback(level);
+        }
+
+        /// <summary>换主题后重建一行（颜色随主题变，其它字段不变）。</summary>
+        public LogEntry WithThemeColors() => new(_time, Message, Level);
+
+        /// <summary>主题资源不可用时的兜底色（= 浅色主题的对应值）。</summary>
+        private static Brush Fallback(DeviceLogLevel level)
+        {
+            Color color = level switch
+            {
+                DeviceLogLevel.Connected => Color.FromRgb(0x0B, 0x7A, 0x0B),
+                DeviceLogLevel.Disconnected => Color.FromRgb(0xC4, 0x2B, 0x1C),
+                DeviceLogLevel.Warning => Color.FromRgb(0xB2, 0x6A, 0x00),
+                _ => Color.FromRgb(0x5D, 0x5D, 0x5D),
+            };
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
     }
 
     /// <summary>设备配置页展示用：地址表中的一个元件（同名元件的多段地址区合并为一项）。</summary>
@@ -227,6 +277,14 @@ namespace DSH_Modbus采集工具
 
         /// <summary>设备状态日志（总览页底部展示）。只在 UI 线程追加。</summary>
         private readonly ObservableCollection<LogEntry> _deviceLog = new();
+
+        // ---------- 底栏状态（换主题时据此重取颜色） ----------
+
+        /// <summary>底栏当前状态文字。换主题后按新主题重设颜色，文字不变。</summary>
+        private string _statusText = "未连接";
+
+        /// <summary>底栏当前状态色的浅色字面值，经 <see cref="StatusBrushKey"/> 映射到主题键。</summary>
+        private string _statusColorHex = "#9A9A9A";
 
         // ---------- 自动重连（P1-1） ----------
 
@@ -487,6 +545,10 @@ namespace DSH_Modbus采集工具
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            // 主题已由 App.OnStartup 应用（窗口构造前），这里只同步分段选中态
+            SyncThemeSegments();
+            Themes.ThemeManager.ThemeChanged += OnThemeChanged;
+
             SyncInputHeights();
             ScanNetworkAdapters();
             UpdateOverviewStatus();
@@ -511,6 +573,13 @@ namespace DSH_Modbus采集工具
                     : Visibility.Collapsed;
             }
 
+            if (SettingsPanel != null)
+            {
+                SettingsPanel.Visibility = ReferenceEquals(sender, SettingsNav)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+
             if (DeviceConfigPanel == null)
             {
                 return;
@@ -531,6 +600,70 @@ namespace DSH_Modbus采集工具
             {
                 UpdateOverviewStatus();
             }
+        }
+
+        // ---------- 设置：主题外观（P5-1） ----------
+
+        /// <summary>
+        /// 主题分段被选中。三个分段共用此处理器；<c>Checked</c> 也会在
+        /// <see cref="SyncThemeSegments"/> 里被「设置为已持久化的那一项」触发一次，
+        /// 那次写回同一个值，<see cref="ThemeManager.SetMode"/> 幂等故无副作用。
+        /// </summary>
+        private void ThemeSegment_Checked(object sender, RoutedEventArgs e)
+        {
+            ThemeMode mode;
+            if (ReferenceEquals(sender, ThemeLightSegment))
+            {
+                mode = ThemeMode.Light;
+            }
+            else if (ReferenceEquals(sender, ThemeDarkSegment))
+            {
+                mode = ThemeMode.Dark;
+            }
+            else
+            {
+                mode = ThemeMode.System;
+            }
+
+            ThemeManager.SetMode(mode);
+        }
+
+        /// <summary>
+        /// 把当前模式同步到分段选中态。直接赋 <c>IsChecked</c>（而不是让
+        /// <c>Checked</c> 事件去驱动），避免「同步选中态」反过来再写一次设置。
+        /// </summary>
+        private void SyncThemeSegments()
+        {
+            var target = ThemeManager.Mode switch
+            {
+                ThemeMode.Light => ThemeLightSegment,
+                ThemeMode.Dark => ThemeDarkSegment,
+                _ => ThemeSystemSegment,
+            };
+
+            foreach (var rb in new[] { ThemeLightSegment, ThemeDarkSegment, ThemeSystemSegment })
+            {
+                rb.IsChecked = ReferenceEquals(rb, target);
+            }
+        }
+
+        /// <summary>
+        /// 主题换字典后，XAML 里的 <c>DynamicResource</c> 自动跟随，但**由 C# 直接赋值的
+        /// 画刷不会** —— IO 灯色、日志级别色、底栏状态点/文字都属后者，需在此重算。
+        /// </summary>
+        private void OnThemeChanged()
+        {
+            // 灯色：StateBrush 是只读派生属性，靠 PropertyChanged 通知绑定重取
+            foreach (var point in _ioSet.XPoints.Concat(_ioSet.YPoints))
+            {
+                point.RaiseStateBrushChanged();
+            }
+
+            // 日志：LogEntry.LevelBrush 构造时定色，只能按新主题重建整表
+            RefreshDeviceLogColors();
+
+            // 底栏：按当前状态重取颜色（文字不变）
+            SetStatus(_statusText, _statusColorHex);
         }
 
         /// <summary>
@@ -954,12 +1087,48 @@ namespace DSH_Modbus采集工具
             _reconnectCts?.Cancel();
         }
 
+        /// <summary>
+        /// 设置底栏状态文字与状态点颜色。<paramref name="colorHex"/> 是**浅色主题下的字面值**，
+        /// 由 <see cref="StatusBrushKey"/> 映射到语义画刷键 —— 这样调用点无需关心主题，
+        /// 深色主题下也不会拿到浅色主题的固定色。
+        /// </summary>
         private void SetStatus(string text, string colorHex)
         {
             StatusText.Text = text;
-            StatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
-            StatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
+
+            var brush = Themes.ThemeManager.GetBrush(StatusBrushKey(colorHex))
+                        ?? new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
+            StatusText.Foreground = brush;
+            StatusDot.Fill = brush;
+
+            _statusText = text;
+            _statusColorHex = colorHex;
+
             UpdateOverviewStatus();
+        }
+
+        /// <summary>
+        /// 底栏状态色字面值 → 语义画刷键。三个出口与 §9.1 的颜色语义一致：
+        /// 红＝配置要改、琥珀＝通讯侧的事、绿＝正常、灰＝未连接。
+        /// </summary>
+        private static string StatusBrushKey(string colorHex) => colorHex switch
+        {
+            "#0B7A0B" => "Brush.Success",
+            "#C42B1C" => "Brush.Danger",
+            "#B26A00" => "Brush.Warning",
+            _ => "Brush.Indicator.Off",
+        };
+
+        /// <summary>
+        /// 按新主题重建日志各行的颜色。日志行色在 <see cref="LogEntry"/> 构造时定死，
+        /// 换主题后必须整表重建 —— 用「原样替换」而不是 Clear+Add，避免滚动位置跳动。
+        /// </summary>
+        private void RefreshDeviceLogColors()
+        {
+            for (int i = 0; i < _deviceLog.Count; i++)
+            {
+                _deviceLog[i] = _deviceLog[i].WithThemeColors();
+            }
         }
 
         // ---------- 设备状态日志（总览页底部） ----------
@@ -1398,6 +1567,7 @@ namespace DSH_Modbus采集工具
         protected override void OnClosed(EventArgs e)
         {
             _windowClosed = true;
+            Themes.ThemeManager.ThemeChanged -= OnThemeChanged;
             CancelReconnect();
             Disconnect();
             base.OnClosed(e);

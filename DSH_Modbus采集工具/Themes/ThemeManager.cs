@@ -1,0 +1,233 @@
+using System.IO;
+using System.Text.Json;
+using System.Windows;
+using Microsoft.Win32;
+
+namespace DSH_Modbus采集工具.Themes
+{
+    /// <summary>主题模式：浅色 / 深色 / 跟随系统。</summary>
+    public enum ThemeMode
+    {
+        Light,
+        Dark,
+        System,
+    }
+
+    /// <summary>
+    /// 主题管理：把 <c>Themes/Light.xaml</c> 或 <c>Themes/Dark.xaml</c> 换进
+    /// <see cref="Application.Resources"/> 的合并字典末位，并持久化用户选择。
+    ///
+    /// <para>
+    /// **为什么是「换字典」而不是「逐个改控件属性」**：全部颜色已经在 XAML 里引用
+    /// <c>DynamicResource</c>，换掉字典即整体生效，不需要遍历可视树，也不需要
+    /// 记录每个控件的原色。
+    /// </para>
+    /// <para>
+    /// **为什么两个字典的键必须一致**：换字典时控件只按名字取值，缺键会静默回退成
+    /// 未设置（多数表现为黑色或透明）。这类问题只在切到某个主题时才暴露，很难查，
+    /// 故 <see cref="ValidateKeyParity"/> 在启动时主动校验并直接抛异常。
+    /// </para>
+    /// </summary>
+    public static class ThemeManager
+    {
+        private const string LightUri = "Themes/Light.xaml";
+        private const string DarkUri = "Themes/Dark.xaml";
+
+        private static ResourceDictionary? _current;
+
+        /// <summary>当前模式（含「跟随系统」这一原始选择，不是解析后的实际主题）。</summary>
+        public static ThemeMode Mode { get; private set; } = ThemeMode.System;
+
+        /// <summary>当前实际生效的主题（「跟随系统」已解析为 Light 或 Dark）。</summary>
+        public static bool IsDarkEffective { get; private set; }
+
+        /// <summary>主题变化后触发，供窗口同步非 XAML 的颜色（如 IoPoint 的灯刷、日志级别色）。</summary>
+        public static event Action? ThemeChanged;
+
+        /// <summary>设置文件路径（与 io-comments.json / data-points.json 同级，都在 exe 旁）。</summary>
+        public static string SettingsFilePath =>
+            Path.Combine(AppContext.BaseDirectory, "app-settings.json");
+
+        /// <summary>
+        /// 启动时调用：读取持久化选择、做键一致性校验、应用主题、挂系统主题监听。
+        /// 必须在 <see cref="Application.Resources"/> 可用之后（即 App 构造完成后）调用。
+        /// </summary>
+        public static void Initialize()
+        {
+            // 键不一致属于开发期配置错误，宁可启动即崩也不要静默显示错色
+            ValidateKeyParity();
+
+            Mode = ParseMode(Load().Theme);
+
+            // 显式指定的主题不随后续系统切换而变；「跟随系统」才挂监听
+            SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+
+            Apply(Mode);
+        }
+
+        /// <summary>切换主题并落盘。</summary>
+        public static void SetMode(ThemeMode mode)
+        {
+            Mode = mode;
+            Apply(mode);
+            Save(mode);
+        }
+
+        private static void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+        {
+            // 只在「跟随系统」下响应；其余模式用户已明确指定，不该被系统设置覆盖。
+            // 事件可能来自非 UI 线程，切字典必须回 UI 线程。
+            if (Mode != ThemeMode.System || e.Category != UserPreferenceCategory.General)
+            {
+                return;
+            }
+
+            Application.Current?.Dispatcher.Invoke(() => Apply(ThemeMode.System));
+        }
+
+        /// <summary>按模式解析出实际主题并换字典（幂等）。</summary>
+        private static void Apply(ThemeMode mode)
+        {
+            bool dark = mode switch
+            {
+                ThemeMode.Dark => true,
+                ThemeMode.Light => false,
+                _ => IsSystemDark(),
+            };
+
+            var app = Application.Current;
+            if (app == null)
+            {
+                return;
+            }
+
+            var next = new ResourceDictionary
+            {
+                Source = new Uri(dark ? DarkUri : LightUri, UriKind.Relative),
+            };
+
+            // 先加后删：换的瞬间两套键并存，不会出现「取值落到空档」的中间态
+            app.Resources.MergedDictionaries.Add(next);
+            if (_current != null)
+            {
+                app.Resources.MergedDictionaries.Remove(_current);
+            }
+
+            _current = next;
+            IsDarkEffective = dark;
+            ThemeChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// 读系统是否处于深色。注册表值缺失（老系统 / 未设置）时按浅色处理 —— 与本应用
+        /// 改造前的默认外观一致，不会让老机器突然变深色。
+        /// </summary>
+        private static bool IsSystemDark()
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+                // 0 = 浅色，1 = 深色；缺失时 GetValue 返回 null
+                return key?.GetValue("AppsUseLightTheme") is int v && v == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 取当前主题下的画刷（C# 侧用）。XAML 走 <c>DynamicResource</c> 自动跟随，
+        /// 但 C# 直接赋给控件的画刷必须每次重新取 —— 否则换主题后它仍是旧主题的实例。
+        /// 键不存在时返回 <c>null</c>，由调用方决定回退。
+        /// </summary>
+        public static System.Windows.Media.Brush? GetBrush(string key)
+        {
+            var res = Application.Current?.TryFindResource(key);
+            return res as System.Windows.Media.Brush;
+        }
+
+        /// <summary>
+        /// 校验浅色/深色两个字典的键集合完全一致，不一致直接抛 —— 见类注释的说明。
+        /// </summary>
+        private static void ValidateKeyParity()
+        {
+            var light = new ResourceDictionary { Source = new Uri(LightUri, UriKind.Relative) };
+            var dark = new ResourceDictionary { Source = new Uri(DarkUri, UriKind.Relative) };
+
+            var missingInDark = light.Keys.Cast<object>()
+                .Select(k => k.ToString() ?? string.Empty)
+                .Where(k => !dark.Contains(k))
+                .ToList();
+            var missingInLight = dark.Keys.Cast<object>()
+                .Select(k => k.ToString() ?? string.Empty)
+                .Where(k => !light.Contains(k))
+                .ToList();
+
+            if (missingInDark.Count > 0 || missingInLight.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Themes/Light.xaml 与 Themes/Dark.xaml 的键集合不一致：" +
+                    $"Dark 缺少 [{string.Join(", ", missingInDark)}]；" +
+                    $"Light 缺少 [{string.Join(", ", missingInLight)}]。");
+            }
+        }
+
+        // ---------- 持久化（app-settings.json） ----------
+
+        /// <summary>设置文件的内容。新增设置项时在此加属性即可，缺字段按默认值处理。</summary>
+        private sealed class AppSettings
+        {
+            /// <summary>序列化为字符串（"Light"/"Dark"/"System"），比存数字更耐改枚举顺序。</summary>
+            public string Theme { get; set; } = nameof(ThemeMode.System);
+        }
+
+        private static AppSettings Load()
+        {
+            try
+            {
+                if (File.Exists(SettingsFilePath))
+                {
+                    var loaded = JsonSerializer
+                        .Deserialize<AppSettings>(File.ReadAllText(SettingsFilePath));
+                    if (loaded != null)
+                    {
+                        return loaded;
+                    }
+                }
+            }
+            catch
+            {
+                // 损坏 / 不可读 → 用默认（跟随系统）
+            }
+
+            return new AppSettings();
+        }
+
+        /// <summary>
+        /// 把持久化的字符串解析回枚举。用 <c>Enum.TryParse</c> 而非直接强转：
+        /// 手改过的 json、或被降级版本写过的 json 都可能带来无效值，
+        /// 那种情况下退回「跟随系统」比抛异常合适。
+        /// </summary>
+        private static ThemeMode ParseMode(string? raw) =>
+            Enum.TryParse<ThemeMode>(raw, ignoreCase: true, out var mode) && Enum.IsDefined(mode)
+                ? mode
+                : ThemeMode.System;
+
+        private static void Save(ThemeMode mode)
+        {
+            try
+            {
+                string json = JsonSerializer.Serialize(
+                    new AppSettings { Theme = mode.ToString() },
+                    new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(SettingsFilePath, json);
+            }
+            catch
+            {
+                // 忽略写入失败：下次启动回到默认主题，不影响功能
+            }
+        }
+    }
+}

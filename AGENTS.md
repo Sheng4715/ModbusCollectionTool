@@ -22,11 +22,15 @@ dotnet run --project DSH_Modbus采集工具
 
 ```
 DSH_Modbus采集工具/
-├── App.xaml / App.xaml.cs      # 入口
+├── App.xaml / App.xaml.cs      # 入口（OnStartup 里先 ThemeManager.Initialize）
 ├── MainWindow.xaml             # 全部 UI（单窗口，无 UserControl 拆分）
 ├── MainWindow.xaml.cs          # 交互逻辑（见 §4 分工）
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
 ├── XlsxIoTableReader.cs        # xlsx 点位表解析（零依赖 zip+XML）
+├── Themes/                     # 主题（P5-1）
+│   ├── Light.xaml              # 浅色字典（50 键）；值 = 主题化前的字面值
+│   ├── Dark.xaml               # 深色字典（同 50 键）
+│   └── ThemeManager.cs         # 换字典 / 跟随系统 / 键一致性校验 / app-settings.json
 ├── Polling/                    # 采集引擎（不含 WPF 类型）
 │   ├── ICollectorHost.cs       # 宿主契约：周期 / 监控集 / 可见性快照 / 连接身份 / 回 UI / 断线
 │   ├── ModbusPoller.cs         # 轮询编排（IO 分块读 + 自由监控读 + 断线通知）
@@ -76,7 +80,7 @@ Window
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `采集配置` | — | 占位项，不切面板 |
-| `设置` | — | **占位项，无 `x:Name`** → 点击会隐藏全部面板，接页面前需先处理 |
+| `SettingsNav` 设置 | `SettingsPanel` | 主题外观（P5-1）；日志保存/项目信息为占位卡 |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
 
@@ -98,11 +102,11 @@ Window
 | `IoItemTemplate` | IO 点位单元格（灯 10×10、注释 MinWidth 144；`Comment` 为 INPC） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
 | `IoPagerButton` | 分页箭头（26×26，首末页置灰） |
-| `IoCardButton` | **通用文字按钮**（浅灰实底胶囊 `#EDEDED`／圆角 6／高 26／字号 12） |
+| `IoCardButton` | **通用文字按钮**（浅灰实底胶囊／圆角 6／高 26／字号 12；底色走 `Brush.Control.Background`） |
 | `FormButton` | 设备配置页按钮，`BasedOn` `IoCardButton`，仅字号 14、内边距 14 |
 | `FormComboBox` | 设备配置页下拉框：**胶囊**（灰底无边框圆角 6 + chevron），字号 14／高 26 |
 | `FormComboItem` | 表单下拉项容器（含 `ItemContainerStyle`，勿漏） |
-| `FormTextBox` | 设备配置页输入框：**框线**（白底 `#C8C8C8` 圆角 4），字号 14／高 26 |
+| `FormTextBox` | 设备配置页输入框：**框线**（白底 + `Brush.Input.Border` 圆角 4），字号 14／高 26 |
 | `MonitorInlineComboBox` / `MonitorTypeCombo` | 自由监控行内下拉框：胶囊，字号 12／高 22 |
 | `MonitorComboItem` | 行内下拉项容器 |
 | `MonitorInlineTextBox` / `MonitorValueTextBox` | 自由监控行内输入框：框线，字号 12／高 22 |
@@ -148,9 +152,9 @@ Window
 
 ## 4. 代码分工（MainWindow.xaml.cs）
 
-> `MainWindow.xaml.cs` 现约 **2190 行**（P5 重构前 2576）。采集编排已抽到 `Polling/`、
-> IO 点位集/分页/导入已抽到 `Io/`；其余（连接生命周期 / 心跳 / 导航 / 自由监控 / 日志）
-> 仍在本文件。**自由监控刻意未抽** —— 它有 12 处直接碰控件，见 `Design.md` §8-1。
+> `MainWindow.xaml.cs` 现约 **2400 行**（P5 重构前 2576）。采集编排已抽到 `Polling/`、
+> IO 点位集/分页/导入已抽到 `Io/`，主题在 `Themes/`；其余（连接生命周期 / 心跳 / 导航 /
+> 自由监控 / 日志）仍在本文件。**自由监控刻意未抽** —— 它有 12 处直接碰控件，见 `Design.md` §8-1。
 
 | 区块 | 关键成员 |
 |---|---|
@@ -165,9 +169,10 @@ Window
 | **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 §5.1） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（`NicInfo`） |
-| 日志 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` |
+| 日志 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` / `RefreshDeviceLogColors`（换主题时重建行色） |
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset` |
-| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_deviceLog` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt`（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
+| **主题（P5-1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged` / `StatusBrushKey`；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
+| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_deviceLog` / `_statusText` / `_statusColorHex` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt`（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -183,7 +188,9 @@ Window
 **灯色（`IoPoint.StateBrush`）**：灭灯 `#C4C4C4`；点亮时**输入 X 绿 `#0B7A0B`、输出 Y 橙 `#FFA500`**。
 
 - 由 `IoPoint.IsOutput`（`init` 属性）区分，创建时在 `IoPointSet.TryCreatePoint` 按点位名首字母定死：`IsOutput = normalized[0] == 'Y'`
-- 三个画刷是 `static readonly` + `Freeze()`，**不要在 `StateBrush` 里 new**（原实现每次取属性都新建对象）
+- 画刷**按当前主题从 `Io.*` 键取**（上面三个值是浅色主题的值；深色下绿灯提亮为 `#4EC94E`、灭灯为 `#5A5A5A`），取不到时回退到 `InputOnFallback` / `OutputOnFallback` / `OffFallback` 三个 `static readonly` + `Freeze()` 的浅色画刷
+- **不要在 `StateBrush` 里 new 画刷**（原实现每次取属性都新建对象）；字典本身有缓存，按键取不产生新对象
+- 换主题后靠 `RaiseStateBrushChanged()` 触发绑定重算（`StateBrush` 无 setter）
 - XAML 侧不用改：`IoItemTemplate` 的灯仍绑 `Background="{Binding StateBrush}"`
 
 ### 5.1 自由监控（P4-2，第三分段）
@@ -317,7 +324,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 - 命名空间 `DSH_Modbus采集工具`（含中文，路径亦含中文，命令行注意编码/引号）
 - 事件处理命名：`Xxx_Click` / `Nav_Checked` / `Xxx_SelectionChanged`
-- 颜色：主色 `#0067C0`、背景 `#F3F3F3`、顶栏 `#E7E7E7`、卡片白底 + `#E8E8E8` 边框圆角 8
+- 颜色：**一律用 §9.2 的主题键**，XAML 里不得写 `#RRGGBB`。语义：主色／背景／顶栏／卡片等在 `Themes/Light.xaml` 里逐项对应
 - 字体：`Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI`；标题用 `Segoe UI Variable Display`；图标 `Segoe Fluent Icons, Segoe MDL2 Assets`（资源键 `IconFont`）
 - 表单：标签 `Width="80"` + 控件 `Width="200"`、行距 16；`SyncInputHeights` 在 Loaded 与面板显示时同步控件高
 
@@ -349,11 +356,41 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 - `IO模板.xlsx` 仅**导入功能测试用**，其注释列与 `io-comments.json` 都是占位文本（`CommentX0`/`Comment0`），**无业务含义** —— 不必维护、不必恢复，也不是待处理问题
 
+### 9.2 主题与配色（P5-1，改颜色必读）
+
+**XAML 里不得再出现颜色字面量**（`#RRGGBB`）。所有颜色都写成 `{DynamicResource Brush.Xxx}`，值取自 `Themes/Light.xaml` / `Dark.xaml`。
+
+- **必须是 `DynamicResource`，不能是 `StaticResource`**：后者在加载时解析一次，运行期换主题不会跟着变
+- 两个字典的键**必须完全一致**。`ThemeManager.ValidateKeyParity()` 在启动时校验，缺键直接抛异常（缺键的后果是控件静默变黑/透明，只在切到某个主题时才暴露，极难查）
+- **浅色字典的值 = 主题化前的字面值，逐个搬入、一个没改**（149 处替换已脚本校验 1:1）。改浅色值 = 改既有外观，须确认是有意为之
+- 键按**角色**命名（`Brush.Input.Border`、`Brush.Text.Muted`），不按色值。新增控件先判断「这是哪一类」再挑键
+
+**C# 侧直接赋画刷的地方也必须随主题变**（这些不经过 `DynamicResource`）：
+
+| 位置 | 做法 |
+|---|---|
+| `IoPoint.StateBrush`（灯色） | 每次取值都 `ThemeManager.GetBrush("Io.*")`；换主题后由 `OnThemeChanged` 调 `RaiseStateBrushChanged()` 通知绑定重算 |
+| `LogEntry.LevelBrush`（日志行色） | 构造时按主题取；换主题后 `RefreshDeviceLogColors()` 重建整表（保留原 `DateTime`，不重新 `Parse` 文本） |
+| `SetStatus(text, colorHex)`（底栏） | 入参仍是**浅色字面值**，由 `StatusBrushKey()` 映射到语义键；窗口记住 `_statusText`/`_statusColorHex`，换主题后重设一次 |
+
+**几条容易踩的**：
+
+- ⚠️ **半透明叠加必须换色**：`Brush.Overlay.*` 浅色是黑（`#0A000000`）、深色是白（`#14FFFFFF`）。黑叠加压在深底上等于没效果
+- ⚠️ **`*.Fill` 三个实底色深浅同值**（主色 `#0067C0`、危险 `#C42B1C` 系），因为它们上面压白字，改了会掉对比度
+- ⚠️ **IO 灯色深浅值不同**：浅色用深绿 `#0B7A0B`，深色必须提亮到 `#4EC94E`，否则与深底融在一起、看不出「亮/灭」
+- ⚠️ **禁用态灰有 3 档**（`Brush.Text.Disabled` = `#B0B0B0` 下拉框 / `.Soft` = `#C0C0C0` 分页箭头与文字按钮 / `.Faint` = `#C8C8C8` 图标按钮）。主题化前就是 3 个不同字面值，**合并成一档会被看出差别**
+- 主题切换是**整体换字典**（先加新字典再删旧的，避免中间态取不到键），不遍历可视树
+- 「跟随系统」读注册表 `AppsUseLightTheme` 并挂 `SystemEvents.UserPreferenceChanged`；**显式选了浅/深就不再跟随系统**
+- 选择持久化在 `app-settings.json`（与 `io-comments.json` 同级），字段缺失或损坏都回退到「跟随系统」
+
 ## 10. 任务速查
 
 | 需求 | 位置 |
 |------|------|
 | **加输入框 / 下拉框 / 按钮（新增控件必读）** | 套用现成样式，别手写外观 —— 见 **§9.1 控件风格约定** |
+| **改任何颜色（必读）** | 用主题键，**不要写字面量** —— 见 **§9.2 主题与配色** |
+| **加/改主题、深色适配、跟随系统** | `Themes/`（`Light.xaml` / `Dark.xaml` 同键）+ `Themes/ThemeManager.cs`；C# 侧画刷见 §9.2 |
+| **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段处理在 `ThemeSegment_Checked` |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |

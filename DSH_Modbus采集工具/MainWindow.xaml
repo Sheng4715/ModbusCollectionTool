@@ -8,7 +8,7 @@
         Title="采集工具"
         Height="640" Width="1024"
         MinHeight="640" MinWidth="1024"
-        Background="#F3F3F3"
+        Background="{DynamicResource Brush.Window.Background}"
         FontFamily="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI"
         FontSize="14"
         UseLayoutRounding="True"
@@ -34,7 +34,7 @@
         <!-- 标题栏按钮 -->
         <Style x:Key="CaptionButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#1A1A1A"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width" Value="46"/>
             <Setter Property="Height" Value="48"/>
@@ -48,10 +48,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E5E5E5"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.TitleBar.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#D9D9D9"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Pressed}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -68,11 +68,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#C42B1C"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Danger.Fill}"/>
                                 <Setter Property="Foreground" Value="White"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#B12A1C"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Danger.Fill.Pressed}"/>
                                 <Setter Property="Foreground" Value="White"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -83,7 +83,7 @@
 
         <!-- 左侧导航（NavigationView 风格，带指示条） -->
         <Style x:Key="NavRadioButton" TargetType="RadioButton">
-            <Setter Property="Foreground" Value="#1A1A1A"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Cursor" Value="Hand"/>
             <EventSetter Event="Checked" Handler="Nav_Checked"/>
@@ -100,14 +100,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Backplate" Property="Background" Value="#0A000000"/>
+                                <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Subtle}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Backplate" Property="Background" Value="#0D000000"/>
+                                <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Medium}"/>
                                 <Setter Property="FontWeight" Value="SemiBold"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Backplate" Property="Background" Value="#12000000"/>
+                                <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Strong}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -118,7 +118,7 @@
         <!-- IO 元件区分段切换（输入X / 输出Y）：灰底胶囊轨道 + 选中白底浮起 -->
         <Style x:Key="IoSegmentRadioButton" TargetType="RadioButton">
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="#5D5D5D"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Padding" Value="12,5"/>
             <Setter Property="Template">
@@ -132,11 +132,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="SegmentBd" Property="Background" Value="#E2E2E2"/>
+                                <Setter TargetName="SegmentBd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="SegmentBd" Property="Background" Value="#FFFFFF"/>
-                                <Setter Property="Foreground" Value="#1A1A1A"/>
+                                <Setter TargetName="SegmentBd" Property="Background" Value="{DynamicResource Brush.Control.Selected}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
                                 <Setter Property="FontWeight" Value="SemiBold"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -147,13 +147,13 @@
 
         <!-- 地址表元件块（设备配置页：线圈区 / 寄存器区） -->
         <DataTemplate x:Key="AreaChipTemplate">
-            <Border Background="#F3F3F3" BorderBrush="#E8E8E8" BorderThickness="1"
+            <Border Background="{DynamicResource Brush.Chip.Background}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                     CornerRadius="4" Padding="8,2" Margin="0,0,6,0"
                     VerticalAlignment="Center"
                     ToolTip="{Binding ToolTipText}">
                 <TextBlock Text="{Binding Element}"
                            FontSize="12" FontWeight="SemiBold"
-                           Foreground="#1A1A1A"/>
+                           Foreground="{DynamicResource Brush.Text.Primary}"/>
             </Border>
         </DataTemplate>
 
@@ -175,7 +175,7 @@
             <Setter Property="Width" Value="26"/>
             <Setter Property="Height" Value="26"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="#5D5D5D"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
             <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="Template">
@@ -186,14 +186,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="PagerBd" Property="Background" Value="#E2E2E2"/>
-                                <Setter Property="Foreground" Value="#1A1A1A"/>
+                                <Setter TargetName="PagerBd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="PagerBd" Property="Background" Value="#D9D9D9"/>
+                                <Setter TargetName="PagerBd" Property="Background" Value="{DynamicResource Brush.Control.Pressed}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#C0C0C0"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled.Soft}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -204,13 +204,13 @@
         <!--
             通用文字按钮（浅灰实底胶囊）：状态信息卡片的「导入 IO 表」、
             设备配置的「刷新 / 连接」都用它。
-            与同页的下拉框、分段切换块（#EDEDED / 圆角 6）同族 ——
+            与同页的下拉框、分段切换块（Brush.Control.Background / 圆角 6）同族 ——
             全应用「可点的块」都是这个形状，只有输入框用白底描边做区分。
         -->
         <Style x:Key="IoCardButton" TargetType="Button">
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="#1A1A1A"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="Padding" Value="12,0"/>
             <Setter Property="Height" Value="26"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -218,20 +218,20 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Bd"
-                                Background="#EDEDED"
+                                Background="{DynamicResource Brush.Control.Background}"
                                 CornerRadius="6"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#D9D9D9"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Pressed}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#B0B0B0"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -248,7 +248,7 @@
         <!-- IO 点位项模板 -->
         <DataTemplate x:Key="IoItemTemplate">
             <Border Height="22" Padding="3,0" Margin="0,0,0,2"
-                    Background="#FAFAFA" BorderBrush="#EEEEEE"
+                    Background="{DynamicResource Brush.Subtle.Background}" BorderBrush="{DynamicResource Brush.Subtle.Border}"
                     BorderThickness="1" CornerRadius="3">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -261,12 +261,12 @@
                             VerticalAlignment="Center"/>
                     <TextBlock Grid.Column="1" Text="{Binding Name}"
                                FontSize="12" FontWeight="SemiBold"
-                               Foreground="#1A1A1A"
+                               Foreground="{DynamicResource Brush.Text.Primary}"
                                VerticalAlignment="Center"/>
                     <TextBlock Grid.Column="2" Text="{Binding Comment}"
                                MinWidth="144"
                                FontSize="12"
-                               Foreground="#5D5D5D"
+                               Foreground="{DynamicResource Brush.Text.Secondary}"
                                VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"
                                ToolTip="{Binding Comment}"/>
@@ -293,7 +293,7 @@
             <Setter Property="Width" Value="26"/>
             <Setter Property="Height" Value="26"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="#8A8A8A"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}"/>
             <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="Template">
@@ -304,7 +304,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E81123"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Danger.Fill.Hover}"/>
                                 <Setter Property="Foreground" Value="White"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -318,15 +318,15 @@
             行内那个是「删除本项」，悬停变红是对的；表头这两个一个是「新增」（加法，
             变红会让人以为点下去是破坏性操作）、一个是「全部删除」（确实是破坏性，
             但和行内的单行删除共用红色会分不清后果轻重）。
-            Add 用主色 #0067C0（与聚焦下划线同色，表示「正向操作」），
-            ClearAll 用浅红 #FDE7E9 底 + #C42B1C 字（与日志「已断开」同色系），
+            Add 用主色 Brush.Accent.Fill（与聚焦下划线同色，表示「正向操作」），
+            ClearAll 用浅红 Brush.Danger.Subtle 底 + Brush.Danger 字（与日志「已断开」同色系），
             都比整块实心红更克制。
         -->
         <Style x:Key="MonitorHeaderIconButton" TargetType="Button">
             <Setter Property="Width" Value="26"/>
             <Setter Property="Height" Value="26"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="#8A8A8A"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}"/>
             <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="Template">
@@ -337,12 +337,12 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#0067C0"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Accent.Fill}"/>
                                 <Setter Property="Foreground" Value="White"/>
                             </Trigger>
                             <!-- 无监控项时不可用（全部删除无意义） -->
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#C8C8C8"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled.Faint}"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -362,11 +362,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#FDE7E9"/>
-                                <Setter Property="Foreground" Value="#C42B1C"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Danger.Subtle}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Danger}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#C8C8C8"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled.Faint}"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -384,7 +384,7 @@
         <Style x:Key="MonitorInlineTextBox" TargetType="TextBox">
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Height" Value="22"/>
-            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Background" Value="{DynamicResource Brush.Input.Background}"/>
             <Setter Property="Foreground" Value="{Binding RowBrush}"/>
             <Setter Property="Padding" Value="4,0"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -394,7 +394,7 @@
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="#C8C8C8"
+                                BorderBrush="{DynamicResource Brush.Input.Border}"
                                 BorderThickness="1"
                                 CornerRadius="4">
                             <ScrollViewer x:Name="PART_ContentHost"
@@ -406,14 +406,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#9A9A9A"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Input.Border.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#0067C0"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Background" Value="#F3F3F3"/>
-                                <Setter Property="Foreground" Value="#9A9A9A"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Input.Background.Disabled}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -430,7 +430,7 @@
         <Style x:Key="MonitorValueTextBox" TargetType="TextBox">
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Height" Value="22"/>
-            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Background" Value="{DynamicResource Brush.Input.Background}"/>
             <Setter Property="Foreground" Value="{Binding ValueBrush}"/>
             <Setter Property="Padding" Value="4,0"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -440,7 +440,7 @@
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="#C8C8C8"
+                                BorderBrush="{DynamicResource Brush.Input.Border}"
                                 BorderThickness="1"
                                 CornerRadius="4">
                             <ScrollViewer x:Name="PART_ContentHost"
@@ -452,21 +452,21 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#9A9A9A"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Input.Border.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#0067C0"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Background" Value="#F3F3F3"/>
-                                <Setter Property="Foreground" Value="#9A9A9A"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Input.Background.Disabled}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}"/>
                             </Trigger>
                             <!-- 读/写失败：琥珀描边，与文字同色系 -->
                             <DataTrigger Binding="{Binding HasReadError}" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#B26A00"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Warning}"/>
                             </DataTrigger>
                             <DataTrigger Binding="{Binding HasWriteError}" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#B26A00"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Warning}"/>
                             </DataTrigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -477,7 +477,7 @@
         <!-- 枚举 → 大写名（显示格式用；BIN/DEC/HEX/ASCII 按惯例全大写） -->
         <DataTemplate x:Key="EnumUpperTemplate">
             <TextBlock Text="{Binding Converter={StaticResource EnumUpperConverter}}"
-                       FontSize="12" Foreground="#1A1A1A"
+                       FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
                        VerticalAlignment="Center"/>
         </DataTemplate>
 
@@ -489,21 +489,21 @@
         -->
         <DataTemplate x:Key="MonitorTypeItemTemplate">
             <TextBlock Text="{Binding DisplayName}"
-                       FontSize="12" Foreground="#1A1A1A"
+                       FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
                        VerticalAlignment="Center"/>
         </DataTemplate>
 
         <!--
             行内下拉框：外观向「分段切换控件」（IoSegmentRadioButton）看齐 ——
-            灰底胶囊 #EDEDED + 圆角 6、无边框、无系统立体感，与表头那两个切换项同族。
-            仍需保留下拉（类型 6 项 / 格式 4 项），故只重做**闭合态**外观，
+            灰底胶囊 Brush.Control.Background + 圆角 6、无边框、无系统立体感，与表头那两个切换项同族。
+             灰底胶囊 Brush.Control.Background + 圆角 6、无边框、无系统立体感，与表头那两个切换项同族。
             去掉系统上下微调箭头，只留一个淡淡的 chevron。
         -->
         <Style x:Key="MonitorInlineComboBox" TargetType="ComboBox">
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Height" Value="22"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="#1A1A1A"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="Padding" Value="6,0"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -513,7 +513,7 @@
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
                             <Border x:Name="Bd"
-                                    Background="#EDEDED"
+                                    Background="{DynamicResource Brush.Control.Background}"
                                     CornerRadius="6">
                                 <Grid Margin="{TemplateBinding Padding}">
                                     <Grid.ColumnDefinitions>
@@ -547,7 +547,7 @@
                                                Text="&#xE70D;"
                                                FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                FontSize="9"
-                                               Foreground="#6A6A6A"
+                                               Foreground="{DynamicResource Brush.Text.Faint}"
                                                VerticalAlignment="Center"
                                                Margin="8,1,0,0"/>
                                 </Grid>
@@ -571,8 +571,8 @@
                                    IsOpen="{TemplateBinding IsDropDownOpen}"
                                    PopupAnimation="Fade"
                                    Focusable="False">
-                                <Border Background="#FFFFFF"
-                                        BorderBrush="#D6D6D6" BorderThickness="1"
+                                <Border Background="{DynamicResource Brush.Popup.Background}"
+                                        BorderBrush="{DynamicResource Brush.Popup.Border}" BorderThickness="1"
                                         CornerRadius="6"
                                         MinWidth="{TemplateBinding ActualWidth}"
                                         MaxHeight="260">
@@ -584,13 +584,13 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsDropDownOpen" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#B0B0B0"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -622,10 +622,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Ib" Property="Background" Value="#EDEDED"/>
+                                <Setter TargetName="Ib" Property="Background" Value="{DynamicResource Brush.Control.Background}"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Ib" Property="Background" Value="#DCE9F7"/>
+                                <Setter TargetName="Ib" Property="Background" Value="{DynamicResource Brush.Accent.Subtle}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -647,8 +647,8 @@
         -->
 
         <!--
-            表单下拉框：胶囊风格（灰底 #EDEDED、无边框、圆角 6、右侧 chevron），
-            与行内 MonitorInlineComboBox 同源，但尺寸按表单规格。
+            表单下拉框：胶囊风格（灰底 Brush.Control.Background、无边框、圆角 6、右侧 chevron），
+             表单下拉框：胶囊风格（灰底 Brush.Control.Background、无边框、圆角 6、右侧 chevron），
             下拉面板同样自带圆角描边与阴影区。
         -->
         <!-- 表单下拉项：与行内 MonitorComboItem 同款，仅字号放大 -->
@@ -666,10 +666,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Ib" Property="Background" Value="#EDEDED"/>
+                                <Setter TargetName="Ib" Property="Background" Value="{DynamicResource Brush.Control.Background}"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Ib" Property="Background" Value="#DCE9F7"/>
+                                <Setter TargetName="Ib" Property="Background" Value="{DynamicResource Brush.Accent.Subtle}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -681,7 +681,7 @@
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Height" Value="26"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="#1A1A1A"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="Padding" Value="12,0"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -695,7 +695,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
-                            <Border x:Name="Bd" Background="#EDEDED" CornerRadius="6">
+                            <Border x:Name="Bd" Background="{DynamicResource Brush.Control.Background}" CornerRadius="6">
                                 <Grid Margin="{TemplateBinding Padding}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -721,7 +721,7 @@
                                                Text="&#xE70D;"
                                                FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                FontSize="10"
-                                               Foreground="#6A6A6A"
+                                               Foreground="{DynamicResource Brush.Text.Faint}"
                                                VerticalAlignment="Center"
                                                Margin="6,2,0,0"/>
                                 </Grid>
@@ -745,8 +745,8 @@
                                    IsOpen="{TemplateBinding IsDropDownOpen}"
                                    PopupAnimation="Fade"
                                    Focusable="False">
-                                <Border Background="#FFFFFF"
-                                        BorderBrush="#D6D6D6" BorderThickness="1"
+                                <Border Background="{DynamicResource Brush.Popup.Background}"
+                                        BorderBrush="{DynamicResource Brush.Popup.Border}" BorderThickness="1"
                                         CornerRadius="6"
                                         MinWidth="{TemplateBinding ActualWidth}"
                                         MaxHeight="300">
@@ -758,13 +758,13 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsDropDownOpen" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#B0B0B0"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -774,14 +774,14 @@
 
 
         <!--
-            表单输入框：框线风格（白底 #FFFFFF + #C8C8C8 细边框 + 圆角 4），
-            悬停加深、聚焦转主色，与行内 MonitorValueTextBox 同源。
+            表单输入框：框线风格（白底 Brush.Input.Background + Brush.Input.Border 细边框 + 圆角 4），
+             表单输入框：框线风格（白底 Brush.Input.Background + Brush.Input.Border 细边框 + 圆角 4），
         -->
         <Style x:Key="FormTextBox" TargetType="TextBox">
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Height" Value="26"/>
-            <Setter Property="Background" Value="#FFFFFF"/>
-            <Setter Property="Foreground" Value="#1A1A1A"/>
+            <Setter Property="Background" Value="{DynamicResource Brush.Input.Background}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="Padding" Value="4,0"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -790,7 +790,7 @@
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="#C8C8C8"
+                                BorderBrush="{DynamicResource Brush.Input.Border}"
                                 BorderThickness="1"
                                 CornerRadius="4">
                             <ScrollViewer x:Name="PART_ContentHost"
@@ -802,14 +802,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#9A9A9A"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Input.Border.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#0067C0"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Background" Value="#F3F3F3"/>
-                                <Setter Property="Foreground" Value="#9A9A9A"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Input.Background.Disabled}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Muted}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -831,7 +831,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
-                            <Border x:Name="Bd" Background="#EDEDED" CornerRadius="6">
+                            <Border x:Name="Bd" Background="{DynamicResource Brush.Control.Background}" CornerRadius="6">
                                 <Grid Margin="{TemplateBinding Padding}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -840,7 +840,7 @@
                                     <!-- 行内显示名（STRING[9]）；数据上下文即该行的 MonitorItem -->
                                     <TextBlock Grid.Column="0"
                                                Text="{Binding TypeDisplayName}"
-                                               FontSize="12" Foreground="#1A1A1A"
+                                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
                                                VerticalAlignment="Center"
                                                HorizontalAlignment="Left"
                                                IsHitTestVisible="False"/>
@@ -848,7 +848,7 @@
                                                Text="&#xE70D;"
                                                FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                FontSize="9"
-                                               Foreground="#6A6A6A"
+                                               Foreground="{DynamicResource Brush.Text.Faint}"
                                                VerticalAlignment="Center"
                                                Margin="4,1,0,0"/>
                                 </Grid>
@@ -872,8 +872,8 @@
                                    IsOpen="{TemplateBinding IsDropDownOpen}"
                                    PopupAnimation="Fade"
                                    Focusable="False">
-                                <Border Background="#FFFFFF"
-                                        BorderBrush="#D6D6D6" BorderThickness="1"
+                                <Border Background="{DynamicResource Brush.Popup.Background}"
+                                        BorderBrush="{DynamicResource Brush.Popup.Border}" BorderThickness="1"
                                         CornerRadius="6"
                                         MinWidth="{TemplateBinding ActualWidth}"
                                         MaxHeight="260">
@@ -885,10 +885,10 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                             <Trigger Property="IsDropDownOpen" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#E2E2E2"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -900,7 +900,7 @@
         <DataTemplate x:Key="MonitorItemTemplate">
             <Border Height="30" Margin="0,0,0,2"
                     Background="Transparent"
-                    BorderBrush="#E8E8E8" BorderThickness="0,0,0,1"
+                    BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1"
                     Loaded="MonitorRow_Loaded">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -914,7 +914,7 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Grid.Column="0" Text="{Binding Id}"
-                               FontSize="12" Foreground="#9A9A9A"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
                                VerticalAlignment="Center"/>
 
                     <!-- 元件名称：符号与编号合并输入（方案 2），如 HD100 / X17；
@@ -990,7 +990,7 @@
                                     <Thumb>
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
-                                                <Border Background="#C4C4C4" CornerRadius="4" Margin="2"/>
+                                                <Border Background="{DynamicResource Brush.ScrollBar.Thumb}" CornerRadius="4" Margin="2"/>
                                             </ControlTemplate>
                                         </Thumb.Template>
                                     </Thumb>
@@ -1008,7 +1008,7 @@
                     <Setter Property="MinWidth" Value="0"/>
                 </Trigger>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#0D000000"/>
+                    <Setter Property="Background" Value="{DynamicResource Brush.Overlay.Medium}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -1018,7 +1018,7 @@
             <Setter Property="Padding" Value="10,0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontSize" Value="12"/>
-            <Setter Property="Foreground" Value="#5D5D5D"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -1028,14 +1028,14 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="LogClearBd" Property="Background" Value="#E2E2E2"/>
-                                <Setter Property="Foreground" Value="#1A1A1A"/>
+                                <Setter TargetName="LogClearBd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="LogClearBd" Property="Background" Value="#D9D9D9"/>
+                                <Setter TargetName="LogClearBd" Property="Background" Value="{DynamicResource Brush.Control.Pressed}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#C0C0C0"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled.Soft}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1052,7 +1052,7 @@
                     <ColumnDefinition Width="Auto" SharedSizeGroup="DeviceLogTime"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="{Binding TimeText}" FontSize="12" Foreground="#9A9A9A"
+                <TextBlock Text="{Binding TimeText}" FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
                            VerticalAlignment="Top"/>
                 <TextBlock Grid.Column="1" Text="{Binding Message}" FontSize="12"
                            Foreground="{Binding LevelBrush}"
@@ -1094,7 +1094,7 @@
         </Grid.RowDefinitions>
 
         <!-- ================= 标题栏 ================= -->
-        <Border Grid.Row="0" Background="#E7E7E7" BorderBrush="#D0D0D0" BorderThickness="0,0,0,1">
+        <Border Grid.Row="0" Background="{DynamicResource Brush.TitleBar.Background}" BorderBrush="{DynamicResource Brush.TitleBar.Border}" BorderThickness="0,0,0,1">
             <Grid Background="Transparent">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -1105,8 +1105,8 @@
                 <!-- Logo -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="16,0,8,0" VerticalAlignment="Center">
                     <TextBlock Text="&#xE71D;" FontFamily="{StaticResource IconFont}" FontSize="15"
-                           Foreground="#0067C0" VerticalAlignment="Center"/>
-                    <TextBlock Text="数据采集Demo" FontSize="13" Foreground="#1A1A1A"
+                           Foreground="{DynamicResource Brush.Accent}" VerticalAlignment="Center"/>
+                    <TextBlock Text="数据采集Demo" FontSize="13" Foreground="{DynamicResource Brush.Text.Primary}"
                            Margin="8,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
 
@@ -1132,7 +1132,7 @@
 
             <!-- 左侧导航 -->
             <Border Grid.Column="0" Background="Transparent"
-                    BorderBrush="#E5E5E5" BorderThickness="0,0,1,0" Margin="0,0,112,0">
+                    BorderBrush="{DynamicResource Brush.Nav.Border}" BorderThickness="0,0,1,0" Margin="0,0,112,0">
                 <DockPanel LastChildFill="False">
                     <StackPanel DockPanel.Dock="Top" Margin="0,12,0,0">
                         <RadioButton x:Name="OverviewNav"
@@ -1149,8 +1149,9 @@
                     </StackPanel>
 
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,12">
-                        <Separator Background="#E5E5E5" BorderThickness="0" Margin="16,4,16,8"/>
-                        <RadioButton Style="{StaticResource NavRadioButton}" GroupName="Nav"
+                        <Separator Background="{DynamicResource Brush.Nav.Border}" BorderThickness="0" Margin="16,4,16,8"/>
+                        <RadioButton x:Name="SettingsNav"
+                                     Style="{StaticResource NavRadioButton}" GroupName="Nav"
                                      Content="设置"/>
                     </StackPanel>
                 </DockPanel>
@@ -1175,13 +1176,13 @@
                         <StackPanel Grid.Row="0" VerticalAlignment="Top">
                             <TextBlock Text="总览"
                                        FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
-                                       FontSize="20" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                       FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
                                        Margin="0,16,0,16"/>
                         </StackPanel>
 
                         <!-- 设备状态日志：只记设备状态（连接/断开/连接失败/心跳告警），空时不显示任何内容 -->
-                        <Border Grid.Row="1" Background="#FFFFFF"
-                                BorderBrush="#E8E8E8" BorderThickness="1"
+                        <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8">
                             <Grid>
                                 <Grid.RowDefinitions>
@@ -1190,7 +1191,7 @@
                                 </Grid.RowDefinitions>
                                 <Grid Grid.Row="0" Margin="10,4,10,2">
                                     <TextBlock Text="运行日志"
-                                               FontSize="12" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                               FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
                                                VerticalAlignment="Center"/>
                                     <Button x:Name="ClearDeviceLogButton" Content="清空"
                                             HorizontalAlignment="Right" VerticalAlignment="Center"
@@ -1199,8 +1200,8 @@
                                 </Grid>
                                 <!-- 日志显示区：内嵌框线，与卡片留白区分开 -->
                                 <Border Grid.Row="1" Margin="10,0,10,10"
-                                        Background="#FFFFFF"
-                                        BorderBrush="#E8E8E8" BorderThickness="1"
+                                        Background="{DynamicResource Brush.Card.Background}"
+                                        BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                         CornerRadius="4" Padding="8,6,2,6">
                                     <ListBox x:Name="DeviceLogList"
                                              Grid.IsSharedSizeScope="True"
@@ -1226,11 +1227,11 @@
 
                         <TextBlock Grid.Row="0" Text="状态信息"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
-                                   FontSize="20" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                   FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
                                    Margin="0,8,0,10"/>
 
-                        <Border Grid.Row="1" Background="#FFFFFF"
-                                BorderBrush="#E8E8E8" BorderThickness="1"
+                        <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8" Padding="12">
                             <Grid>
                                 <Grid.RowDefinitions>
@@ -1242,7 +1243,7 @@
 
                                 <!-- 分段切换（输入监控 / 输出监控 / 自由监控） -->
                                 <Grid Grid.Row="0" Margin="0,0,0,8">
-                                    <Border Background="#EDEDED" CornerRadius="6" Padding="2"
+                                    <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
                                             HorizontalAlignment="Left" VerticalAlignment="Center">
                                         <StackPanel Orientation="Horizontal">
                                             <RadioButton x:Name="XViewSegment"
@@ -1266,7 +1267,7 @@
                                 </Grid>
 
                                 <!-- 分隔线：控件行与 IO 点位表格之间 -->
-                                <Border Grid.Row="1" Height="1" Background="#E8E8E8">
+                                <Border Grid.Row="1" Height="1" Background="{DynamicResource Brush.Divider}">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Margin" Value="0,0,0,8"/>
@@ -1352,9 +1353,9 @@
                                         后者文本行高随字体变化，分隔线又带独立 Margin，
                                         结果表头文字既不对齐行内容、也不居中于上下两条线。
 
-                                        ⚠️ 分隔线颜色用 `#E8E8E8`（卡片边框色），**不要用 `#F0F0F0`**：
-                                        后者与卡片底色 `#F3F3F3` 只差 3 级，在 150% DPI 下经缩放
-                                        混色后几乎看不见，表头就会显得「悬空」。
+            ⚠️ 分隔线颜色用 `Brush.Divider`（= 卡片边框色），**不要用底栏色 `Brush.StatusBar.Background`**：
+            后者与卡片底色 `Brush.Card.Background` 只差 3 级，在 150% DPI 下经缩放
+             后者与卡片底色 `Brush.Card.Background` 只差 3 级，在 150% DPI 下经缩放
 
                                         自由监控时将上分隔线的 8 DIP 下边距并入原 38 DIP 表头，
                                         使文字和按钮在两条线之间居中，同时保持分隔线与数据行位置不变。 -->
@@ -1362,7 +1363,7 @@
                                             Height="46"
                                             Margin="0,0,0,2"
                                             Background="Transparent"
-                                            BorderBrush="#E8E8E8"
+                                            BorderBrush="{DynamicResource Brush.Divider}"
                                             BorderThickness="0,0,0,1">
                                         <Grid>
                                             <!--
@@ -1378,16 +1379,16 @@
                                                     <ColumnDefinition Width="*"/>    <!-- 当前值 -->
                                                     <ColumnDefinition Width="40"/>   <!-- 行内删除列（表头留空） -->
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="1" Text="元件名称" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="1" Text="元件名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                 <!--
                                                     ⚠️ 第 2 列文字要带 Margin="6,0,0,0"，与该列下拉框的左边距一致 ——
                                                     否则文字贴列左边缘、下拉框右移 6，表头与内容看着错开。
                                                 -->
-                                                <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="#8A8A8A"
+                                                <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}"
                                                            Margin="6,0,0,0" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="4" Text="当前值" FontSize="12" Foreground="#8A8A8A" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="4" Text="当前值" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                 <!-- 第 5 列留空：与行内 × 同列，保留列宽使「当前值」宽度与行一致 -->
                                             </Grid>
 
@@ -1400,7 +1401,7 @@
                                                         Margin="0,0,7,0"
                                                         VerticalAlignment="Center">
                                                 <TextBlock x:Name="MonitorCountText"
-                                                           FontSize="12" Foreground="#9A9A9A"
+                                                           FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
                                                            VerticalAlignment="Center"
                                                            Margin="0,0,8,0"/>
                                                 <Button x:Name="ClearMonitorItemsButton"
@@ -1438,7 +1439,7 @@
                                                Text="尚未添加监控项，点击右上角 + 添加"
                                                Visibility="Collapsed"
                                                FontSize="12"
-                                               Foreground="#9A9A9A"
+                                               Foreground="{DynamicResource Brush.Text.Muted}"
                                                Margin="0,10,0,6"/>
                                 </StackPanel>
 
@@ -1447,7 +1448,7 @@
                                            Text="尚未导入 IO 表"
                                            Visibility="Collapsed"
                                            FontSize="12"
-                                           Foreground="#9A9A9A"
+                                           Foreground="{DynamicResource Brush.Text.Muted}"
                                            Margin="0,6,0,4"/>
                                 </Grid>
                                 </ScrollViewer>
@@ -1480,7 +1481,7 @@
                                                    Text="1/1"
                                                    MinWidth="46"
                                                    TextAlignment="Center"
-                                                   FontSize="12" Foreground="#5D5D5D"
+                                                   FontSize="12" Foreground="{DynamicResource Brush.Text.Secondary}"
                                                    VerticalAlignment="Center"/>
                                         <Button x:Name="IoNextPageButton"
                                                 Content="&#xE76C;"
@@ -1499,11 +1500,11 @@
                                  d:Visibility="Collapsed">
                         <TextBlock Text="设备配置"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
-                                   FontSize="20" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                   FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
                                    Margin="0,16,0,16"/>
 
-                        <Border Background="#FFFFFF"
-                                BorderBrush="#E8E8E8" BorderThickness="1"
+                        <Border Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8" Padding="20">
                             <StackPanel>
 
@@ -1511,7 +1512,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                     <TextBlock Text="连接方式"
                                                Width="80"
-                                               FontSize="14" Foreground="#1A1A1A"
+                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="ConnectionTypeComboBox"
                                               Width="200"
@@ -1528,7 +1529,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                     <TextBlock Text="协议类型"
                                                Width="80"
-                                               FontSize="14" Foreground="#1A1A1A"
+                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="ProtocolTypeComboBox"
                                               Width="200"
@@ -1544,7 +1545,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                     <TextBlock Text="设备类型"
                                                Width="80"
-                                               FontSize="14" Foreground="#1A1A1A"
+                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="DeviceTypeComboBox"
                                               Width="200"
@@ -1557,7 +1558,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                     <TextBlock Text="采集周期"
                                                Width="80"
-                                               FontSize="14" Foreground="#1A1A1A"
+                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="PollIntervalComboBox"
                                               Width="200"
@@ -1579,7 +1580,7 @@
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                         <TextBlock Text="目标网卡"
                                                    Width="80"
-                                                   FontSize="14" Foreground="#1A1A1A"
+                                                   FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                    VerticalAlignment="Center"/>
                                         <ComboBox x:Name="TargetNicComboBox"
                                                   Width="200"
@@ -1597,7 +1598,7 @@
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                         <TextBlock Text="IP地址"
                                                    Width="80"
-                                                   FontSize="14" Foreground="#1A1A1A"
+                                                   FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                    VerticalAlignment="Center"/>
                                         <TextBox x:Name="IpTextBox"
                                                  Width="200"
@@ -1616,7 +1617,7 @@
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                         <TextBlock Text="端口号"
                                                    Width="80"
-                                                   FontSize="14" Foreground="#1A1A1A"
+                                                   FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                    VerticalAlignment="Center"/>
                                         <TextBox x:Name="PortTextBox"
                                                  Width="200"
@@ -1628,11 +1629,11 @@
                                 </StackPanel>
 
                                 <!-- 分隔线：连接参数与地址表元件（上方 16 由末行表单提供，上下对称；串口模式下末行为采集周期，同样成立） -->
-                                <Border Height="1" Background="#E8E8E8" Margin="0,0,0,16"/>
+                                <Border Height="1" Background="{DynamicResource Brush.Divider}" Margin="0,0,0,16"/>
 
                                 <!-- 地址区标题 -->
                                 <TextBlock Text="设备通讯区域"
-                                           FontSize="14" FontWeight="SemiBold" Foreground="#1A1A1A"
+                                           FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
                                            Margin="0,0,0,12"/>
 
                                 <!-- ===== 设备通讯区域：左「字节顺序」 | 竖分隔线 | 右「地址表元件」 =====
@@ -1654,7 +1655,7 @@
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                                             <TextBlock Text="32位整数字节顺序"
                                                        Width="140"
-                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                        VerticalAlignment="Center"/>
                                             <ComboBox x:Name="Int32OrderComboBox"
                                                       Width="200"
@@ -1672,7 +1673,7 @@
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                                             <TextBlock Text="32位浮点数字节顺序"
                                                        Width="140"
-                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                        VerticalAlignment="Center"/>
                                             <ComboBox x:Name="FloatOrderComboBox"
                                                       Width="200"
@@ -1690,7 +1691,7 @@
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="字符串字节顺序"
                                                        Width="140"
-                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                        VerticalAlignment="Center"/>
                                             <ComboBox x:Name="StringOrderComboBox"
                                                       Width="200"
@@ -1706,7 +1707,7 @@
 
                                     <!-- ===== 中间：竖分隔线 ===== -->
                                     <Border Grid.Column="1"
-                                            Width="1" Background="#E8E8E8"
+                                            Width="1" Background="{DynamicResource Brush.Divider}"
                                             Margin="20,0,20,0"
                                             VerticalAlignment="Stretch"/>
 
@@ -1715,7 +1716,7 @@
                                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                                             <TextBlock Text="线圈区"
                                                        Width="80"
-                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                        VerticalAlignment="Center"/>
                                             <ItemsControl x:Name="CoilAreaItems"
                                                           Style="{StaticResource AreaItemsControlStyle}"/>
@@ -1724,13 +1725,102 @@
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="寄存器区"
                                                        Width="80"
-                                                       FontSize="14" Foreground="#1A1A1A"
+                                                       FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                        VerticalAlignment="Center"/>
                                             <ItemsControl x:Name="RegisterAreaItems"
                                                           Style="{StaticResource AreaItemsControlStyle}"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- ================= 设置（P5） =================
+                         主题外观 + 日志保存 + 项目信息。
+                         本轮只做主题外观；日志保存与项目信息为占位（见 Brief.md P5）。 -->
+                    <StackPanel x:Name="SettingsPanel" Visibility="Collapsed"
+                                d:Visibility="Collapsed">
+
+                        <TextBlock Text="设置"
+                                   FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
+                                   FontSize="20" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Brush.Text.Primary}"
+                                   Margin="0,16,0,16"/>
+
+                        <!-- 外观 -->
+                        <Border Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="24,20,24,20">
+                            <StackPanel>
+                                <TextBlock Text="外观"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"
+                                           Margin="0,0,0,4"/>
+
+                                <TextBlock Text="主题外观"
+                                           FontSize="14"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"
+                                           Margin="0,12,0,0"/>
+                                <TextBlock Text="选择浅色、深色，或跟随 Windows 的应用主题设置。"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource Brush.Text.Muted}"
+                                           Margin="0,4,0,0"/>
+
+                                <!-- 分段切换：与 IO 页的 X/Y 分段同款轨道 -->
+                                <Border Background="{DynamicResource Brush.Control.Background}"
+                                        CornerRadius="6" Padding="2"
+                                        HorizontalAlignment="Left" Margin="0,10,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="ThemeLightSegment"
+                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                     GroupName="Theme"
+                                                     Content="浅色"
+                                                     Checked="ThemeSegment_Checked"/>
+                                        <RadioButton x:Name="ThemeDarkSegment"
+                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                     GroupName="Theme"
+                                                     Content="深色"
+                                                     Checked="ThemeSegment_Checked"/>
+                                        <RadioButton x:Name="ThemeSystemSegment"
+                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                     GroupName="Theme"
+                                                     Content="跟随系统"
+                                                     Checked="ThemeSegment_Checked"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 日志保存（占位，见 Brief.md P5-2） -->
+                        <Border Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="日志保存"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock Text="尚未实现 —— 计划落盘到程序目录的 Log 文件夹，按日期命名。"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource Brush.Text.Muted}"
+                                           Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 项目信息（占位，见 Brief.md P5-3） -->
+                        <Border Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="项目信息"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"
+                                           Margin="0,0,0,4"/>
+                                <TextBlock Text="尚未实现 —— 计划显示版本号与构建日期。"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource Brush.Text.Muted}"
+                                           Margin="0,4,0,0"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -1743,20 +1833,20 @@
                  栏内文字向底栏自身两侧对齐（内边距 16），不跟随日志卡片缩进 -->
             <Border Grid.ColumnSpan="2" Margin="112,0,0,0"
                     Height="30" VerticalAlignment="Bottom"
-                    Background="#F0F0F0"
-                    BorderBrush="#DCDCDC" BorderThickness="0,1,0,0">
+                    Background="{DynamicResource Brush.StatusBar.Background}"
+                    BorderBrush="{DynamicResource Brush.StatusBar.Border}" BorderThickness="0,1,0,0">
                 <Grid Margin="16,0,16,0">
                     <!-- 左：状态点 + 状态文字（含重连倒计时） -->
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
                                 VerticalAlignment="Center">
                         <Ellipse x:Name="StatusDot"
                                  Width="9" Height="9"
-                                 Fill="#9A9A9A"
+                                 Fill="{DynamicResource Brush.Indicator.Off}"
                                  VerticalAlignment="Center"/>
                         <TextBlock x:Name="StatusText"
                                    Text="未连接"
                                    FontSize="12"
-                                   Foreground="#5D5D5D"
+                                   Foreground="{DynamicResource Brush.Text.Secondary}"
                                    Margin="8,0,0,0"
                                    VerticalAlignment="Center"/>
                     </StackPanel>
@@ -1764,7 +1854,7 @@
                     <!-- 右：连接参数（驱动 / 连接方式 / 协议 / IP:端口） -->
                     <TextBlock x:Name="StatusBarDetail"
                                FontSize="12"
-                               Foreground="#6A6A6A"
+                               Foreground="{DynamicResource Brush.Text.Faint}"
                                HorizontalAlignment="Right" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
                 </Grid>
