@@ -86,7 +86,7 @@ Window
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `采集配置` | — | 占位项，不切面板 |
-| `SettingsNav` 设置 | `SettingsPanel` | 主题外观（P5-1）+ 日志保存（P5-2）+ 项目信息（P5-3） |
+| `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5-1）+ 日志保存（P5-2）+ 项目信息（P5-3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
 
@@ -436,6 +436,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 **几条容易踩的**：
 
+- ⚠️ **`SetMode` 会连带固化日志目录**：`app-settings.json` 里主题与日志三项同处一个对象，落盘的是整个对象。故 `SetMode` 里先调 `NormalizeLogDirectory()` —— 路径等于默认值时归回空串。否则用户只是在设置页"看了一眼"路径（失焦即写盘）之后切个主题，文件里就会多出一条写死的绝对路径，exe 一移动日志就写不回新位置的 `Log\`
 - ⚠️ **半透明叠加必须换色**：`Brush.Overlay.*` 浅色是黑（`#0A000000`）、深色是白（`#14FFFFFF`）。黑叠加压在深底上等于没效果
 - ⚠️ **`*.Fill` 三个实底色深浅同值**（主色 `#0067C0`、危险 `#C42B1C` 系），因为它们上面压白字，改了会掉对比度
 - ⚠️ **IO 灯色深浅值不同**：浅色用深绿 `#0B7A0B`，深色必须提亮到 `#4EC94E`，否则与深底融在一起、看不出「亮/灭」

@@ -1748,29 +1748,32 @@
                                    Foreground="{DynamicResource Brush.Text.Primary}"
                                    Margin="0,16,0,16"/>
 
-                        <!-- 外观 -->
+                        <!-- 显示外观 -->
                         <Border Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8" Padding="24,20,24,20">
-                            <StackPanel>
-                                <TextBlock Text="外观"
-                                           FontSize="14" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource Brush.Text.Primary}"
-                                           Margin="0,0,0,4"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
 
-                                <TextBlock Text="主题外观"
-                                           FontSize="14"
-                                           Foreground="{DynamicResource Brush.Text.Primary}"
-                                           Margin="0,12,0,0"/>
-                                <TextBlock Text="选择浅色、深色，或跟随 Windows 的应用主题设置。"
-                                           FontSize="12"
-                                           Foreground="{DynamicResource Brush.Text.Muted}"
-                                           Margin="0,4,0,0"/>
+                                <!-- 左：标题 + 说明 -->
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                    <TextBlock Text="显示外观"
+                                               FontSize="14" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"/>
+                                    <TextBlock Text="选择浅色、深色，或跟随 Windows 的应用主题设置。"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource Brush.Text.Muted}"
+                                               Margin="0,4,0,0"/>
+                                </StackPanel>
 
-                                <!-- 分段切换：与 IO 页的 X/Y 分段同款轨道 -->
-                                <Border Background="{DynamicResource Brush.Control.Background}"
+                                <!-- 右：分段切换（与 IO 页的 X/Y 分段同款轨道） -->
+                                <Border Grid.Column="1"
+                                        Background="{DynamicResource Brush.Control.Background}"
                                         CornerRadius="6" Padding="2"
-                                        HorizontalAlignment="Left" Margin="0,10,0,0">
+                                        VerticalAlignment="Center" Margin="16,0,0,0">
                                     <StackPanel Orientation="Horizontal">
                                         <RadioButton x:Name="ThemeLightSegment"
                                                      Style="{StaticResource IoSegmentRadioButton}"
@@ -1789,7 +1792,7 @@
                                                      Checked="ThemeSegment_Checked"/>
                                     </StackPanel>
                                 </Border>
-                            </StackPanel>
+                            </Grid>
                         </Border>
 
                         <!-- 日志保存（P5-2） -->

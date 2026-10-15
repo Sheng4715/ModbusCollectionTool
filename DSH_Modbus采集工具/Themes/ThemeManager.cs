@@ -94,13 +94,34 @@ namespace DSH_Modbus采集工具.Themes
             Save(_settings);
         }
 
-        /// <summary>切换主题并落盘。</summary>
+        /// <summary>
+        /// 切换主题并落盘。
+        ///
+        /// <para>
+        /// ⚠️ 落盘的是**整个** <see cref="AppSettings"/>（主题与日志三项同处一个文件），
+        /// 所以这里会把日志目录一并**固化**下来。为保持「空串 = 用默认目录」这个不变式，
+        /// 需先把默认值归一回空串 —— 否则用户在设置页**看了一眼**路径（失焦即写盘）之后，
+        /// 即使他从未打算自定义，文件里也会多出一条写死的绝对路径，
+        /// 一旦 exe 被移动/复制到别处，日志就会继续写回旧位置。
+        /// </para>
+        /// </summary>
         public static void SetMode(ThemeMode mode)
         {
             Mode = mode;
             _settings.Theme = mode.ToString();
+            NormalizeLogDirectory();
             Apply(mode);
             Save(_settings);
+        }
+
+        /// <summary>显式选了默认目录时，存空串而非绝对路径（见 <see cref="SetMode"/>）。</summary>
+        private static void NormalizeLogDirectory()
+        {
+            if (string.Equals(_settings.LogDirectory, Logging.DeviceLogFileWriter.DefaultDirectory,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _settings.LogDirectory = string.Empty;
+            }
         }
 
         private static void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
