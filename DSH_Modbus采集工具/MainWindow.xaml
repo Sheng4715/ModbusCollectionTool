@@ -1211,74 +1211,62 @@
                         </Border>
                     </Grid>
 
-                    <!-- 状态信息 / IO 监控 -->
-                    <StackPanel x:Name="StatusInfoPanel" Visibility="Collapsed" d:Visibility="Collapsed">
-                        <TextBlock Text="状态信息"
+                    <!--
+                        状态信息 / IO 监控。
+                        面板高度绑内容区视口高度（同 OverviewPanel 的做法），使卡片**撑满**剩余空间，
+                        底部的「导入 IO 表 + 分页」因此能常驻可见 —— 卡片若按内容自适应，
+                        点位一多就把底部操作行顶到视口之外。
+                    -->
+                    <Grid x:Name="StatusInfoPanel" Visibility="Collapsed" d:Visibility="Collapsed"
+                          Height="{Binding ViewportHeight, ElementName=ContentScrollViewer}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>   <!-- 标题 -->
+                            <RowDefinition Height="*"/>      <!-- 卡片（撑满剩余） -->
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="状态信息"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold" Foreground="#1A1A1A"
                                    Margin="0,8,0,10"/>
 
-                        <Border Background="#FFFFFF"
+                        <Border Grid.Row="1" Background="#FFFFFF"
                                 BorderBrush="#E8E8E8" BorderThickness="1"
                                 CornerRadius="8" Padding="12">
-                            <StackPanel>
-                                <Grid Margin="0,0,0,8">
-                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                        <!-- 元件区快速切换：输入监控(X) / 输出监控(Y) -->
-                                        <Border Background="#EDEDED" CornerRadius="6" Padding="2">
-                                            <StackPanel Orientation="Horizontal">
-                                                <RadioButton x:Name="XViewSegment"
-                                                             Content="输入监控"
-                                                             GroupName="IoView"
-                                                             IsChecked="True"
-                                                             Style="{StaticResource IoSegmentRadioButton}"
-                                                             Checked="IoView_Checked"/>
-                                                <RadioButton x:Name="YViewSegment"
-                                                             Content="输出监控"
-                                                             GroupName="IoView"
-                                                             Style="{StaticResource IoSegmentRadioButton}"
-                                                             Checked="IoView_Checked"/>
-                                                <RadioButton x:Name="FreeViewSegment"
-                                                             Content="自由监控"
-                                                             GroupName="IoView"
-                                                             Style="{StaticResource IoSegmentRadioButton}"
-                                                             Checked="IoView_Checked"/>
-                                            </StackPanel>
-                                        </Border>
-                                        <!-- 导入 IO 点位表（xlsx，替换注释） -->
-                                        <Button x:Name="ImportIoTableButton"
-                                                Content="导入 IO 表"
-                                                Margin="8,0,0,0"
-                                                Style="{StaticResource IoCardButton}"
-                                                Click="ImportIoTableButton_Click"/>
-                                    </StackPanel>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>   <!-- 分段切换 -->
+                                    <RowDefinition Height="Auto"/>   <!-- 分隔线 -->
+                                    <RowDefinition Height="*"/>      <!-- 列表（占满剩余，超出则内部滚动） -->
+                                    <RowDefinition Height="Auto"/>   <!-- 底部操作行：导入 IO 表 + 分页 -->
+                                </Grid.RowDefinitions>
 
-                                    <!-- 分页（右上角）：本分段超过一页时才显示 -->
-                                    <StackPanel x:Name="IoPagerPanel"
-                                                Orientation="Horizontal"
-                                                HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                Visibility="Collapsed">
-                                        <Button x:Name="IoPrevPageButton"
-                                                Content="&#xE76B;"
-                                                ToolTip="上一页"
-                                                Style="{StaticResource IoPagerButton}"
-                                                Click="IoPrevPageButton_Click"/>
-                                        <TextBlock x:Name="IoPageText"
-                                                   Text="1/1"
-                                                   MinWidth="46"
-                                                   TextAlignment="Center"
-                                                   FontSize="12" Foreground="#5D5D5D"
-                                                   VerticalAlignment="Center"/>
-                                        <Button x:Name="IoNextPageButton"
-                                                Content="&#xE76C;"
-                                                ToolTip="下一页"
-                                                Style="{StaticResource IoPagerButton}"
-                                                Click="IoNextPageButton_Click"/>
-                                    </StackPanel>
+                                <!-- 分段切换（输入监控 / 输出监控 / 自由监控） -->
+                                <Grid Grid.Row="0" Margin="0,0,0,8">
+                                    <Border Background="#EDEDED" CornerRadius="6" Padding="2"
+                                            HorizontalAlignment="Left" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal">
+                                            <RadioButton x:Name="XViewSegment"
+                                                         Content="输入监控"
+                                                         GroupName="IoView"
+                                                         IsChecked="True"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="IoView_Checked"/>
+                                            <RadioButton x:Name="YViewSegment"
+                                                         Content="输出监控"
+                                                         GroupName="IoView"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="IoView_Checked"/>
+                                            <RadioButton x:Name="FreeViewSegment"
+                                                         Content="自由监控"
+                                                         GroupName="IoView"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="IoView_Checked"/>
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
 
                                 <!-- 分隔线：控件行与 IO 点位表格之间 -->
-                                <Border Height="1" Background="#E8E8E8">
+                                <Border Grid.Row="1" Height="1" Background="#E8E8E8">
                                     <Border.Style>
                                         <Style TargetType="Border">
                                             <Setter Property="Margin" Value="0,0,0,8"/>
@@ -1291,6 +1279,17 @@
                                     </Border.Style>
                                 </Border>
 
+                                <!--
+                                    列表区（占满卡片剩余高度）。套 ScrollViewer 使点位多时**卡片内部滚动**，
+                                    底部操作行始终贴在卡片底边。
+                                    高度靠外层 Grid 的 `*` 行给出 —— 面板整体已绑 ViewportHeight，
+                                    故这里是真实剩余空间，不需要（也不该）再写 MaxHeight。
+                                -->
+                                <ScrollViewer Grid.Row="2"
+                                              VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled">
+                                <!-- 三个分段面板叠放：同一时刻只有一个可见（IoView_Checked 切换） -->
+                                <Grid>
                                 <!-- 输入监控（X0–X77） -->
                                 <Grid x:Name="IoColumnsGrid">
                                     <Grid.ColumnDefinitions>
@@ -1450,9 +1449,49 @@
                                            FontSize="12"
                                            Foreground="#9A9A9A"
                                            Margin="0,6,0,4"/>
-                            </StackPanel>
+                                </Grid>
+                                </ScrollViewer>
+
+                                <!--
+                                    卡片底部操作行（左：导入 IO 表；右：分页）。
+                                    放在卡片内、且列表区用 `*` 占满剩余 —— 卡片撑满视口高度，
+                                    故这一行恒定贴在卡片底边，不随点位多少浮动。
+
+                                    ⚠️ 两者在自由监控分段下由 IoView_Checked 隐藏（自由监控有自己的
+                                    「新增监控项」按钮，导入 IO 表与 IO 分页对它无意义）。
+                                -->
+                                <Grid x:Name="IoFooterBar" Grid.Row="3" Margin="0,10,0,0">
+                                    <Button x:Name="ImportIoTableButton"
+                                            Content="导入 IO 表"
+                                            HorizontalAlignment="Left" VerticalAlignment="Center"
+                                            Style="{StaticResource IoCardButton}"
+                                            Click="ImportIoTableButton_Click"/>
+
+                                    <StackPanel x:Name="IoPagerPanel"
+                                                Orientation="Horizontal"
+                                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                Visibility="Collapsed">
+                                        <Button x:Name="IoPrevPageButton"
+                                                Content="&#xE76B;"
+                                                ToolTip="上一页"
+                                                Style="{StaticResource IoPagerButton}"
+                                                Click="IoPrevPageButton_Click"/>
+                                        <TextBlock x:Name="IoPageText"
+                                                   Text="1/1"
+                                                   MinWidth="46"
+                                                   TextAlignment="Center"
+                                                   FontSize="12" Foreground="#5D5D5D"
+                                                   VerticalAlignment="Center"/>
+                                        <Button x:Name="IoNextPageButton"
+                                                Content="&#xE76C;"
+                                                ToolTip="下一页"
+                                                Style="{StaticResource IoPagerButton}"
+                                                Click="IoNextPageButton_Click"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Grid>
                         </Border>
-                    </StackPanel>
+                    </Grid>
 
                     <!-- 设备配置 -->
                     <StackPanel x:Name="DeviceConfigPanel"
