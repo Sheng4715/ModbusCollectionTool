@@ -27,6 +27,14 @@ DSH_Modbus采集工具/
 ├── MainWindow.xaml.cs          # 交互逻辑（见 §4 分工）
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
 ├── XlsxIoTableReader.cs        # xlsx 点位表解析（零依赖 zip+XML）
+├── Polling/                    # 采集引擎（不含 WPF 类型）
+│   ├── ICollectorHost.cs       # 宿主契约：周期 / 监控集 / 可见性快照 / 连接身份 / 回 UI / 断线
+│   ├── ModbusPoller.cs         # 轮询编排（IO 分块读 + 自由监控读 + 断线通知）
+│   └── PollSnapshot.cs         # 可见性快照（页面 / 自由监控 / 当前页 / 周期）
+├── Io/                         # IO 点位集（不含 WPF 类型，分页只做数值运算）
+│   ├── IoPointSet.cs           # 注释表读写 + 名称归一化 / 地址换算 / 分组排序 / 导入校验
+│   ├── IoPager.cs              # 分页纯计算（页数 / 夹取 / 切片 / 翻页 / 页号文本）
+│   └── IoTableImporter.cs      # xlsx → 注释表 + 失败明细
 ├── Modeling/                   # 数据类型系统（P3-3 数据模型层）
 │   ├── DataTypes.cs            # DataType / DisplayFormat 枚举 + DataTypeSpec 规格表
 │   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
@@ -37,6 +45,10 @@ DSH_Modbus采集工具/
     ├── ModbusTcpClient.cs      # Modbus TCP 主站（MBAP + FC01/02/03/04 读 + FC05/06/16 写 + 本地端点绑定）
     └── ModbusHeartbeat.cs      # 独立心跳调度与异常分类
 ```
+
+> `Polling/` 与 `Io/` 是 P5 结构重构的产物，**刻意不引用 WPF**：
+> 采集编排与点位集判断可脱离界面阅读/验证；控件写入（分页控件显隐、绑列、弹窗）
+> 一律留在 `MainWindow.xaml.cs`。新增逻辑时按同一原则归位。
 
 > `ModelingCheck/`（仓库根，**不属于本工程**）是 P3-3 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
 
@@ -136,23 +148,26 @@ Window
 
 ## 4. 代码分工（MainWindow.xaml.cs）
 
-> ⚠️ 单文件已 **2200+ 行**，采集编排 / 连接生命周期 / 心跳 / 导航 / 导入 / 分页 / 自由监控 / 日志混放（见 `Design.md` §8-1）。
+> `MainWindow.xaml.cs` 现约 **2190 行**（P5 重构前 2576）。采集编排已抽到 `Polling/`、
+> IO 点位集/分页/导入已抽到 `Io/`；其余（连接生命周期 / 心跳 / 导航 / 自由监控 / 日志）
+> 仍在本文件。**自由监控刻意未抽** —— 它有 12 处直接碰控件，见 `Design.md` §8-1。
 
 | 区块 | 关键成员 |
 |---|---|
 | 连接状态机 | `ConnectButton_Click` / `Disconnect()` / `Disconnect(status,color)` / `TryConnectAsync` / `RunConnectionTasksAsync` / `IsCurrentConnection` |
 | 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect` / `ReconnectTarget` / `ReconnectDelaysSeconds` |
-| 轮询 | `PollLoopAsync` / `PollOnceAsync`（按地址区分块 + 2000 点切窗）/ `PollFreeMonitorAsync`（自由监控，按区选 FC01/03/04） |
-| 心跳编排 | `HeartbeatLoopAsync` / `NotifyConnectionLost` |
-| IO 点位集 | `RebuildIoPoints` / `TryCreateIoPoint` / `NormalizePointName` |
-| 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager` |
-| 导入 | `ImportIoTableButton_Click` |
+| 轮询（入口在本类，实现在 `Polling/`） | `_poller.PollLoopAsync` → `Polling/ModbusPoller.cs`（`PollOnceAsync` 按地址区分块 + 2000 点切窗 / `PollFreeMonitorAsync` 自由监控，按区选 FC01/03/04） |
+| `ICollectorHost` 实现 | `PollIntervalMs` / `MonitorSet` / `CaptureSnapshot()` / `IsCurrentConnection` / `RunOnUiAsync` / `NotifyConnectionLost` / `ClassifyDisconnectReason` |
+| 心跳编排 | `HeartbeatLoopAsync`（失败时转 `_poller.NotifyConnectionLost`） |
+| IO 点位集（实现在 `Io/`） | `RebuildIoPoints`（薄包装）→ `IoPointSet.Rebuild` / `TryCreatePoint` / `NormalizePointName` / `TryValidatePoint` |
+| 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（算术在 `IoPager`；控件写入留本类） |
+| 导入 | `ImportIoTableButton_Click` → `IoTableImporter.Read`（`MessageBox` 留本类） |
 | **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 §5.1） |
-| 持久化 | `LoadComments` / `SaveComments` |
+| 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（`NicInfo`） |
 | 日志 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` |
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset` |
-| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_xPoints` / `_yPoints` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_comments` / `_monitorSet` / `_deviceLog` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt`（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
+| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_deviceLog` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt`（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -161,13 +176,13 @@ Window
 - **点位集完全由导入的 IO 表驱动**（不再固定 64 点）；未导入则空列表 + `IoEmptyHint`「尚未导入 IO 表」
 - 持久化唯一来源 = `io-comments.json`（`AppContext.BaseDirectory`，**键=点位名、值=注释**）；导入即整体替换并写盘
 - 导入校验：**仅接受 X / Y 元件**，地址须落在当前驱动范围内；结果**一律用 `MessageBox`** 汇报（0 项有效则警告框且拒绝替换）
-- **分页**：每页 4 列 × `IoRowsPerColumn`(16) = 64 点，X/Y 各自独立页号；单页时整体隐藏。列宽 `*` 等分；行高 22、行距 2、列距 4
+- **分页**：每页 4 列 × `IoPager.RowsPerColumn`(16) = 64 点，X/Y 各自独立页号；单页时整体隐藏。列宽 `*` 等分；行高 22、行距 2、列距 4
 - **采集跟随可见性**：只读**当前显示分段 + 当前页**（`_visiblePage` 快照，按所属地址区分块 FC01，同区跨度超 2000 点切窗，默认 100ms）；**离开本页停止 IO 采集，独立心跳继续**；断线不清灯色（`IsOn` 保持上次值）
 - **三个分段统一「跟随可见性」**（输入 X / 输出 Y / 自由监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开状态信息页则全停）。详见 §5.1 与 `Design.md` §5.6
 
 **灯色（`IoPoint.StateBrush`）**：灭灯 `#C4C4C4`；点亮时**输入 X 绿 `#0B7A0B`、输出 Y 橙 `#FFA500`**。
 
-- 由 `IoPoint.IsOutput`（`init` 属性）区分，创建时在 `TryCreateIoPoint` 按点位名首字母定死：`IsOutput = normalized[0] == 'Y'`
+- 由 `IoPoint.IsOutput`（`init` 属性）区分，创建时在 `IoPointSet.TryCreatePoint` 按点位名首字母定死：`IsOutput = normalized[0] == 'Y'`
 - 三个画刷是 `static readonly` + `Freeze()`，**不要在 `StateBrush` 里 new**（原实现每次取属性都新建对象）
 - XAML 侧不用改：`IoItemTemplate` 的灯仍绑 `Background="{Binding StateBrush}"`
 
@@ -347,15 +362,15 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 底栏布局/对齐 | `MainWindow.xaml` 主体 Grid 末尾的底栏 `Border`（见 §3.5，**改前必读**） |
 | 最大化底栏被任务栏遮住 | `UpdateMaximizedInset()` + `Window_StateChanged`（见 §3.6） |
 | 自动重连退避/触发/取消 | `ReconnectDelaysSeconds` / `StartReconnect` / `CancelReconnect`（见 §6.1） |
-| IO 灯色（输入绿/输出橙） | `IoPoint.StateBrush` + `InputOnBrush` / `OutputOnBrush` / `OffBrush`；`IsOutput` 在 `TryCreateIoPoint` 定 |
-| IO 点位集构建/排序 | `RebuildIoPoints` → `TryCreateIoPoint` / `NormalizePointName`（按地址升序） |
-| 导入 IO 表 / 解析规则 | `ImportIoTableButton_Click` + `XlsxIoTableReader.cs`（地址→右邻配对，仅首表，不支持合并单元格） |
-| 注释与点位集持久化 | `LoadComments` / `SaveComments` → `io-comments.json` |
-| IO 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（`_xPageIndex`/`_yPageIndex` 独立） |
-| 改每页点位数 | `IoRowsPerColumn`（列数固定 4） |
-| IO 采集范围 | `PollOnceAsync` → `_visiblePage` 快照 + `CommDriver.FindArea` 分块（单块 ≤2000） |
+| IO 灯色（输入绿/输出橙） | `IoPoint.StateBrush` + `InputOnBrush` / `OutputOnBrush` / `OffBrush`；`IsOutput` 在 `TryCreatePoint` 定 |
+| IO 点位集构建/排序 | `Io/IoPointSet.cs`（`Rebuild` / `TryCreatePoint` / `NormalizePointName`，按地址升序）；窗口侧薄包装 `RebuildIoPoints` |
+| 导入 IO 表 / 解析规则 | `Io/IoTableImporter.cs` + `XlsxIoTableReader.cs`（地址→右邻配对，仅首表，不支持合并单元格）；弹窗在 `ImportIoTableButton_Click` |
+| 注释与点位集持久化 | `Io/IoPointSet.cs` 的 `Load` / `Save` → `io-comments.json`（窗口侧 `LoadComments` / `SaveComments` 为薄包装） |
+| IO 分页 | `Io/IoPager.cs`（算术）+ `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（控件写入）；`_xPageIndex`/`_yPageIndex` 独立 |
+| 改每页点位数 | `IoPager.RowsPerColumn` / `IoPager.ColumnCount`（PageSize 由其相乘得出） |
+| IO 采集范围 | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` → `_visiblePage` 快照 + `CommDriver.FindArea` 分块（单块 ≤2000） |
 | **自由监控读取（分块规划）** | `MonitorItemSet.BuildReadPlan`（按 `ModbusArea` 分组 + 地址连续性分块）+ `MonitorItemSet.ApplyBlock`（偏移切片 + 格式化回填） |
-| **自由监控轮询入口** | `PollOnceAsync` 开头按 `_freeViewActive` 分流 → `PollFreeMonitorAsync`（按区选 FC01/FC03/FC04，单块失败不断线） |
+| **自由监控轮询入口** | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` 开头按 `_freeViewActive` 分流 → `PollFreeMonitorAsync`（按区选 FC01/FC03/FC04，单块失败不断线） |
 | **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | **自由监控写入（FC05/06/16）** | `MonitorItemSet.TryBuildWrite`（文本 → `WritePlan`）+ `ValueCodec.TryEncodeRegisters` / `EncodeStringFixed`；`MainWindow.xaml.cs` 的 `CommitMonitorValueAsync` → `WriteToDeviceAsync`；报文层 `ModbusTcpClient.WriteSingleCoilAsync` / `WriteSingleRegisterAsync` / `WriteMultipleRegistersAsync` |
 | **写入的文本解析与范围校验** | `ValueCodec.TryParseIntegerLiteral`（DEC 支持 `0x`/`0b` 前缀与负号）+ `CheckIntegerRange`；**校验必须在位宽截断前**（`-32769` 截成 `0x7FFF` 会变成合法值） |
@@ -369,7 +384,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | **类型值编解码与显示格式化** | `Modeling/ValueCodec.cs`（入参传字节顺序，不读全局状态） |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
 | 心跳周期/空闲判断/地址来源 | `Drivers/ModbusHeartbeat.cs` → `RunAsync`；`ModbusTcpClient.HeartbeatIfIdleAsync` |
-| 轮询与断线逻辑 | `PollLoopAsync` / `PollOnceAsync` / `Disconnect(status,color)` |
+| 轮询与断线逻辑 | `Polling/ModbusPoller.cs` 的 `PollLoopAsync` / `PollOnceAsync` + `Disconnect(status,color)` |
 | 网卡扫描/绑定 | `ScanNetworkAdapters` + `ConnectButton_Click`（`NicInfo`） |
 | 采集周期档位 | `PollIntervalComboBox` + `_pollIntervalMs` |
 | 日志追加/清空/上限 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `MaxDeviceLogEntries` |
