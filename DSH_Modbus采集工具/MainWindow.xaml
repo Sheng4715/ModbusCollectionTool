@@ -145,6 +145,63 @@
             </Setter>
         </Style>
 
+        <!-- 开关（Windows 11 式 ToggleSwitch）
+             轨道 40x20、柄 12、内缩 4（与 WinUI 的 40/20/12/4 一致）；
+             轨道与柄同高同心，关＝Control.Background，开＝Accent.Fill（上面压白柄）。
+             状态文字在**轨道左侧**，紧挨轨道、一次扫完，不必跨行去配对远端标签。
+
+             ⚠️ 文字由**调用方**通过 Content 给（"开"/"关"是这一处的文案，别处可能不同），
+             不要在 ControlTemplate 的触发器里 Setter Property="Content" —— 那是模板优先级，
+             赢不过控件上的局部值 Content="开"，写了等于没写（实测两种状态都显示"开"）。
+             要做"随状态换文案"，只能在控件侧用 Style.Triggers 绑 IsChecked，或由代码改 Content。 -->
+        <Style x:Key="ToggleSwitch" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Content" Value="开"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <!-- 文字在左、轨道在右，故 Margin 加在轨道上（外缘由调用方给） -->
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"/>
+                            <Border x:Name="Track"
+                                    Width="40" Height="20"
+                                    CornerRadius="10"
+                                    Margin="10,0,0,0"
+                                    Background="{DynamicResource Brush.Control.Background}"
+                                    VerticalAlignment="Center">
+                                <Border x:Name="Knob"
+                                        Width="12" Height="12"
+                                        CornerRadius="6"
+                                        Background="{DynamicResource Brush.Control.Selected}"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Center"
+                                        Margin="4,0,0,0"/>
+                            </Border>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Track" Property="Background" Value="{DynamicResource Brush.Accent.Fill}"/>
+                                <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
+                                <Setter TargetName="Knob" Property="Margin" Value="0,0,4,0"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Knob" Property="Opacity" Value="0.9"/>
+                            </Trigger>
+                            <!-- 禁用：轨道压暗，避免和"关"混淆（关是灰、禁用是更浅的灰） -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Track" Property="Opacity" Value="0.5"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 地址表元件块（设备配置页：线圈区 / 寄存器区） -->
         <DataTemplate x:Key="AreaChipTemplate">
             <Border Background="{DynamicResource Brush.Chip.Background}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
@@ -1800,31 +1857,30 @@
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
                             <StackPanel>
-                                <TextBlock Text="日志保存"
-                                           FontSize="14" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource Brush.Text.Primary}"/>
+                                <!-- 开关行：左标题 + 右开关（与「显示外观」卡同款两列）
+                                     开关自带状态文字「开 / 关」在左侧，故不再单列「启用」标签 ——
+                                     文字与控件紧挨着，眼睛一次扫完，不用跨行配对 -->
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
 
-                                <!-- 开关：沿用分段控件的轨道，视觉与主题切换一致 -->
-                                <TextBlock Text="启用"
-                                           FontSize="14"
-                                           Foreground="{DynamicResource Brush.Text.Primary}"
-                                           Margin="0,12,0,0"/>
-                                <Border Background="{DynamicResource Brush.Control.Background}"
-                                        CornerRadius="6" Padding="2"
-                                        HorizontalAlignment="Left" Margin="0,10,0,0">
-                                    <StackPanel Orientation="Horizontal">
-                                        <RadioButton x:Name="LogSaveOnSegment"
-                                                     Style="{StaticResource IoSegmentRadioButton}"
-                                                     GroupName="LogSave"
-                                                     Content="开启"
-                                                     Checked="LogSaveSegment_Checked"/>
-                                        <RadioButton x:Name="LogSaveOffSegment"
-                                                     Style="{StaticResource IoSegmentRadioButton}"
-                                                     GroupName="LogSave"
-                                                     Content="关闭"
-                                                     Checked="LogSaveSegment_Checked"/>
-                                    </StackPanel>
-                                </Border>
+                                    <TextBlock Grid.Column="0"
+                                               Text="日志保存"
+                                               FontSize="14" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"
+                                               VerticalAlignment="Center"/>
+
+                                    <CheckBox x:Name="LogSaveToggle"
+                                              Grid.Column="1"
+                                              Style="{StaticResource ToggleSwitch}"
+                                              Content="开"
+                                              Margin="16,0,0,0"
+                                              VerticalAlignment="Center"
+                                              Checked="LogSaveToggle_Changed"
+                                              Unchecked="LogSaveToggle_Changed"/>
+                                </Grid>
 
                                 <!-- 保存路径：输入框（改完失焦生效） + 按钮 -->
                                 <TextBlock Text="保存路径"

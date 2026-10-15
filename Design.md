@@ -781,7 +781,7 @@ InfoProductText  = DSH Modbus 采集工具
 InfoVersionText  = v0.6.0                    ← +<sha> 已正确剥离
 InfoBuildDateText= 2026-10-15 11:59:41
 InfoRuntimeText  = .NET 8.0.14　·　Windows 10.0.26100.0 (64 位)
-present LogSaveOnSegment / LogSaveOffSegment / LogDirectoryTextBox / LogSaveStatusText
+present LogSaveToggle（Name='开'）/ LogDirectoryTextBox
 ```
 
 - 四格全部有值且与来源一致；同一页的日志保存卡控件无回归 ✓
@@ -800,6 +800,74 @@ present LogSaveOnSegment / LogSaveOffSegment / LogDirectoryTextBox / LogSaveStat
 > ⚠️ 删除时注意一个布局细节：末行原本靠 `Margin="0,0,0,0"` 与其余行的 `,8` 区分，删掉第五行后**第四行必须把底边距也改成 0**，否则卡片底部会多出一段 8px 空白。这类「删一行」的改动，边距是容易漏的一处。
 >
 > 另：`BuildDriverSummary` 曾在首次编译报 `CS0122: "DriverRegistry.Drivers"不可访问` —— 那个字段是 `private static readonly List<CommDriver>`，公开访问器是 **`DriverRegistry.All`**。记录于此备查（该函数现已删除）。
+
+## 10.8 设置页日志开关：分段控件 → Windows 11 ToggleSwitch（同日）
+
+用户提「日志保存按钮看下能不能改为 windows 这种开关样式」，随后又要求「控件扔到右边，启用的文字放在按钮左边，文字改两种状态：开 / 关」。
+
+**1. 为什么改**
+
+原来的两段分段控件（`LogSaveOnSegment`「启用」/ `LogSaveOffSegment`「关闭」）为了表达"当前是关的"，**额外占了一档文案**。而开关的"关"本身就是**轨道变灰**，视觉上已经说完了 —— 两档里有一档是冗余信息。换成 ToggleSwitch 后信息量与控件面积同时下降。
+
+**2. 几何与配色（对齐 WinUI）**
+
+| 部件 | 值 |
+|---|---|
+| 轨道 | `40×20`，`CornerRadius 10` |
+| 柄 | `12×12`，`CornerRadius 6`，内缩 `4` |
+| 关 | 轨道 `Brush.Control.Background`，柄靠左 |
+| 开 | 轨道 `Brush.Accent.Fill`，柄靠右（`Margin` 由 `4,0,0,0` 切到 `0,0,4,0`） |
+
+配色全部走主题键，深浅两主题自动跟随；再加一档 `IsEnabled=False` → 轨道 `Opacity 0.5`，与「关」的实灰区分开（**关是实灰、禁用是半透明灰**，两者不能混）。
+
+**3. ⚠️ 踩到的坑：模板触发器赢不过局部值**
+
+第一版把状态文案写在 `ControlTemplate.Triggers` 里：
+
+```xml
+<!-- 错法：两种状态都显示「开」 -->
+<Trigger Property="IsChecked" Value="True">
+    <Setter Property="Content" Value="关"/>
+</Trigger>
+```
+
+而控件上是 `<CheckBox Content="开" .../>`。**模板触发器的 `Setter` 是模板优先级（template precedence），低于控件上的局部值** —— 局部值一旦设了，模板里的 Setter 就完全不起作用。实测两种状态都显示「开」。
+
+```xml
+<!-- 对法：文案由代码改 -->
+<CheckBox x:Name="LogSaveToggle" Content="开" .../>
+```
+
+```csharp
+LogSaveToggle.Content = enabled ? "开" : "关";   // 在 Changed 与 Sync 两处都写
+```
+
+改为代码赋值。**顺带记住同一陷阱的两种变体**：样式级 `Setter`（style precedence）同样低于局部值 —— 所以「去样式里设默认值 + 样式触发器改文案」这条看起来最"声明式"的路也走不通，除非同时把控件上的 `Content="开"` 也删掉。这里选代码赋值，是因为 `SyncLogSaveToggle` 本来就要同步 `IsChecked`，文案跟它一起写在一个地方最不容易漏。
+
+**4. 功能验证（不只是看起来对）**
+
+开关这类"看起来变了"的控件必须验到**行为**：
+
+| 步骤 | 结果 |
+|---|---|
+| 清空 `Log\`，开关置**关**，连 `192.168.1.100:502`（不可达）→ 产生「连接失败」日志事件 | 目录**仍 0 个文件** ✓ |
+| 开关置**开**，再连一次 | 生成 `2026-10-15.log`，1 行 ✓ |
+| 读该文件 | `[2026-10-15 17:08:38] [ERROR] 连接失败：192.168.1.100:502 网络不可达` ✓ |
+| 首 3 字节 | `91,50,48`（`"[20"`），**无 BOM** ✓ |
+| UIA 读 `LogSaveToggle` 的 `Current.Name` | On→「开」、Off→「关」、再切回→「开」 ✓ |
+| 深色主题下重复上述 | 一致 ✓ |
+
+> 附带验到一条既有设计的正确性：应用**运行中**用 `[System.IO.File]::ReadAllBytes` 读日志会抛 `IOException 文件正由另一进程使用` —— 因为 `FileShare.ReadWrite` 只对**同样指定共享模式**的打开者生效，`ReadAllBytes` 要的是独占。改用 `new FileStream(path, Open, Read, ReadWrite)` 即可读到。**这正是 ADR-27 说的那个场景**，不是新缺陷。
+
+**5. 布局：卡片统一为「左标题 + 右控件」两列**
+
+同一轮里把日志卡也改成与「显示外观」卡同款：`Grid` 两列（`*` / `Auto`），标题左、开关右，`Margin="16,0,0,0"`、`VerticalAlignment="Center"`。至此设置页三张卡的**标题一律左对齐、控件一律右对齐**，视线只需沿一条竖线下移。
+
+开关自身的状态文字放在**轨道左侧**（`ContentPresenter` 在模板里排在轨道之前），紧挨轨道 —— 眼睛扫一处就能同时看到"叫什么状态"和"当前是不是这个状态"，不必横跨整行去配对远端标签。
+
+**6. 验证数据**
+
+全量重编 `0 警告 0 错误`；`LoggingCheck` 不受影响（未改写入器）。UIA `LogSaveToggle` 矩形 `x=1540 y=468 w=96`，右边缘与「跟随系统」分段右边缘 1633 对齐。测试后已恢复用户配置（主题跟随系统、日志开启、目录默认）。
 
 ## 11. 构建与运行
 

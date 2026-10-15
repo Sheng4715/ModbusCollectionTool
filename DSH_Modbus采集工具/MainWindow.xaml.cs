@@ -558,7 +558,7 @@ namespace DSH_Modbus采集工具
             Themes.ThemeManager.ThemeChanged += OnThemeChanged;
 
             // P5-2：日志保存设置同样在 App 启动时已载入，这里只回填界面
-            SyncLogSaveSegments();
+            SyncLogSaveToggle();
             ApplyLogDirectory(ThemeManager.LogDirectory);
 
             // P5-3：项目信息全是常量，填一次即可（不需要进页面时刷新）
@@ -692,22 +692,32 @@ namespace DSH_Modbus采集工具
         // ---------- 设置：日志保存（P5-2） ----------
 
         /// <summary>
-        /// 日志开关分段被选中。与主题分段同款：<c>Checked</c> 也会被
-        /// <see cref="SyncLogSaveSegments"/> 触发一次，那次写回同一个值，幂等。
+        /// 日志开关被切换。与分段控件时期同款：<c>Checked</c> 也会被
+        /// <see cref="SyncLogSaveToggle"/> 触发一次，那次写回同一个值，幂等。
+        ///
+        /// <para>
+        /// 开关只表达"要不要落盘"，**不再需要「关闭」这一档文案** —— 关＝轨道变灰、
+        /// 文字变「关」，本身就是状态，这正是 ToggleSwitch 比两段分段控件更省一层信息的原因。
+        /// </para>
         /// </summary>
-        private void LogSaveSegment_Checked(object sender, RoutedEventArgs e)
+        private void LogSaveToggle_Changed(object sender, RoutedEventArgs e)
         {
-            bool enabled = !ReferenceEquals(sender, LogSaveOffSegment);
+            bool enabled = LogSaveToggle.IsChecked == true;
+
+            // 状态文案（开 / 关）必须在这里改：ControlTemplate 触发器里的
+            // Setter Property="Content" 是模板优先级，赢不过控件上的局部值
+            LogSaveToggle.Content = enabled ? "开" : "关";
+
             ThemeManager.SetLogSave(enabled);
             _logWriter.SetEnabled(enabled);
             RefreshLogSaveStatus();
         }
 
-        private void SyncLogSaveSegments()
+        private void SyncLogSaveToggle()
         {
             bool enabled = ThemeManager.LogSaveEnabled;
-            LogSaveOnSegment.IsChecked = enabled;
-            LogSaveOffSegment.IsChecked = !enabled;
+            LogSaveToggle.IsChecked = enabled;
+            LogSaveToggle.Content = enabled ? "开" : "关";
         }
 
         /// <summary>
