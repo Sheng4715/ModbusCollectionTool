@@ -595,9 +595,8 @@ namespace DSH_Modbus采集工具
                     ? Visibility.Visible
                     : Visibility.Collapsed;
 
-                // 切进设置页时刷新日志回显：行数/失败原因是"进入时该看到的最新值"，
-                // 而 AppendDeviceLog 只在面板已可见时才刷 —— 若进入前就写了几条日志，
-                // 不在这里补一次就会一直显示旧数字。
+                // 切进设置页时补刷一次失败提示：AppendDeviceLog 只在面板**已可见**时才刷，
+                // 若失败发生在进入之前（那时这个 TextBlock 没人看），不补这一下就永远看不到原因。
                 if (settingsVisible)
                 {
                     RefreshLogSaveStatus();
@@ -806,8 +805,18 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 回显日志保存状态：关闭 / 当前文件 / 上次失败原因。失败原因优先显示 ——
-        /// 那才是需要用户处理的。
+        /// 回显日志写入失败的原因（P5-2）。
+        ///
+        /// <para>
+        /// **只在写入失败时显示**，正常时整行隐藏。这么定是因为两类信息价值不同：
+        /// 「启用 / 关闭」已由上面的分段控件表达，而「当前文件 + 本日行数」属于过程信息，
+        /// 常驻显示只是噪声；失败原因相反 —— 那是**别处看不到、且必须由用户处理**的事
+        /// （目录只读 / 磁盘满 / 文件被占），不能跟着一起静默，否则日志悄悄不写了没人知道。
+        /// </para>
+        /// <para>
+        /// 写入器会自愈：下一次写成功即清空 <see cref="Logging.DeviceLogFileWriter.LastError"/>，
+        /// 而本方法在每次落盘后都会被调用一次，故提示随自愈自动消失，无需手动清除。
+        /// </para>
         /// </summary>
         private void RefreshLogSaveStatus()
         {
@@ -816,27 +825,17 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            if (!ThemeManager.LogSaveEnabled)
+            // 关闭状态下没有"写入"这回事，自然也无失败可言（开关本身已表达状态）
+            if (!ThemeManager.LogSaveEnabled || _logWriter.LastError == null)
             {
-                LogSaveStatusText.Text = "已关闭，运行日志只保留在界面上（不落盘）。";
-                LogSaveStatusText.Foreground = Themes.ThemeManager.GetBrush("Brush.Text.Muted")
-                    ?? System.Windows.Media.Brushes.Gray;
+                LogSaveStatusText.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            if (_logWriter.LastError != null)
-            {
-                LogSaveStatusText.Text = $"写入失败：{_logWriter.LastError}";
-                LogSaveStatusText.Foreground = Themes.ThemeManager.GetBrush("Brush.Warning")
-                    ?? System.Windows.Media.Brushes.DarkOrange;
-                return;
-            }
-
-            string dir = ThemeManager.LogDirectory;
-            string file = Logging.DeviceLogFileWriter.FilePathFor(dir, DateOnly.FromDateTime(DateTime.Now));
-            LogSaveStatusText.Text = $"当前文件：{file}（本日已写 {_logWriter.LinesWritten} 行）";
-            LogSaveStatusText.Foreground = Themes.ThemeManager.GetBrush("Brush.Text.Muted")
-                ?? System.Windows.Media.Brushes.Gray;
+            LogSaveStatusText.Text = $"日志写入失败：{_logWriter.LastError}";
+            LogSaveStatusText.Foreground = Themes.ThemeManager.GetBrush("Brush.Warning")
+                ?? System.Windows.Media.Brushes.DarkOrange;
+            LogSaveStatusText.Visibility = Visibility.Visible;
         }
 
         /// <summary>
@@ -1358,8 +1357,8 @@ namespace DSH_Modbus采集工具
             // 时间会与界面差一秒，事后对照两边对不上。
             _logWriter?.Write(now, FileLevelOf(level), message);
 
-            // 设置页可见时刷新回显（行数 / 失败原因）。不可见就不刷 —— 日志是高频旁路，
-            // 让它去更新一个没人看的 TextBlock 没有必要。
+            // 设置页可见时刷新失败提示（失败 → 显示，自愈后 → 自动隐藏）。不可见就不刷 ——
+            // 日志是高频旁路，让它去更新一个没人看的 TextBlock 没有必要。
             if (SettingsPanel?.Visibility == Visibility.Visible)
             {
                 RefreshLogSaveStatus();

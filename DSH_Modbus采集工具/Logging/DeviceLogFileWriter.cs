@@ -43,7 +43,11 @@ namespace DSH_Modbus采集工具.Logging
         /// <summary>最近一次写入失败的原因；成功时为 <c>null</c>。供设置页显示。</summary>
         public string? LastError { get; private set; }
 
-        /// <summary>本次进程内已成功写出的行数（用于设置页回显，不做持久化）。</summary>
+        /// <summary>
+        /// 本次进程内已成功写出的行数。
+        /// 界面上已不再回显它（设置页那行改为只在失败时出现），保留是因为
+        /// 独立验证工程 `LoggingCheck` 靠它断言"失败时行数不增加"。
+        /// </summary>
         public int LinesWritten { get; private set; }
 
         public DeviceLogFileWriter(string directory, bool enabled)
@@ -99,9 +103,6 @@ namespace DSH_Modbus采集工具.Logging
         /// <summary>某个日期的日志文件完整路径。</summary>
         public static string FilePathFor(string directory, DateOnly date) =>
             Path.Combine(directory, date.ToString("yyyy-MM-dd") + ".log");
-
-        /// <summary>当前正在写的文件（未写过任何行时为 <c>null</c>）。</summary>
-        public string? CurrentFilePath => _writer == null ? null : FilePathFor(_directory, _openDate);
 
         /// <summary>
         /// 追加一行。时间戳由调用方给出（与界面显示的同一条日志共用同一时刻，

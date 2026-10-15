@@ -1865,12 +1865,14 @@
                                             Click="LogResetDirectoryButton_Click"/>
                                 </Grid>
 
-                                <!-- 状态回显：未启用 / 当前文件 / 上次写入失败的原因 -->
+                                <!-- 写入失败提示：正常时整行隐藏（Collapsed 不占位），
+                                     仅失败时由 RefreshLogSaveStatus 显示琥珀色原因 -->
                                 <TextBlock x:Name="LogSaveStatusText"
                                            FontSize="12"
                                            Foreground="{DynamicResource Brush.Text.Muted}"
                                            Margin="0,10,0,0"
-                                           TextWrapping="Wrap"/>
+                                           TextWrapping="Wrap"
+                                           Visibility="Collapsed"/>
                             </StackPanel>
                         </Border>
 
