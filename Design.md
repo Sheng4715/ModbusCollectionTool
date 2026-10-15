@@ -360,7 +360,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 | **结构重构（P5 步骤 1、2）** | 采集编排 → `Polling/`；IO 点位集/分页/导入 → `Io/`（**均不引用 WPF**）。自由监控**刻意未抽**（12 处直接碰控件） | ✅（ADR-21） |
 | **主题外观（P5-1，中）** | 新增 `Themes/`（`Light.xaml` + `Dark.xaml` 同键字典 + `ThemeManager`）；UI 侧把颜色字面量全部换成 `{DynamicResource}`；设置页新增三分段控件 | ✅ **已实现**（ADR-23/24/25；验证见 §10.5） |
 | **日志保存（P5-2，中）** | 落盘点挂在 `AppendDeviceLog`（5 种设备状态的唯一出口）；写入器 `Logging/DeviceLogFileWriter.cs`（**不引用 WPF**，独立工程 `LoggingCheck` 链接源码验证）；默认 `AppContext.BaseDirectory\Log\`，文件名 = 日期，纯文本 `.log`，每行 `[时间] [级别] 消息`；设置存 `app-settings.json` | ✅ **已实现**（ADR-26/27/28/29；验证见 §10.6） |
-| **项目信息（P5-3，低）** | `csproj` 补 `Version` / `FileVersion` / `InformationalVersion` 与构建日期常量；设置页读回显示 | 待实现（设置页占位卡已就位） |
+| **项目信息（P5-3，低）** | `csproj` 补 `Version` / `FileVersion` 与 `<Product>` 元数据 + 编译期生成构建日期常量；`AppInfo.cs` 只读程序集元数据；设置页第三卡 `RefreshProjectInfo()` 回显 | ✅ **已实现**（ADR-30；验证见 §10.7） |
 
 ### 7.1 待设计项的关键约束（来自 Brief）
 
@@ -477,6 +477,7 @@ D[n] = (char[2i] << 8) | char[2i+1]
 | 27 | **写日志持有打开的句柄 + `FileShare.ReadWrite`，且所有 IO 异常一律吞掉** | 持句柄是为了跨天换文件时可控（append 语义 + 自己决定何时轮换）。**`FileShare.ReadWrite` 是实测定下来的**：日志是给人看的，用户很可能在应用运行期间用记事本 / VS Code / `tail` 打开当前文件，最初只给 `FileShare.Read` 时这些工具会因"文件被占用"打不开 —— 而这恰恰是排障时最自然的动作（该行为由 `LoggingCheck` 的共享读断言覆盖）。**异常全吞**：磁盘满、目录只读、文件被占都会失败，但一个连不上设备的上位机**不应该因为写不了日志而崩**；失败原因留在 `LastError` 由设置页显示，且下一次写入会自动重试打开（实测"挡路文件删掉后自愈"）。写入后立即 `Flush` —— 日志的价值在崩溃后复盘，缓冲着没落盘等于没写 | 每次 `File.AppendAllText`（open/seek/close 三次系统调用，且无法控制轮换时机）；只给 `FileShare.Read`（用户打不开正在写的日志，实测踩到）；把 IO 异常抛给调用方（日志失败升级成功能故障）；不 Flush（崩溃时丢掉最后几条，而最后几条往往正是崩溃原因） |
 | 28 | **日志级别按颜色语义映射：INFO / WARN / ERROR，与界面配色一一对应** | 用户定稿。绿（已连接 / 通讯恢复）= `INFO`、琥珀（通讯异常）= `WARN`、红（已断开 / 连接失败）= `ERROR` —— 这样"文件里的级别"与"界面上的颜色"是**同一套语义**，不必记两套映射。默认灰 `Neutral` 归 `INFO`。备选"按事件名做级别"（如 `[CONNECTED]`）可读性更高，但会让级别失去"严重程度"这一通用含义，且界面配色仍是按严重程度分的 | **只分 INFO/ERROR**（通讯异常会被降级成 ERROR，与界面上的琥珀色不符）；**用事件名做级别**（见上）；级别存本地化中文（同一份日志在不同语言环境下格式不同） |
 | 29 | **设置页的日志开关复用分段控件，路径改动在失焦时落盘，且先试建目录** | 开关用 `IoSegmentRadioButton` 同款轨道而非 `CheckBox`：应用里没有 CheckBox 样式，硬塞一个会破坏 §9.1 的视觉语言（用户对此很敏感）。路径**失焦落盘**与自由监控的元件名称同一约定 —— 打字途中每敲一个字符写一次 json 无意义，且中途的半截路径（`D:\Lo`）可能被下次启动当成有效目录。**先 `Directory.CreateDirectory` 再保存**：路径非法（非法字符 / 盘符不存在 / 无权限）在设置时就报错并回退，而不是等第一条日志写不进去才发现。空串与"恢复默认"按钮都表示回到默认目录 | **`CheckBox`**（无样式，破坏统一视觉）；**每次 `TextChanged` 落盘**（见上）；**只存路径不试建**（错误延迟到写日志时才暴露，而那时用户已经离开设置页）；路径非法时静默接受（下次启动才发现） |
+| 30 | **版本号手写在 csproj，构建日期由编译期目标生成成独立常量，且从程序集元数据读回**（P5-3） | 两者来源**刻意不同**：① **版本号手写、不自动递增** —— 自动递增会把版本变成"构建次数"的函数，而现场排障要回答的是"这个 exe 是哪一版"，提版本应当由人决定；② **构建日期必须编译期生成**，手写必然忘记更新，用文件时间也不行（复制/解压/杀软扫描都会改它，与"代码何时编的"无关）。日期写成**独立常量** `BuildInfo.BuildDate`（`BeforeTargets="CoreCompile"` 的 `WriteBuildDate` 目标产出 `obj/.../BuildInfo.g.cs`）而**不覆盖 `<Version>`**：后者会让程序集标识每次编译都变，进而作废增量构建。显示层走 `AppInfo` 读程序集元数据 —— 一个旧副本会显示自己的旧版本号，**不会撒谎** | **`<Version>` 里塞日期**（破坏增量构建，见上）；**读 exe 文件时间**（不可靠，见上）；**手写日期常量**（必忘）；**硬编码版本字符串**（与 csproj 两处真值，必然漂移）；**自动递增版本**（见上）。另：`InformationalVersion` 会被 SDK 自动追加 `+<git sha>`，显示前**砍掉 `+` 之后的部分**，否则用户看到一长串哈希 |
 
 ## 10. 验证方式
 
@@ -749,6 +750,48 @@ UIA 驱动走完整流程，落盘结果逐行核对：
 `--no-incremental` 全量重编 **0 警告 0 错误**。测试后已恢复用户配置（IP `192.168.1.100`、日志开启、目录默认），`io-comments.json` 与测试前**字节级一致**。
 
 > 通用结论：**构建一律全量重编（`--no-incremental`）确认 0 警告 0 错误**。
+
+### 10.7 项目信息验证（2026-10-15，P5-3）
+
+分三层：**先证明生成的常量真的进了编译，再证明程序集元数据真的写进了 exe，最后从界面读回来**。
+
+**1. 生成的常量与程序集元数据**
+
+```powershell
+# 目标确实产出源码（obj/<cfg>/net8.0-windows/BuildInfo.g.cs）
+public const string BuildDate = "2026-10-15 11:50:12";
+```
+
+| 元数据 | 实测值 | 期望 |
+|---|---|---|
+| `ProductName` | `DSH Modbus 采集工具` | = csproj `<Product>` ✓ |
+| `FileVersion` | `0.6.0.0` | = csproj `<FileVersion>` ✓ |
+| `ProductVersion` | `0.6.0+b9d0a08989f32771cca60e42770a39c540478012` | SDK 自动追加 `+<sha>`，**显示时必须砍掉** ✓ |
+| `Company` | `DSH` | = csproj `<Company>` ✓ |
+
+> `ProductVersion` 这一行正是 ADR-30 里"砍 `+` 之后部分"的实证来源 —— 若不处理，界面会显示 `v0.6.0+b9d0a08…`。
+
+**2. UIA 读回界面（`.tmp\p53-verify.ps1`，全通过）**
+
+```
+InfoProductText  = DSH Modbus 采集工具
+InfoVersionText  = v0.6.0                    ← +<sha> 已正确剥离
+InfoBuildDateText= 2026-10-15 11:50:12
+InfoRuntimeText  = .NET 8.0.14　·　Windows 10.0.26100.0 (64 位)
+InfoDriversText  = 信捷XD/XL系列 / 汇川Easy系列（FC01/02/03/04 读，FC05/06/16 写）
+present LogSaveOnSegment / LogSaveOffSegment / LogDirectoryTextBox / LogSaveStatusText
+```
+
+- 五格全部有值且与来源一致；**支持驱动列表与 `DriverRegistry.All` 的注册项吻合**（现算而非硬编码）✓
+- 截图核对 `.tmp\shots\p53-light.png` / `p53-dark.png`：深浅两主题下标签/取值对齐、对比度正常 ✓
+
+> ⚠️ **过程中修掉的问题**：`BuildDriverSummary` 首次编译报 `CS0122: "DriverRegistry.Drivers"不可访问` —— 那三个字符的字段是 `private static readonly List<CommDriver> Drivers`，公开访问器是 **`DriverRegistry.All`**。这类错误说明"现算"这条路走对了：硬编码的话不会有编译期提醒，而会在加驱动品牌后静默过期。
+
+**3. 构建**
+
+`--no-incremental` 全量重编 **0 警告 0 错误**。测试后已恢复用户配置（IP `192.168.1.100`、日志开启、目录默认）。
+
+> 另记一条诊断经验：`InfoRuntimeText` 里的 `Environment.OSVersion` 在**未声明支持 Win10+ 的清单**下会虚报为 `10.0.26100.0`（当前机器实为 Win11 内核同一版本线），故这格是**纯诊断信息**，不参与任何逻辑判断。
 
 ## 11. 构建与运行
 

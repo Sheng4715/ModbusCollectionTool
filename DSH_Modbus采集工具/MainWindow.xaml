@@ -1737,8 +1737,8 @@
                     </StackPanel>
 
                     <!-- ================= 设置（P5） =================
-                         主题外观 + 日志保存 + 项目信息。
-                         本轮只做主题外观；日志保存与项目信息为占位（见 Brief.md P5）。 -->
+                         主题外观（P5-1）+ 日志保存（P5-2）+ 项目信息（P5-3），见 Brief.md P5。
+                         三张卡都是实装；项目信息的值由 AppInfo + csproj 生成的构建日期常量提供。 -->
                     <StackPanel x:Name="SettingsPanel" Visibility="Collapsed"
                                 d:Visibility="Collapsed">
 
@@ -1880,7 +1880,7 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- 项目信息（占位，见 Brief.md P5-3） -->
+                        <!-- 项目信息（P5-3） -->
                         <Border Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
@@ -1889,10 +1889,56 @@
                                            FontSize="14" FontWeight="SemiBold"
                                            Foreground="{DynamicResource Brush.Text.Primary}"
                                            Margin="0,0,0,4"/>
-                                <TextBlock Text="尚未实现 —— 计划显示版本号与构建日期。"
-                                           FontSize="12"
-                                           Foreground="{DynamicResource Brush.Text.Muted}"
-                                           Margin="0,4,0,0"/>
+
+                                <!-- 两列：左标签固定宽，右值左对齐；行距 8 -->
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="InfoLabel"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="名称"
+                                               FontSize="12" Margin="0,0,16,8"
+                                               Foreground="{DynamicResource Brush.Text.Muted}"/>
+                                    <TextBlock x:Name="InfoProductText" Grid.Row="0" Grid.Column="1"
+                                               FontSize="12" Margin="0,0,0,8"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"/>
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="版本"
+                                               FontSize="12" Margin="0,0,16,8"
+                                               Foreground="{DynamicResource Brush.Text.Muted}"/>
+                                    <TextBlock x:Name="InfoVersionText" Grid.Row="1" Grid.Column="1"
+                                               FontSize="12" Margin="0,0,0,8"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"/>
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="构建日期"
+                                               FontSize="12" Margin="0,0,16,8"
+                                               Foreground="{DynamicResource Brush.Text.Muted}"/>
+                                    <TextBlock x:Name="InfoBuildDateText" Grid.Row="2" Grid.Column="1"
+                                               FontSize="12" Margin="0,0,0,8"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"/>
+
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="运行环境"
+                                               FontSize="12" Margin="0,0,16,8"
+                                               Foreground="{DynamicResource Brush.Text.Muted}"/>
+                                    <TextBlock x:Name="InfoRuntimeText" Grid.Row="3" Grid.Column="1"
+                                               FontSize="12" Margin="0,0,0,8"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"/>
+
+                                    <TextBlock Grid.Row="4" Grid.Column="0" Text="支持驱动"
+                                               FontSize="12" Margin="0,0,16,0"
+                                               Foreground="{DynamicResource Brush.Text.Muted}"/>
+                                    <TextBlock x:Name="InfoDriversText" Grid.Row="4" Grid.Column="1"
+                                               FontSize="12" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"/>
+                                </Grid>
                             </StackPanel>
                         </Border>
                     </StackPanel>

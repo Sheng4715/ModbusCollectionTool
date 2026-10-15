@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -6,6 +6,53 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <RootNamespace>DSH_Modbus采集工具</RootNamespace>
+    <AssemblyName>DSH_Modbus采集工具</AssemblyName>
   </PropertyGroup>
+
+  <!--
+    项目信息（P5-3）。
+    版本号**手写**在这里：自动递增看似省事，但会把「版本号」变成构建次数的函数，
+    而现场排障需要的是「这个 exe 是哪一版」，不是「编译过几次」。提版本由人决定。
+
+    构建日期相反 —— 手写必然忘记更新，故由 MSBuild 在每次编译时现取写入一个
+    生成常量（见下方 WriteBuildDate）。
+  -->
+  <PropertyGroup>
+    <Version>0.6.0</Version>
+    <AssemblyVersion>0.6.0.0</AssemblyVersion>
+    <FileVersion>0.6.0.0</FileVersion>
+    <Product>DSH Modbus 采集工具</Product>
+    <Company>DSH</Company>
+    <Description>基于 WPF / .NET 8 的 Modbus 数据采集上位机</Description>
+  </PropertyGroup>
+
+  <!--
+    构建日期：生成到 obj/ 下的一个源文件里，随项目一起编译。
+    用 BeforeTargets="CoreCompile" 而不是覆盖 <Version>：后者会连带影响程序集版本，
+    且每次编译都变会让增量构建失效（程序集版本变了，引用它的东西全部重编）。
+    这里只产出一个只读常量，与程序集身份无关。
+  -->
+  <Target Name="WriteBuildDate" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_BuildDateFile>$(IntermediateOutputPath)BuildInfo.g.cs</_BuildDateFile>
+      <_BuildDateValue>$([System.DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))</_BuildDateValue>
+    </PropertyGroup>
+    <ItemGroup>
+      <_BuildInfoLines Include="// &lt;auto-generated&gt; 由 csproj 的 WriteBuildDate 目标生成，请勿手改。" />
+      <_BuildInfoLines Include="namespace DSH_Modbus采集工具" />
+      <_BuildInfoLines Include="{" />
+      <_BuildInfoLines Include="    internal static partial class BuildInfo" />
+      <_BuildInfoLines Include="    {" />
+      <_BuildInfoLines Include="        public const string BuildDate = &quot;$(_BuildDateValue)&quot;%3B" />
+      <_BuildInfoLines Include="    }" />
+      <_BuildInfoLines Include="}" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_BuildDateFile)" Lines="@(_BuildInfoLines)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(_BuildDateFile)" />
+      <FileWrites Include="$(_BuildDateFile)" />
+    </ItemGroup>
+  </Target>
 
 </Project>

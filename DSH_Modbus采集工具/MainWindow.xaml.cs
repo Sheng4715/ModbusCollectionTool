@@ -561,6 +561,9 @@ namespace DSH_Modbus采集工具
             SyncLogSaveSegments();
             ApplyLogDirectory(ThemeManager.LogDirectory);
 
+            // P5-3：项目信息全是常量，填一次即可（不需要进页面时刷新）
+            RefreshProjectInfo();
+
             SyncInputHeights();
             ScanNetworkAdapters();
             UpdateOverviewStatus();
@@ -834,6 +837,39 @@ namespace DSH_Modbus采集工具
             LogSaveStatusText.Text = $"当前文件：{file}（本日已写 {_logWriter.LinesWritten} 行）";
             LogSaveStatusText.Foreground = Themes.ThemeManager.GetBrush("Brush.Text.Muted")
                 ?? System.Windows.Media.Brushes.Gray;
+        }
+
+        /// <summary>
+        /// 填充设置页的项目信息卡（P5-3）。
+        ///
+        /// <para>
+        /// 全是**常量**（版本号来自程序集元数据、构建日期来自 csproj 生成的常量），
+        /// 运行期不会变，故只在 <see cref="Window_Loaded"/> 里填一次即可 ——
+        /// 不需要像日志状态那样在进页面时刷新。
+        /// </para>
+        /// </summary>
+        private void RefreshProjectInfo()
+        {
+            if (InfoProductText == null)
+            {
+                return;
+            }
+
+            InfoProductText.Text = AppInfo.ProductName;
+            InfoVersionText.Text = $"v{AppInfo.Version}";
+            InfoBuildDateText.Text = AppInfo.BuildDate;
+            InfoRuntimeText.Text = $"{AppInfo.Runtime}　·　{AppInfo.OperatingSystem}";
+            InfoDriversText.Text = BuildDriverSummary();
+        }
+
+        /// <summary>
+        /// 从驱动注册表现算「已支持驱动」摘要（不写死字符串）——
+        /// 以后加品牌，项目信息卡自动跟着变，不会漏改。
+        /// </summary>
+        private static string BuildDriverSummary()
+        {
+            var names = Drivers.DriverRegistry.All.Select(d => d.DisplayName).ToArray();
+            return $"{string.Join(" / ", names)}（{AppInfo.FunctionCodes}）";
         }
 
         /// <summary>

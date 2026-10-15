@@ -17,12 +17,15 @@ dotnet run --project DSH_Modbus采集工具
 - **构建前必须先结束进程**，否则 exe 被锁报 MSB3027
 - 窗口最小 1024×640（`MainWindow.xaml` 的 `MinWidth/MinHeight`），默认与最小一致
 - 用户习惯：**构建成功后自动启动应用**；改动完成后及时提交（中文提交信息）
+- **版本号与构建日期在 `DSH_Modbus采集工具.csproj`**：`<Version>` 手改（提版本时改这一处）；
+  `<WriteBuildDate>` 目标每次编译现取系统时间写入 `obj/.../BuildInfo.g.cs`。详见 §7.2
 
 ## 2. 目录结构
 
 ```
 DSH_Modbus采集工具/
 ├── App.xaml / App.xaml.cs      # 入口（OnStartup 里先 ThemeManager.Initialize）
+├── AppInfo.cs                  # 项目信息（P5-3）：版本号 / 构建日期 / 运行环境（只读程序集元数据）
 ├── MainWindow.xaml             # 全部 UI（单窗口，无 UserControl 拆分）
 ├── MainWindow.xaml.cs          # 交互逻辑（见 §4 分工）
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
@@ -83,7 +86,7 @@ Window
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `采集配置` | — | 占位项，不切面板 |
-| `SettingsNav` 设置 | `SettingsPanel` | 主题外观（P5-1）+ 日志保存（P5-2）；项目信息为占位卡 |
+| `SettingsNav` 设置 | `SettingsPanel` | 主题外观（P5-1）+ 日志保存（P5-2）+ 项目信息（P5-3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
 
@@ -155,7 +158,7 @@ Window
 
 ## 4. 代码分工（MainWindow.xaml.cs）
 
-> `MainWindow.xaml.cs` 现约 **2400 行**（P5 重构前 2576）。采集编排已抽到 `Polling/`、
+> `MainWindow.xaml.cs` 现约 **2590 行**（P5 重构前 2576）。采集编排已抽到 `Polling/`、
 > IO 点位集/分页/导入已抽到 `Io/`，主题在 `Themes/`；其余（连接生命周期 / 心跳 / 导航 /
 > 自由监控 / 日志）仍在本文件。**自由监控刻意未抽** —— 它有 12 处直接碰控件，见 `Design.md` §8-1。
 
@@ -176,6 +179,7 @@ Window
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset` |
 | **主题（P5-1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged` / `StatusBrushKey`；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
 | **日志落盘（P5-2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveSegment_Checked` / `SyncLogSaveSegments` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（见 §7.1） |
+| **项目信息（P5-3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `Version` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo` / `BuildDriverSummary`（见 §7.2） |
 | 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_deviceLog` / `_logWriter` / `_statusText` / `_statusColorHex` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt`（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
@@ -307,6 +311,27 @@ Window
 - 开关/路径改动**立即生效**（`SetEnabled` / `SetDirectory`），关掉或换目录时释放旧句柄（否则用户没法移动文件夹）
 - 独立验证工程 `LoggingCheck`（31 项断言）覆盖行格式 / 跨天 / 续写 / 换目录 / 开关 / 容错，改动写入器后跑它
 
+### 7.2 项目信息（P5-3）
+
+设置页第三张卡，显示 **名称 / 版本 / 构建日期 / 运行环境 / 支持驱动**。全是常量，在 `Window_Loaded` 里 `RefreshProjectInfo()` 填一次。
+
+| 项 | 来源 |
+|---|---|
+| 名称 | csproj `<Product>` → `AssemblyProductAttribute` |
+| 版本 | csproj `<Version>` → `AssemblyInformationalVersion`（**显示时砍掉 `+` 之后的构建元数据**） |
+| 构建日期 | csproj `WriteBuildDate` 目标生成的 `BuildInfo.BuildDate` 常量 |
+| 运行环境 | `Environment.Version` + `Environment.OSVersion` + `Environment.Is64BitProcess` |
+| 支持驱动 | **现算** `DriverRegistry.All` 的 `DisplayName`，不写死字符串 |
+
+**几条容易踩的**：
+
+- ⚠️ **版本号手写在 csproj，不自动递增**：自动递增会把「版本号」变成构建次数的函数，而现场排障要的是「这个 exe 是哪一版」，不是「编译过几次」。提版本由人决定
+- ⚠️ **构建日期必须编译期生成**：手写必然忘记更新；用**文件时间**也不行 —— 复制/解压/杀软扫描都会改动它，与"代码什么时候编的"无关
+- ⚠️ **日期用独立目标 + 独立常量，不要覆盖 `<Version>`**：把日期塞进 `Version` 会让程序集版本每次编译都变，进而让增量构建失效（引用方全部重编）
+- ⚠️ **`InformationalVersion` 会被 SDK 自动追加 `+<git sha>`**（实测 `0.6.0+b9d0a08...`），显示前必须砍掉 `+` 之后的部分，否则用户看到一长串哈希
+- 生成的 `BuildInfo.g.cs` 落在 `obj/` 下，**不要手改、也不要提交**（已在 `.gitignore` 覆盖范围内）
+- 加驱动品牌后**不用改这里**：`BuildDriverSummary` 从注册表现算
+
 ## 8. 通讯驱动标准
 
 新增品牌 = 在 `DriverRegistry.Drivers` 追加一个 `CommDriver`：
@@ -424,7 +449,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | **加输入框 / 下拉框 / 按钮（新增控件必读）** | 套用现成样式，别手写外观 —— 见 **§9.1 控件风格约定** |
 | **改任何颜色（必读）** | 用主题键，**不要写字面量** —— 见 **§9.2 主题与配色** |
 | **加/改主题、深色适配、跟随系统** | `Themes/`（`Light.xaml` / `Dark.xaml` 同键）+ `Themes/ThemeManager.cs`；C# 侧画刷见 §9.2 |
-| **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关/路径 `LogSaveSegment_Checked` / `LogDirectoryTextBox_LostFocus` |
+| **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关/路径 `LogSaveSegment_Checked` / `LogDirectoryTextBox_LostFocus`；项目信息 `RefreshProjectInfo`（见 §7.2） |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
