@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    DeviceLogFileWriter 的独立验证工程（P5-2）。
+    刻意**不引用 WPF**：写入器本身无界面依赖，用同样的源码链接进来即可在控制台断言，
+    无需启动窗口。与 ModelingCheck/ 的手法一致。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>LoggingCheck</RootNamespace>
+    <AssemblyName>LoggingCheck</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 链接源码而非引用工程：主工程是 WPF/Windows 目标，不能直接被 net8.0 引用 -->
+    <Compile Include="..\DSH_Modbus采集工具\Logging\DeviceLogFileWriter.cs"/>
+    <Compile Include="Program.cs"/>
+  </ItemGroup>
+
+</Project>

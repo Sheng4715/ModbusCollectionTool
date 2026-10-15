@@ -57,7 +57,8 @@ namespace DSH_Modbus采集工具.Themes
             // 键不一致属于开发期配置错误，宁可启动即崩也不要静默显示错色
             ValidateKeyParity();
 
-            Mode = ParseMode(Load().Theme);
+            _settings = Load();
+            Mode = ParseMode(_settings.Theme);
 
             // 显式指定的主题不随后续系统切换而变；「跟随系统」才挂监听
             SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
@@ -65,12 +66,41 @@ namespace DSH_Modbus采集工具.Themes
             Apply(Mode);
         }
 
+        // ==== 日志保存（P5-2） ====
+        // 与主题共用 app-settings.json：两者都是「应用级偏好」，拆两个文件会让
+        // 设置页的读取分散在两处。日志部分只在这里存取值，落盘逻辑在
+        // Logging/DeviceLogFileWriter.cs。
+
+        /// <summary>日志保存是否启用（默认启用）。</summary>
+        public static bool LogSaveEnabled => _settings.LogSaveEnabled;
+
+        /// <summary>日志保存目录（默认 exe 旁的 <c>Log</c>；存空串时也回退到默认）。</summary>
+        public static string LogDirectory =>
+            string.IsNullOrWhiteSpace(_settings.LogDirectory)
+                ? Logging.DeviceLogFileWriter.DefaultDirectory
+                : _settings.LogDirectory;
+
+        /// <summary>
+        /// 改日志保存设置并落盘。<paramref name="directory"/> 传 <c>null</c> 表示不改目录。
+        /// </summary>
+        public static void SetLogSave(bool enabled, string? directory = null)
+        {
+            _settings.LogSaveEnabled = enabled;
+            if (directory != null)
+            {
+                _settings.LogDirectory = directory;
+            }
+
+            Save(_settings);
+        }
+
         /// <summary>切换主题并落盘。</summary>
         public static void SetMode(ThemeMode mode)
         {
             Mode = mode;
+            _settings.Theme = mode.ToString();
             Apply(mode);
-            Save(mode);
+            Save(_settings);
         }
 
         private static void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
@@ -176,11 +206,20 @@ namespace DSH_Modbus采集工具.Themes
 
         // ---------- 持久化（app-settings.json） ----------
 
+        /// <summary>当前设置的内存副本（Initialize 时载入，之后原地改并整体落盘）。</summary>
+        private static AppSettings _settings = new();
+
         /// <summary>设置文件的内容。新增设置项时在此加属性即可，缺字段按默认值处理。</summary>
         private sealed class AppSettings
         {
             /// <summary>序列化为字符串（"Light"/"Dark"/"System"），比存数字更耐改枚举顺序。</summary>
             public string Theme { get; set; } = nameof(ThemeMode.System);
+
+            /// <summary>日志保存开关（P5-2）。用户定稿：**默认启用**。</summary>
+            public bool LogSaveEnabled { get; set; } = true;
+
+            /// <summary>日志保存目录（P5-2）。空串表示用默认目录（exe 旁的 Log）。</summary>
+            public string LogDirectory { get; set; } = string.Empty;
         }
 
         private static AppSettings Load()
@@ -215,12 +254,12 @@ namespace DSH_Modbus采集工具.Themes
                 ? mode
                 : ThemeMode.System;
 
-        private static void Save(ThemeMode mode)
+        private static void Save(AppSettings settings)
         {
             try
             {
                 string json = JsonSerializer.Serialize(
-                    new AppSettings { Theme = mode.ToString() },
+                    settings,
                     new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(SettingsFilePath, json);
             }

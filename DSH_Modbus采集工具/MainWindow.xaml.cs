@@ -15,6 +15,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using DSH_Modbus采集工具.Drivers;
 using DSH_Modbus采集工具.Io;
+using DSH_Modbus采集工具.Logging;
 using DSH_Modbus采集工具.Modeling;
 using DSH_Modbus采集工具.Polling;
 using DSH_Modbus采集工具.Themes;
@@ -277,6 +278,13 @@ namespace DSH_Modbus采集工具
 
         /// <summary>设备状态日志（总览页底部展示）。只在 UI 线程追加。</summary>
         private readonly ObservableCollection<LogEntry> _deviceLog = new();
+
+        /// <summary>
+        /// 设备状态日志的落盘写入器（P5-2）。所有写入都在 UI 线程（<see cref="AppendDeviceLog"/>
+        /// 的调用点全部来自 UI 线程），故内部无需再跨线程调度。窗口关闭时释放句柄。
+        /// </summary>
+        private readonly DeviceLogFileWriter _logWriter =
+            new(ThemeManager.LogDirectory, ThemeManager.LogSaveEnabled);
 
         // ---------- 底栏状态（换主题时据此重取颜色） ----------
 
@@ -549,6 +557,10 @@ namespace DSH_Modbus采集工具
             SyncThemeSegments();
             Themes.ThemeManager.ThemeChanged += OnThemeChanged;
 
+            // P5-2：日志保存设置同样在 App 启动时已载入，这里只回填界面
+            SyncLogSaveSegments();
+            ApplyLogDirectory(ThemeManager.LogDirectory);
+
             SyncInputHeights();
             ScanNetworkAdapters();
             UpdateOverviewStatus();
@@ -575,9 +587,18 @@ namespace DSH_Modbus采集工具
 
             if (SettingsPanel != null)
             {
-                SettingsPanel.Visibility = ReferenceEquals(sender, SettingsNav)
+                bool settingsVisible = ReferenceEquals(sender, SettingsNav);
+                SettingsPanel.Visibility = settingsVisible
                     ? Visibility.Visible
                     : Visibility.Collapsed;
+
+                // 切进设置页时刷新日志回显：行数/失败原因是"进入时该看到的最新值"，
+                // 而 AppendDeviceLog 只在面板已可见时才刷 —— 若进入前就写了几条日志，
+                // 不在这里补一次就会一直显示旧数字。
+                if (settingsVisible)
+                {
+                    RefreshLogSaveStatus();
+                }
             }
 
             if (DeviceConfigPanel == null)
@@ -664,6 +685,155 @@ namespace DSH_Modbus采集工具
 
             // 底栏：按当前状态重取颜色（文字不变）
             SetStatus(_statusText, _statusColorHex);
+        }
+
+        // ---------- 设置：日志保存（P5-2） ----------
+
+        /// <summary>
+        /// 日志开关分段被选中。与主题分段同款：<c>Checked</c> 也会被
+        /// <see cref="SyncLogSaveSegments"/> 触发一次，那次写回同一个值，幂等。
+        /// </summary>
+        private void LogSaveSegment_Checked(object sender, RoutedEventArgs e)
+        {
+            bool enabled = !ReferenceEquals(sender, LogSaveOffSegment);
+            ThemeManager.SetLogSave(enabled);
+            _logWriter.SetEnabled(enabled);
+            RefreshLogSaveStatus();
+        }
+
+        private void SyncLogSaveSegments()
+        {
+            bool enabled = ThemeManager.LogSaveEnabled;
+            LogSaveOnSegment.IsChecked = enabled;
+            LogSaveOffSegment.IsChecked = !enabled;
+        }
+
+        /// <summary>
+        /// 路径改动在**失焦时**落盘（与自由监控的元件名称同一约定）：打字途中每敲一个
+        /// 字符就写一次 json 既无意义，且中途的半截路径（如 `D:\Lo`）还可能被下一次启动
+        /// 当成有效目录。
+        /// </summary>
+        private void LogDirectoryTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            string typed = LogDirectoryTextBox.Text.Trim();
+
+            // 空串 = 回到默认目录；显式清空输入框是一种合理的「恢复默认」手势
+            if (typed.Length == 0)
+            {
+                ThemeManager.SetLogSave(ThemeManager.LogSaveEnabled, string.Empty);
+                ApplyLogDirectory(ThemeManager.LogDirectory);
+                return;
+            }
+
+            // 相对路径按 exe 目录展开：用户手敲「Log」时意图明确，不该拒绝
+            string full = Path.IsPathRooted(typed)
+                ? typed
+                : Path.Combine(AppContext.BaseDirectory, typed);
+
+            try
+            {
+                // 先试建目录再保存 —— 路径非法（非法字符 / 盘符不存在 / 无权限）在这里
+                // 就能发现，而不是等到第一条日志写不进去
+                Directory.CreateDirectory(full);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    this,
+                    $"保存路径无效：{ex.Message}\n\n已恢复为上一个可用路径。",
+                    "日志保存路径",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                ApplyLogDirectory(ThemeManager.LogDirectory);
+                return;
+            }
+
+            ThemeManager.SetLogSave(ThemeManager.LogSaveEnabled, full);
+            ApplyLogDirectory(full);
+        }
+
+        private void LogBrowseButton_Click(object sender, RoutedEventArgs e)
+        {
+            // WPF 没有内置文件夹选择器；.NET 8 的 OpenFolderDialog 在 Microsoft.Win32 下，
+            // 与本项目已用的注册表 API 同命名空间，不引入额外依赖
+            var dialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "选择日志保存文件夹",
+                InitialDirectory = ThemeManager.LogDirectory,
+            };
+
+            if (dialog.ShowDialog(this) == true)
+            {
+                ThemeManager.SetLogSave(ThemeManager.LogSaveEnabled, dialog.FolderName);
+                ApplyLogDirectory(dialog.FolderName);
+            }
+        }
+
+        private void LogOpenFolderButton_Click(object sender, RoutedEventArgs e)
+        {
+            string dir = ThemeManager.LogDirectory;
+            try
+            {
+                Directory.CreateDirectory(dir);
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = dir,
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"无法打开文件夹：{ex.Message}", "日志保存",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void LogResetDirectoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            ThemeManager.SetLogSave(ThemeManager.LogSaveEnabled, string.Empty);
+            ApplyLogDirectory(ThemeManager.LogDirectory);
+        }
+
+        /// <summary>把路径同步到输入框与写入器，并刷新状态回显。</summary>
+        private void ApplyLogDirectory(string directory)
+        {
+            LogDirectoryTextBox.Text = directory;
+            _logWriter.SetDirectory(directory);
+            RefreshLogSaveStatus();
+        }
+
+        /// <summary>
+        /// 回显日志保存状态：关闭 / 当前文件 / 上次失败原因。失败原因优先显示 ——
+        /// 那才是需要用户处理的。
+        /// </summary>
+        private void RefreshLogSaveStatus()
+        {
+            if (LogSaveStatusText == null)
+            {
+                return;
+            }
+
+            if (!ThemeManager.LogSaveEnabled)
+            {
+                LogSaveStatusText.Text = "已关闭，运行日志只保留在界面上（不落盘）。";
+                LogSaveStatusText.Foreground = Themes.ThemeManager.GetBrush("Brush.Text.Muted")
+                    ?? System.Windows.Media.Brushes.Gray;
+                return;
+            }
+
+            if (_logWriter.LastError != null)
+            {
+                LogSaveStatusText.Text = $"写入失败：{_logWriter.LastError}";
+                LogSaveStatusText.Foreground = Themes.ThemeManager.GetBrush("Brush.Warning")
+                    ?? System.Windows.Media.Brushes.DarkOrange;
+                return;
+            }
+
+            string dir = ThemeManager.LogDirectory;
+            string file = Logging.DeviceLogFileWriter.FilePathFor(dir, DateOnly.FromDateTime(DateTime.Now));
+            LogSaveStatusText.Text = $"当前文件：{file}（本日已写 {_logWriter.LinesWritten} 行）";
+            LogSaveStatusText.Foreground = Themes.ThemeManager.GetBrush("Brush.Text.Muted")
+                ?? System.Windows.Media.Brushes.Gray;
         }
 
         /// <summary>
@@ -1149,14 +1319,39 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private void AppendDeviceLog(string message, DeviceLogLevel level)
         {
-            _deviceLog.Add(new LogEntry(DateTime.Now, message, level));
+            var now = DateTime.Now;
+
+            _deviceLog.Add(new LogEntry(now, message, level));
             while (_deviceLog.Count > MaxDeviceLogEntries)
             {
                 _deviceLog.RemoveAt(0);
             }
 
             DeviceLogList.ScrollIntoView(_deviceLog[^1]);
+
+            // P5-2：落盘与界面**共用同一个时间戳**。分成两次取时，跨秒时写下的
+            // 时间会与界面差一秒，事后对照两边对不上。
+            _logWriter?.Write(now, FileLevelOf(level), message);
+
+            // 设置页可见时刷新回显（行数 / 失败原因）。不可见就不刷 —— 日志是高频旁路，
+            // 让它去更新一个没人看的 TextBlock 没有必要。
+            if (SettingsPanel?.Visibility == Visibility.Visible)
+            {
+                RefreshLogSaveStatus();
+            }
         }
+
+        /// <summary>
+        /// 界面级别 → 落盘级别的映射（P5-2，用户定稿按**颜色语义**分档）：
+        /// 绿（已连接 / 通讯恢复）= INFO，琥珀（通讯异常）= WARN，红（已断开 / 连接失败）= ERROR。
+        /// <c>Neutral</c> 是默认灰，按 INFO 处理。
+        /// </summary>
+        private static Logging.LogFileLevel FileLevelOf(DeviceLogLevel level) => level switch
+        {
+            DeviceLogLevel.Warning => Logging.LogFileLevel.WARN,
+            DeviceLogLevel.Disconnected => Logging.LogFileLevel.ERROR,
+            _ => Logging.LogFileLevel.INFO,
+        };
 
         private void ClearDeviceLogButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1570,6 +1765,7 @@ namespace DSH_Modbus采集工具
             Themes.ThemeManager.ThemeChanged -= OnThemeChanged;
             CancelReconnect();
             Disconnect();
+            _logWriter.Dispose();
             base.OnClosed(e);
         }
 

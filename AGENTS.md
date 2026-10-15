@@ -43,6 +43,8 @@ DSH_Modbus采集工具/
 │   ├── DataTypes.cs            # DataType / DisplayFormat 枚举 + DataTypeSpec 规格表
 │   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
 │   └── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
+├── Logging/                    # 日志落盘（P5-2，不含 WPF 类型）
+│   └── DeviceLogFileWriter.cs  # 按天追加纯文本 .log + 跨天换文件 + 失败自愈
 └── Drivers/
     ├── CommDriver.cs           # 模型：ModbusArea / NumberBase / AddressArea / CommDriver（含字节顺序枚举）
     ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
@@ -55,6 +57,7 @@ DSH_Modbus采集工具/
 > 一律留在 `MainWindow.xaml.cs`。新增逻辑时按同一原则归位。
 
 > `ModelingCheck/`（仓库根，**不属于本工程**）是 P3-3 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
+> `LoggingCheck/`（同上）是 P5-2 的独立验证工程：链接 `DeviceLogFileWriter.cs` 源码断言行格式 / 跨天换文件 / 续写 / 容错，31 项，不参与主程序构建。
 
 ## 3. 页面与 UI
 
@@ -80,7 +83,7 @@ Window
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `采集配置` | — | 占位项，不切面板 |
-| `SettingsNav` 设置 | `SettingsPanel` | 主题外观（P5-1）；日志保存/项目信息为占位卡 |
+| `SettingsNav` 设置 | `SettingsPanel` | 主题外观（P5-1）+ 日志保存（P5-2）；项目信息为占位卡 |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
 
@@ -169,10 +172,11 @@ Window
 | **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 §5.1） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（`NicInfo`） |
-| 日志 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` / `RefreshDeviceLogColors`（换主题时重建行色） |
+| 日志 | `AppendDeviceLog`（顺带落盘 P5-2）/ `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` / `RefreshDeviceLogColors`（换主题时重建行色）/ `FileLevelOf`（界面级别 → 落盘级别） |
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset` |
 | **主题（P5-1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged` / `StatusBrushKey`；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
-| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_deviceLog` / `_statusText` / `_statusColorHex` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt`（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
+| **日志落盘（P5-2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveSegment_Checked` / `SyncLogSaveSegments` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（见 §7.1） |
+| 关键字段 | `_modbus` / `_isConnected` / `_pollCts` / `_connectCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_deviceLog` / `_logWriter` / `_statusText` / `_statusColorHex` / `_reconnectTarget` / `_reconnectCts` / `_reconnectAttempt`（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -272,6 +276,36 @@ Window
 - **边界**：「完全无响应」不产生「通讯异常」—— 由 `NotifyConnectionLost` 记红色「已断开」，**一次断线只有一条日志**
 - 原因经 `ClassifyDisconnectReason` 归一为简短中文（Socket 原文 →「网络不可达」，Modbus 帧错误 →「响应帧校验失败」），未命中原样保留
 - 日志区套一层内嵌框线 `Border`（`#C8C8C8` 1px、圆角 4）；时间列用 `SharedSizeGroup="DeviceLogTime"` 跨行共享宽度（**否则比例字宽会让消息左边界抖动**），`DeviceLogList` 上须有 `Grid.IsSharedSizeScope="True"`
+
+### 7.1 日志落盘（P5-2）
+
+同一条日志**既进界面又进文件**，落盘挂在 `AppendDeviceLog` —— 那是 5 种设备状态的唯一出口，7 个调用点零改动。
+
+```
+[2026-10-15 11:41:45] [INFO] 已连接：192.168.1.66:502
+[2026-10-15 11:41:58] [ERROR] 已断开：用户主动断开
+```
+
+| 项 | 行为 |
+|---|---|
+| 默认目录 | `AppContext.BaseDirectory\Log`（exe 旁） |
+| 文件名 | 日期，如 `2026-10-15.log`（**一天一个**，跨天自动换） |
+| 格式 | 纯文本 UTF-8 无 BOM，每行 `[yyyy-MM-dd HH:mm:ss] [级别] 消息` |
+| 级别 | **按颜色语义**（见 `FileLevelOf`）：绿 → `INFO`、琥珀 → `WARN`、红 → `ERROR` |
+| 默认状态 | **启用**（用户定稿） |
+| 保留 | **不自动清理**，一直追加 |
+| 设置项 | `app-settings.json` → `LogSaveEnabled` / `LogDirectory`（空串 = 默认目录） |
+
+**几条容易踩的**：
+
+- ⚠️ **时间戳必须共用**：`AppendDeviceLog` 里 `var now = DateTime.Now` 只取一次，界面与文件用同一个值。各取一次会在跨秒时让两边差一秒，事后对照对不上
+- ⚠️ **跨天判断取「写入那一刻」的日期**，不是进程启动日 —— 应用常驻跨零点必须能正确切分。日期**回退也要换文件**（不能"只认更大日期"）
+- ⚠️ **`FileShare.ReadWrite`**：文件句柄在应用运行期间一直持有，用户要用记事本 / VS Code / `tail` 打开当前日志。只给 `Read` 时这些工具会报"文件被占用"（实测验到过）
+- ⚠️ **所有 IO 异常一律吞掉**：磁盘满 / 目录只读 / 文件被占都不能让应用崩，失败原因留在 `LastError` 由设置页显示，**下一次写入自动重试打开**（自愈）
+- 写完立即 `Flush`：崩溃后复盘才看得到最后几条，而那几条往往正是崩溃原因
+- 设置页路径改动**失焦才落盘**，且**先 `Directory.CreateDirectory` 再保存** —— 非法路径当场报错并回退，不拖到第一条日志写不进去才暴露
+- 开关/路径改动**立即生效**（`SetEnabled` / `SetDirectory`），关掉或换目录时释放旧句柄（否则用户没法移动文件夹）
+- 独立验证工程 `LoggingCheck`（31 项断言）覆盖行格式 / 跨天 / 续写 / 换目录 / 开关 / 容错，改动写入器后跑它
 
 ## 8. 通讯驱动标准
 
@@ -390,7 +424,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | **加输入框 / 下拉框 / 按钮（新增控件必读）** | 套用现成样式，别手写外观 —— 见 **§9.1 控件风格约定** |
 | **改任何颜色（必读）** | 用主题键，**不要写字面量** —— 见 **§9.2 主题与配色** |
 | **加/改主题、深色适配、跟随系统** | `Themes/`（`Light.xaml` / `Dark.xaml` 同键）+ `Themes/ThemeManager.cs`；C# 侧画刷见 §9.2 |
-| **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段处理在 `ThemeSegment_Checked` |
+| **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关/路径 `LogSaveSegment_Checked` / `LogDirectoryTextBox_LostFocus` |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
@@ -426,6 +460,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 采集周期档位 | `PollIntervalComboBox` + `_pollIntervalMs` |
 | 日志追加/清空/上限 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `MaxDeviceLogEntries` |
 | 日志颜色与格式 | `LogEntry`（`DeviceLogLevel` → `LevelBrush`）+ `DeviceLogItemTemplate` |
+| **日志落盘（改落盘行为必读）** | `Logging/DeviceLogFileWriter.cs`；窗口侧 `_logWriter` / `FileLevelOf` / `RefreshLogSaveStatus`；独立验证 `LoggingCheck`（见 **§7.1**） |
 | 断开原因归类 | `ClassifyDisconnectReason` |
 | 连接任务隔离/关闭清理 | `RunConnectionTasksAsync` / `IsCurrentConnection` / `OnClosed` |
 

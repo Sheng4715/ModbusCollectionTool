@@ -1792,7 +1792,7 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- 日志保存（占位，见 Brief.md P5-2） -->
+                        <!-- 日志保存（P5-2） -->
                         <Border Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
@@ -1801,10 +1801,82 @@
                                            FontSize="14" FontWeight="SemiBold"
                                            Foreground="{DynamicResource Brush.Text.Primary}"
                                            Margin="0,0,0,4"/>
-                                <TextBlock Text="尚未实现 —— 计划落盘到程序目录的 Log 文件夹，按日期命名。"
+                                <TextBlock Text="把运行日志按天追加到纯文本文件，每行「[时间] [级别] 消息」。"
                                            FontSize="12"
                                            Foreground="{DynamicResource Brush.Text.Muted}"
-                                           Margin="0,4,0,0"/>
+                                           Margin="0,4,0,0"
+                                           TextWrapping="Wrap"/>
+
+                                <!-- 开关：沿用分段控件的轨道，视觉与主题切换一致 -->
+                                <TextBlock Text="启用"
+                                           FontSize="14"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"
+                                           Margin="0,12,0,0"/>
+                                <Border Background="{DynamicResource Brush.Control.Background}"
+                                        CornerRadius="6" Padding="2"
+                                        HorizontalAlignment="Left" Margin="0,10,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <RadioButton x:Name="LogSaveOnSegment"
+                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                     GroupName="LogSave"
+                                                     Content="开启"
+                                                     Checked="LogSaveSegment_Checked"/>
+                                        <RadioButton x:Name="LogSaveOffSegment"
+                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                     GroupName="LogSave"
+                                                     Content="关闭"
+                                                     Checked="LogSaveSegment_Checked"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- 保存路径：输入框（改完失焦生效） + 按钮 -->
+                                <TextBlock Text="保存路径"
+                                           FontSize="14"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"
+                                           Margin="0,16,0,0"/>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBox x:Name="LogDirectoryTextBox"
+                                             Style="{StaticResource FormTextBox}"
+                                             Grid.Column="0"
+                                             Width="Auto"
+                                             HorizontalAlignment="Stretch"
+                                             LostFocus="LogDirectoryTextBox_LostFocus"/>
+
+                                    <Button x:Name="LogBrowseButton"
+                                            Style="{StaticResource FormButton}"
+                                            Grid.Column="1"
+                                            Margin="8,0,0,0"
+                                            Content="浏览…"
+                                            Click="LogBrowseButton_Click"/>
+
+                                    <Button x:Name="LogOpenFolderButton"
+                                            Style="{StaticResource FormButton}"
+                                            Grid.Column="2"
+                                            Margin="8,0,0,0"
+                                            Content="打开文件夹"
+                                            Click="LogOpenFolderButton_Click"/>
+
+                                    <Button x:Name="LogResetDirectoryButton"
+                                            Style="{StaticResource FormButton}"
+                                            Grid.Column="3"
+                                            Margin="8,0,0,0"
+                                            Content="恢复默认"
+                                            Click="LogResetDirectoryButton_Click"/>
+                                </Grid>
+
+                                <!-- 状态回显：未启用 / 当前文件 / 上次写入失败的原因 -->
+                                <TextBlock x:Name="LogSaveStatusText"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource Brush.Text.Muted}"
+                                           Margin="0,10,0,0"
+                                           TextWrapping="Wrap"/>
                             </StackPanel>
                         </Border>
 
