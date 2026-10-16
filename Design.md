@@ -431,6 +431,7 @@ D[n] = (char[2i] << 8) | char[2i+1]
    - 已抽出的两块**刻意不引用 WPF**：`IoPager` 只做数值运算（`IoPagerPanel.Visibility` / `IoPageText.Text` / `IoEmptyHint.Visibility` 三处控件写入留在窗口），`IoTableImporter` 只返回数据（`MessageBox` 留在窗口）。这样它们可被 `ModelingCheck` 式的独立工程链接源码直接验证。
    - **已开始的收窄（2026-10-16）**：`ClassifyDisconnectReason` 的规则本体已抽到 `Logging/DisconnectReasonClassifier.cs`（纯 `string→string`，窗口侧只留一层薄包装，调用点未动）。选它开头是因为它刚被**底栏与日志同时复用** —— 「两处各写一套」的口子已经真实出现过。`FileLevelOf` **未一并抽出**：它依赖窗口文件里的 `DeviceLogLevel` 枚举，为 6 行代码搬枚举不划算。
    - **第二批（同日）**：`NicInfo` 与网卡扫描/还原规则抽到 `Net/NicScanner.cs` —— 扫描（`NetworkInterface` 的三重过滤）与「本次选择 → 记住的 → 第 0 项」的优先级都是纯逻辑，窗口只留 `_restoringNicSelection` 闸门与下拉框填充（那是「用户意图 vs 程序改动」的判断，离不开控件事件）。`IndexOfNic` 随之删除。验证：`.tmp/NicCheck` 17 项断言全通过（未提交，与 `PollerCheck` 同处）。
+   - **第三批（同日）**：最大化溢出补偿抽到 `Ui/MaximizedInset.cs` —— P/Invoke、`MONITORINFO` 结构、DPI 换算与内缩量计算整体搬走，窗口侧只留一行 `MaximizedInset.Apply(this, RootGrid)`。验证方式：与搬走前的实现做**归一化逐行比对**，除参数名外 26 行正文完全一致（该算法必须有真实窗口才能跑，进不了控制台断言；真机结论仍以 AGENTS §3.6 的记录为准）。
 2. ~~X 点位与注释硬编码~~ → **已解决**：点位集完全由 IO 表驱动，内置 `XComments` 已删除。
 3. ~~目标网卡下拉无实际作用~~ → **已解决**：连接时 `Bind(所选IP, 0)` 强制源地址，错误路径与成功路径均已端到端验证。
    - **后续补充（2026-10-15）**：绑定本身早已可用，但**选择没有持久化** —— 每次启动都回落到网卡列表第 0 项，于是启动后第一次连接可能绑错网卡，把本该是「对端无响应」的超时变成 `WSAENETUNREACH`，界面上显示成「连接失败：… 网络不可达」，看着像现场网络故障。已由 §10.11 修掉。

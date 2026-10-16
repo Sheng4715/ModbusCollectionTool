@@ -6,11 +6,9 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using DSH_Modbus采集工具.Drivers;
@@ -20,6 +18,7 @@ using DSH_Modbus采集工具.Modeling;
 using DSH_Modbus采集工具.Net;
 using DSH_Modbus采集工具.Polling;
 using DSH_Modbus采集工具.Themes;
+using DSH_Modbus采集工具.Ui;
 
 namespace DSH_Modbus采集工具
 {
@@ -481,84 +480,13 @@ namespace DSH_Modbus采集工具
         private void SaveComments() => _ioSet.Save();
 
         // ---------- 最大化溢出补偿 ----------
-        // 用 WindowChrome 自绘标题栏时，系统会把最大化窗口的四边各外扩一个窗口边框宽度
-        // （本机 150% DPI 实测 11px：窗口 -11,-11 ~ 1931,1219，而工作区 0,0 ~ 1920,1208），
-        // 把窗口底边推到任务栏之下；WindowChrome 下客户区覆盖整个窗口，于是底栏最下一条
-        // 被任务栏遮住（表现为「底栏偏下、被切」）。
-        //
-        // 试过拦 WM_GETMINMAXINFO 把 ptMaxSize 改成工作区 —— 实测无效：系统对带边框的
-        // 最大化窗口仍按自己的规则外扩（钩子确实被调用，写回的值被忽略）。
-        // 故改为确定性补偿：把根 Grid 四边各内缩「外扩量」，内容正好落进工作区。
-
-        private const int MonitorDefaultToNearest = 0x0002;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct NativeRect
-        {
-            public int Left;
-            public int Top;
-            public int Right;
-            public int Bottom;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MonitorInfo
-        {
-            public int Size;
-            public NativeRect Monitor;
-            public NativeRect Work;
-            public int Flags;
-        }
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
-
-        [DllImport("user32.dll")]
-        private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
-
-        [DllImport("user32.dll")]
-        private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
+        // 补偿方案、以及「拦 WM_GETMINMAXINFO 为什么无效」的完整记录见 Ui/MaximizedInset.cs。
 
         /// <summary>
-        /// 按当前窗口矩形与所在显示器工作区之差，给根 Grid 设/清内缩量。
-        /// 全部用物理像素测量再按窗口 DPI 换算，避免依赖 WPF 布局时序；
-        /// 非最大化时清空内缩。多显示器下由 <c>MonitorFromWindow</c> 取窗口所在那台。
+        /// 薄包装：算法在 <see cref="MaximizedInset"/>（物理像素测量 + 按 DPI 换算）；
+        /// 窗口侧只保留这个名字，<see cref="Window_StateChanged"/> 前后各调一次。
         /// </summary>
-        private void UpdateMaximizedInset()
-        {
-            if (RootGrid == null)
-            {
-                return;
-            }
-
-            if (WindowState != WindowState.Maximized)
-            {
-                RootGrid.Margin = new Thickness(0);
-                return;
-            }
-
-            IntPtr handle = new WindowInteropHelper(this).Handle;
-            IntPtr monitor = MonitorFromWindow(handle, MonitorDefaultToNearest);
-            if (monitor == IntPtr.Zero)
-            {
-                return;
-            }
-
-            // MONITORINFO 必须填 cbSize，否则 GetMonitorInfo 失败
-            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-            if (!GetMonitorInfo(monitor, ref info) || !GetWindowRect(handle, out NativeRect window))
-            {
-                return;
-            }
-
-            var dpi = VisualTreeHelper.GetDpi(this);
-            double overX = ((window.Right - window.Left) - (info.Work.Right - info.Work.Left)) / 2.0 / dpi.DpiScaleX;
-            double overY = ((window.Bottom - window.Top) - (info.Work.Bottom - info.Work.Top)) / 2.0 / dpi.DpiScaleY;
-
-            RootGrid.Margin = overX > 0 || overY > 0
-                ? new Thickness(Math.Max(0, overX), Math.Max(0, overY), Math.Max(0, overX), Math.Max(0, overY))
-                : new Thickness(0);
-        }
+        private void UpdateMaximizedInset() => MaximizedInset.Apply(this, RootGrid);
 
         // ---------- 窗口生命周期与导航 ----------
 

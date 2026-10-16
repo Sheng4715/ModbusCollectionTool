@@ -54,6 +54,8 @@ DSH_Modbus采集工具/
 │   └── DisconnectReasonClassifier.cs  # 异常原文 → 简短中文（底栏与日志共用）
 ├── Net/                        # 网卡枚举与选择记忆（不含 WPF 类型）
 │   └── NicScanner.cs           # 网络接口 → NicInfo + 「上次选择」还原优先级
+├── Ui/                         # 窗口几何等 UI 辅助（引 WPF，但不碰具体控件）
+│   └── MaximizedInset.cs       # 最大化溢出补偿：物理像素测量 + 按 DPI 内缩根元素
 └── Drivers/
     ├── CommDriver.cs           # 模型：ModbusArea / NumberBase / AddressArea / CommDriver（含字节顺序枚举）
     ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
@@ -66,7 +68,9 @@ DSH_Modbus采集工具/
 > 一律留在 `MainWindow.xaml.cs`。新增逻辑时按同一原则归位。
 
 > `ModelingCheck/`（仓库根，**不属于本工程**）是 P3-3 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
-> `LoggingCheck/`（同上）是 P5-2 的独立验证工程：链接 `DeviceLogFileWriter.cs` 源码断言行格式 / 跨天换文件 / 续写 / 容错，31 项，不参与主程序构建。
+> `LoggingCheck/`（同上）是 P5-2 的独立验证工程：链接 `DeviceLogFileWriter.cs` 与 `DisconnectReasonClassifier.cs` 源码，断言逐字符行格式 / 跨天换文件 / 续写 / 容错 / 断开原因归类，**44 项**，不参与主程序构建。
+
+> `.tmp/` 下另有两个**一次性**回归断言工程（**未提交**，随用随弃）：`PollerCheck`（IO 轮询异常码策略）与 `NicCheck`（网卡选择还原优先级）。它们验的是"改一次就够"的行为，不值当长期维护；要重跑时会话记录里有完整源码。
 
 ## 3. 页面与 UI
 
@@ -165,7 +169,7 @@ Window
 
 `WindowChrome` 自绘标题栏时，系统把最大化窗口四边**各外扩一个边框宽度**（150% DPI 实测 11px），底边被推到任务栏之下，而 `WindowChrome` 下客户区覆盖整个窗口 → 底栏最下一条被遮住。
 
-- `UpdateMaximizedInset()`：按「窗口矩形 − 所在显示器工作区」算外扩量，给 `RootGrid` 四边各内缩该值；非最大化时清零
+- 算法在 `Ui/MaximizedInset.cs`（`MaximizedInset.Apply(window, root)`）：按「窗口矩形 − 所在显示器工作区」算外扩量，给 `RootGrid` 四边各内缩该值；非最大化时清零。窗口侧 `UpdateMaximizedInset()` 只是一行薄包装
 - 由 `Window_StateChanged` 调两次（切换瞬间 + `DispatcherPriority.Loaded` 后），因为状态刚变时窗口矩形可能还没落定
 - 用**物理像素**测量再按 `VisualTreeHelper.GetDpi` 换算，不依赖 WPF 布局时序；多显示器用 `MonitorFromWindow`
 - ⚠️ **拦 `WM_GETMINMAXINFO` 改 `ptMaxSize` 的方案无效**（已试过）：钩子确实被调用，但系统对带边框的最大化窗口仍按自己的规则外扩，写回值被忽略。**不要再走这条路**
@@ -215,7 +219,7 @@ Window
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（闸门 + 填下拉框）/ `TargetNicComboBox_SelectionChanged`；扫描与还原规则在 `Net/NicScanner.cs`。选择持久化见 §3.4 |
 | 日志 | `AppendDeviceLog`（顺带落盘 P5-2）/ `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` / `RefreshDeviceLogColors`（换主题时重建行色）/ `FileLevelOf`（界面级别 → 落盘级别） |
-| 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset` |
+| 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset`（算法在 `Ui/MaximizedInset.cs`） |
 | **主题（P5-1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged` / `StatusBrushKey`；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
 | **日志落盘（P5-2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveToggle_Changed` / `SyncLogSaveToggle` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（见 §7.1） |
 | **项目信息（P5-3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（见 §7.2） |
@@ -509,7 +513,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 总览状态格式 | `UpdateOverviewStatus()`（写底栏 `StatusBarDetail`） |
 | 底栏状态文字/颜色 | `SetStatus(text, colorHex)` → `StatusText` + `StatusDot` |
 | 底栏布局/对齐 | `MainWindow.xaml` 主体 Grid 末尾的底栏 `Border`（见 §3.5，**改前必读**） |
-| 最大化底栏被任务栏遮住 | `UpdateMaximizedInset()` + `Window_StateChanged`（见 §3.6） |
+| 最大化底栏被任务栏遮住 | `Ui/MaximizedInset.cs`（`Apply`）+ 窗口侧 `UpdateMaximizedInset` / `Window_StateChanged`（见 §3.6） |
 | 自动重连退避/触发/取消 | `ReconnectDelaysSeconds` / `StartReconnect` / `CancelReconnect`（见 §6.1） |
 | IO 灯色（输入绿/输出橙） | `IoPoint.StateBrush` + `InputOnBrush` / `OutputOnBrush` / `OffBrush`；`IsOutput` 在 `TryCreatePoint` 定 |
 | IO 点位集构建/排序 | `Io/IoPointSet.cs`（`Rebuild` / `TryCreatePoint` / `NormalizePointName`，按地址升序）；窗口侧薄包装 `RebuildIoPoints` |
