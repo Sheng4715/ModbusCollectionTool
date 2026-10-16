@@ -98,9 +98,10 @@ namespace DSH_Modbus采集工具.Themes
         /// 切换主题并落盘。
         ///
         /// <para>
-        /// ⚠️ 落盘的是**整个** <see cref="AppSettings"/>（主题与日志三项同处一个文件），
+        /// ⚠️ 落盘的是**整个** <see cref="AppSettings"/>（主题 / 日志 / 网卡同处一个文件），
         /// 所以这里会把日志目录一并**固化**下来。为保持「空串 = 用默认目录」这个不变式，
-        /// 需先把默认值归一回空串 —— 否则用户在设置页**看了一眼**路径（失焦即写盘）之后，
+        /// 归一回空串的动作统一放在 <see cref="Save"/> 里，**不要**在各 Setter 里各写一遍 ——
+        /// 漏写一处的后果是：用户在设置页**看了一眼**路径（失焦即写盘）之后，
         /// 即使他从未打算自定义，文件里也会多出一条写死的绝对路径，
         /// 一旦 exe 被移动/复制到别处，日志就会继续写回旧位置。
         /// </para>
@@ -109,12 +110,32 @@ namespace DSH_Modbus采集工具.Themes
         {
             Mode = mode;
             _settings.Theme = mode.ToString();
-            NormalizeLogDirectory();
             Apply(mode);
             Save(_settings);
         }
 
-        /// <summary>显式选了默认目录时，存空串而非绝对路径（见 <see cref="SetMode"/>）。</summary>
+        // ==== 目标网卡（方案 A：记住用户选的网卡） ====
+        // 存**网卡名**（如 "WLAN"）而不是下拉框的显示文本 "WLAN(192.168.1.15)"：
+        // 显示文本里嵌着 IP，而同一块网卡换个网络 IP 就变了（笔记本的 WLAN 在家
+        // 是 192.168.1.x、在公司是 10.0.0.x），按文本匹配恰好在最需要它的场景失效。
+
+        /// <summary>上次选用的网卡名；空串表示「没有偏好，用列表第 0 项」。</summary>
+        public static string TargetNic => _settings.TargetNic;
+
+        /// <summary>
+        /// 记住用户选用的网卡名并落盘。
+        /// <paramref name="name"/> 传空串表示清除偏好。
+        /// </summary>
+        public static void SetTargetNic(string name)
+        {
+            _settings.TargetNic = name ?? string.Empty;
+            Save(_settings);
+        }
+
+        /// <summary>
+        /// 显式选了默认目录时，存空串而非绝对路径（见 <see cref="SetMode"/>）。
+        /// 由 <see cref="Save"/> 统一调用，**不放在各个 Setter 里**。
+        /// </summary>
         private static void NormalizeLogDirectory()
         {
             if (string.Equals(_settings.LogDirectory, Logging.DeviceLogFileWriter.DefaultDirectory,
@@ -241,6 +262,18 @@ namespace DSH_Modbus采集工具.Themes
 
             /// <summary>日志保存目录（P5-2）。空串表示用默认目录（exe 旁的 Log）。</summary>
             public string LogDirectory { get; set; } = string.Empty;
+
+            /// <summary>
+            /// 上次选用的目标网卡**名**（不含 IP）。空串表示没有偏好。
+            ///
+            /// <para>
+            /// 存名字不存显示文本：文本是 "WLAN(192.168.1.15)"，含 IP，
+            /// 而同一块网卡换网络后 IP 会变，按文本匹配会在最需要它的场景失效。
+            /// 旧版 json 没有这个字段 → 反序列化后保持空串 → 退回列表第 0 项，
+            /// 与升级前的行为一致，无需迁移。
+            /// </para>
+            /// </summary>
+            public string TargetNic { get; set; } = string.Empty;
         }
 
         private static AppSettings Load()
@@ -279,6 +312,12 @@ namespace DSH_Modbus采集工具.Themes
         {
             try
             {
+                // 落盘的是**整个**对象，故归一化必须放在这唯一的出口上。
+                // 曾经只在 SetMode 里调用，结果是：任何新增的整对象保存路径
+                // （如 SetTargetNic）都会把「看一眼路径」留下的绝对默认路径写进文件。
+                // 放在这里，调用方就不必记得这件事。
+                NormalizeLogDirectory();
+
                 string json = JsonSerializer.Serialize(
                     settings,
                     new JsonSerializerOptions { WriteIndented = true });

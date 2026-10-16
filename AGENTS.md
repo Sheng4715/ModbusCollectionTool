@@ -129,6 +129,13 @@ Window
 - **状态信息**：见 §5 IO 监控 / §5.1 自由监控。
 - **设备配置**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 §8.1）。连接中锁定表单（`SetInputsEnabled`）。串口模式仅隐藏以太网面板，**功能未实现**。
 
+**目标网卡的选择会被记住**（`app-settings.json` → `TargetNic`），下次启动仍选同一块：
+
+- 存的是**网卡名**（如 `WLAN`），不是下拉框显示文本 `WLAN(192.168.1.15)` —— 文本里嵌着 IP，而同一块网卡换个网络 IP 就变（笔记本的 WLAN 在家 `192.168.1.x`、在公司 `10.0.0.x`），按文本匹配**恰好在最需要它的场景下失效**
+- 还原优先级：**本次扫描前的选择 → 上次运行记住的 → 第 0 项**
+- ⚠️ **扫描过程必须整体罩在 `_restoringNicSelection` 里**：`Items.Clear()` 在原本有选中项时就会触发 `SelectionChanged`，只罩最后那次赋值挡不住。挡掉的意义不只是"别写盘"—— 若某块网卡临时消失（VPN 断开 / 网线拔掉），扫描会回退到第 0 项；把这次回退也写进偏好，用户原先的选择就被**悄悄抹掉**了。实测：预置一块不存在的网卡名，启动后下拉框回退到第 0 项，而 json 里仍是原值
+- 为什么必须持久化：`ConnectButton_Click` 会按选中项 `new IPEndPoint(nic.Ip, 0)` **绑定本地网卡**。绑错网卡（如绑到 Tailscale 却去连 `192.168.1.100`）会立刻报 `WSAENETUNREACH`，界面上显示成「连接失败：… 网络不可达」—— 看着像网络故障，其实是**上次的选择没被记住**。自动重连不受影响（`ReconnectTarget` 已快照本地端点），**只有启动后的第一次连接会踩到**
+
 ### 3.5 全局底栏（连接状态）
 
 30px 高，**三个页面都可见**（在面板之外，不随导航切换显隐）。
@@ -197,7 +204,7 @@ Window
 | 导入 | `ImportIoTableButton_Click` → `IoTableImporter.Read`（`MessageBox` 留本类） |
 | **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 §5.1） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
-| 网卡 | `ScanNetworkAdapters`（`NicInfo`） |
+| 网卡 | `ScanNetworkAdapters` / `IndexOfNic` / `TargetNicComboBox_SelectionChanged`（`NicInfo`）；选择持久化见 §3.4 |
 | 日志 | `AppendDeviceLog`（顺带落盘 P5-2）/ `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` / `RefreshDeviceLogColors`（换主题时重建行色）/ `FileLevelOf`（界面级别 → 落盘级别） |
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `UpdateMaximizedInset` |
 | **主题（P5-1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged` / `StatusBrushKey`；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
@@ -468,7 +475,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 **几条容易踩的**：
 
-- ⚠️ **`SetMode` 会连带固化日志目录**：`app-settings.json` 里主题与日志三项同处一个对象，落盘的是整个对象。故 `SetMode` 里先调 `NormalizeLogDirectory()` —— 路径等于默认值时归回空串。否则用户只是在设置页"看了一眼"路径（失焦即写盘）之后切个主题，文件里就会多出一条写死的绝对路径，exe 一移动日志就写不回新位置的 `Log\`
+- ⚠️ **落盘的是整个对象，归一化必须放在 `Save()` 里**：`app-settings.json` 里主题 / 日志 / 网卡同处一个对象，每次保存都写整个对象。所以「日志目录等于默认值时归回空串」由 `Save()` 统一做，**不要**写进各个 Setter —— 曾经只在 `SetMode` 里调，于是任何新增的整对象保存路径（如 `SetTargetNic`）都会把「看一眼路径」留下的绝对默认路径写进文件，exe 一移动日志就写不回新位置的 `Log\`
 - ⚠️ **半透明叠加必须换色**：`Brush.Overlay.*` 浅色是黑（`#0A000000`）、深色是白（`#14FFFFFF`）。黑叠加压在深底上等于没效果
 - ⚠️ **`*.Fill` 三个实底色深浅同值**（主色 `#0067C0`、危险 `#C42B1C` 系），因为它们上面压白字，改了会掉对比度
 - ⚠️ **IO 灯色深浅值不同**：浅色用深绿 `#0B7A0B`，深色必须提亮到 `#4EC94E`，否则与深底融在一起、看不出「亮/灭」
@@ -516,7 +523,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
 | 心跳周期/空闲判断/地址来源 | `Drivers/ModbusHeartbeat.cs` → `RunAsync`；`ModbusTcpClient.HeartbeatIfIdleAsync` |
 | 轮询与断线逻辑 | `Polling/ModbusPoller.cs` 的 `PollLoopAsync` / `PollOnceAsync` + `Disconnect(status,color)` |
-| 网卡扫描/绑定 | `ScanNetworkAdapters` + `ConnectButton_Click`（`NicInfo`） |
+| 网卡扫描/绑定/记忆 | `ScanNetworkAdapters` / `IndexOfNic` / `TargetNicComboBox_SelectionChanged` + `ConnectButton_Click`（`NicInfo`） |
 | 采集周期档位 | `PollIntervalComboBox` + `_pollIntervalMs` |
 | 日志追加/清空/上限 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `MaxDeviceLogEntries` |
 | 日志颜色与格式 | `LogEntry`（`DeviceLogLevel` → `LevelBrush`）+ `DeviceLogItemTemplate` |

@@ -228,6 +228,13 @@ namespace DSH_Modbus采集工具
         /// <summary>正在按设备类型同步字节顺序下拉框（用于区分「程序设置」与「用户改动」）。</summary>
         private bool _syncingByteOrderCombos;
 
+        /// <summary>
+        /// 正在程序化重设网卡下拉框（扫描列表时）。与 <see cref="_syncingByteOrderCombos"/> 同理：
+        /// 扫描会 Clear 再重新 Add，过程中 SelectionChanged 会被触发多次，
+        /// 那些都不是用户意图，不该被写进持久化偏好。
+        /// </summary>
+        private bool _restoringNicSelection;
+
         /// <summary>自由监控项集合（增删改 + 落盘 + 地址解析）。</summary>
         private readonly MonitorItemSet _monitorSet = new();
 
@@ -906,56 +913,107 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            string? previous = TargetNicComboBox.SelectedItem?.ToString();
+            // 记住当前选择（取网卡名，不含 IP）。整个扫描过程都算「程序化改动」：
+            // Items.Clear() 在原本有选中项时就会触发一次 SelectionChanged，
+            // 所以标志必须罩住整段，不能只罩最后那次赋值。
+            string? previous = (TargetNicComboBox.SelectedItem as NicInfo)?.Name;
 
-            TargetNicComboBox.Items.Clear();
-
-            foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+            _restoringNicSelection = true;
+            try
             {
-                if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                TargetNicComboBox.Items.Clear();
+
+                foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
                 {
-                    continue;
+                    if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                    {
+                        continue;
+                    }
+
+                    if (nic.OperationalStatus != OperationalStatus.Up)
+                    {
+                        continue;
+                    }
+
+                    IPAddress? ipv4 = nic.GetIPProperties().UnicastAddresses
+                        .Select(a => a.Address)
+                        .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
+
+                    if (ipv4 == null)
+                    {
+                        continue;
+                    }
+
+                    TargetNicComboBox.Items.Add(new NicInfo { Name = nic.Name, Ip = ipv4 });
                 }
 
-                if (nic.OperationalStatus != OperationalStatus.Up)
+                if (TargetNicComboBox.Items.Count == 0)
                 {
-                    continue;
+                    TargetNicComboBox.Items.Add("未找到可用网卡");
+                    TargetNicComboBox.SelectedIndex = 0;
+                    return;
                 }
 
-                IPAddress? ipv4 = nic.GetIPProperties().UnicastAddresses
-                    .Select(a => a.Address)
-                    .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
-
-                if (ipv4 == null)
+                // 还原优先级：本次扫描前的选择 → 上次运行记住的选择 → 第 0 项。
+                // 都按**网卡名**匹配（每次扫描都是新对象，不能用引用比较）；
+                // 不用显示文本，因为文本里含 IP，而同一块网卡换网络后 IP 会变 ——
+                // 笔记本的 WLAN 在家是 192.168.1.15、在公司可能是 10.0.0.5，
+                // 按文本匹配恰好在最需要它的场景下失效。
+                int index = IndexOfNic(previous);
+                if (index < 0)
                 {
-                    continue;
+                    index = IndexOfNic(ThemeManager.TargetNic);
                 }
 
-                TargetNicComboBox.Items.Add(new NicInfo { Name = nic.Name, Ip = ipv4 });
+                TargetNicComboBox.SelectedIndex = index >= 0 ? index : 0;
+            }
+            finally
+            {
+                _restoringNicSelection = false;
+            }
+        }
+
+        /// <summary>按网卡名找下拉项下标；名字为空或未命中返回 -1。</summary>
+        private int IndexOfNic(string? name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return -1;
             }
 
-            if (TargetNicComboBox.Items.Count == 0)
+            for (int i = 0; i < TargetNicComboBox.Items.Count; i++)
             {
-                TargetNicComboBox.Items.Add("未找到可用网卡");
-                TargetNicComboBox.SelectedIndex = 0;
+                if (TargetNicComboBox.Items[i] is NicInfo nic
+                    && string.Equals(nic.Name, name, StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// 用户手动改选网卡时记住它，下次启动仍选同一块。
+        ///
+        /// <para>
+        /// 程序化改动由 <see cref="_restoringNicSelection"/> 挡掉：扫描网卡列表
+        /// （启动、切进本页、点刷新）都会重设 SelectedIndex，那不是用户意图。
+        /// 挡掉还顺带修掉一个隐患 —— 若某块网卡临时消失（VPN 断开、网线拔掉），
+        /// 扫描会回退到第 0 项；若把这次回退也写进偏好，用户原先的选择就被悄悄抹掉了。
+        /// </para>
+        /// </summary>
+        private void TargetNicComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_restoringNicSelection)
+            {
                 return;
             }
 
-            // 按显示文本恢复刷新前的选择（每次扫描都是新对象，不能用引用比较）
-            int index = -1;
-            if (previous != null)
+            if (TargetNicComboBox.SelectedItem is NicInfo nic)
             {
-                for (int i = 0; i < TargetNicComboBox.Items.Count; i++)
-                {
-                    if (string.Equals(TargetNicComboBox.Items[i]?.ToString(), previous, StringComparison.Ordinal))
-                    {
-                        index = i;
-                        break;
-                    }
-                }
+                ThemeManager.SetTargetNic(nic.Name);
             }
-
-            TargetNicComboBox.SelectedIndex = index >= 0 ? index : 0;
         }
 
         private void SyncInputHeights()

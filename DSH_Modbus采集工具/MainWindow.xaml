@@ -1652,7 +1652,8 @@
                                         <ComboBox x:Name="TargetNicComboBox"
                                                   Width="200"
                                                   VerticalAlignment="Center"
-                                              Style="{StaticResource FormComboBox}"/>
+                                                  Style="{StaticResource FormComboBox}"
+                                                  SelectionChanged="TargetNicComboBox_SelectionChanged"/>
                                         <Button x:Name="RefreshNicButton"
                                                 Content="刷新"
                                                 Width="60"
