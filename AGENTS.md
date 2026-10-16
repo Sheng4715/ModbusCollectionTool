@@ -144,7 +144,7 @@ Window
 
 | 位置 | 控件 | 内容 |
 |---|---|---|
-| 左 | `StatusDot` + `StatusText` | 状态点 + 状态文字：`未连接` / `已连接 ip:端口` / `正在重连 ip:端口 … Ns（第 M 次）` |
+| 左 | `StatusDot` + `StatusText` | 状态点 + 状态文字：`未连接` / `已连接` / `通讯异常：<原因>` / `正在重连 ip:端口 … Ns（第 M 次）`。**已连接 / 连接失败一律不带 ip:端口**（连接参数由右侧 `StatusBarDetail` 显示）；断开与失败的原因经 `ClassifyDisconnectReason` 归一，与日志同一份用词 |
 | 右 | `StatusBarDetail` | 连接参数：`驱动：连接方式  协议  IP:端口` |
 
 - **两个控件名沿用自旧设备配置表单**，故 `SetStatus()` 逻辑无需改动 —— 它写的就是这两个名字

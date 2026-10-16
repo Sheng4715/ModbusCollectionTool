@@ -1153,9 +1153,9 @@ namespace DSH_Modbus采集工具
                 _reconnectTarget = target; // 记录期望连接参数，异常断开后据此自动重连
                 ConnectButton.Content = "断开";
                 ConnectButton.IsEnabled = true;
-                SetStatus($"已连接 {target.Endpoint}", "#0B7A0B");
+                SetStatus("已连接", "#0B7A0B");
                 AppendDeviceLog($"已连接：{target.Endpoint}", DeviceLogLevel.Connected);
-                StartPolling(client, target.Driver, target.Endpoint);
+                StartPolling(client, target.Driver);
                 return true;
             }
             catch (OperationCanceledException)
@@ -1176,7 +1176,7 @@ namespace DSH_Modbus采集工具
                 client.Dispose();
                 if (!_windowClosed && !token.IsCancellationRequested)
                 {
-                    SetStatus($"连接失败：{ex.Message}", "#C42B1C");
+                    SetStatus($"连接失败：{ClassifyDisconnectReason(ex.Message)}", "#C42B1C");
                     if (!isReconnect)
                     {
                         AppendDeviceLog($"连接失败：{target.Endpoint} {ClassifyDisconnectReason(ex.Message)}",
@@ -1696,24 +1696,24 @@ namespace DSH_Modbus采集工具
 
         // ---------- Modbus 采集轮询（P0） ----------
 
-        private void StartPolling(ModbusTcpClient client, CommDriver driver, string endpoint)
+        private void StartPolling(ModbusTcpClient client, CommDriver driver)
         {
             StopPolling();
             var cts = new CancellationTokenSource();
             _pollCts = cts;
             // 两项任务持有自己的连接和驱动快照，结束后才释放取消源。
-            _ = RunConnectionTasksAsync(client, driver, endpoint, cts);
+            _ = RunConnectionTasksAsync(client, driver, cts);
         }
 
         private async Task RunConnectionTasksAsync(ModbusTcpClient client, CommDriver driver,
-            string endpoint, CancellationTokenSource cts)
+            CancellationTokenSource cts)
         {
             CancellationToken token = cts.Token;
             try
             {
                 await Task.WhenAll(
                     Task.Run(() => _poller.PollLoopAsync(client, driver, token)),
-                    Task.Run(() => HeartbeatLoopAsync(client, driver, endpoint, token)));
+                    Task.Run(() => HeartbeatLoopAsync(client, driver, token)));
             }
             catch (Exception ex)
             {
@@ -1731,7 +1731,7 @@ namespace DSH_Modbus采集工具
         }
 
         private async Task HeartbeatLoopAsync(ModbusTcpClient client, CommDriver driver,
-            string endpoint, CancellationToken token)
+            CancellationToken token)
         {
             try
             {
@@ -1747,7 +1747,7 @@ namespace DSH_Modbus采集工具
                         {
                             return;
                         }
-                        SetStatus(warning == null ? $"已连接 {endpoint}" : $"已连接；{warning}",
+                        SetStatus(warning == null ? "已连接" : $"通讯异常：{warning}",
                             warning == null ? "#0B7A0B" : "#B26A00");
                         // 日志规则 5/6：连接仍在时的通讯异常（琥珀，对端回了合法异常码）
                         // 与心跳恢复（绿）。注意「完全无响应」不在这里 —— 它会走到下面的
@@ -1853,7 +1853,7 @@ namespace DSH_Modbus采集工具
                     // 注意这里直接用 Disconnect(status,color) 重载，而不是无参 Disconnect()：
                     // 后者会清掉 _reconnectTarget —— 那是「用户主动断开」的语义，
                     // 异常断开必须保留目标才能自动重连（P1-1）
-                    Disconnect($"连接已断开：{reason}", "#C42B1C");
+                    Disconnect($"已断开：{ClassifyDisconnectReason(reason)}", "#C42B1C");
                     StartReconnect();
                 }
             }));
