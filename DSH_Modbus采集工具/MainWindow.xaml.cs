@@ -109,9 +109,9 @@ namespace DSH_Modbus采集工具
         public event PropertyChangedEventHandler? PropertyChanged;
     }
 
-    /// <summary>网卡下拉项：显示 "网卡名(ip)"，携带真实 IP 供连接时绑定本地端点。</summary>
     // ---------- 辅助类型：日志级别与日志行（LogEntry） ----------
 
+    /// <summary>设备状态日志的级别，决定日志行的颜色（沿用状态栏既有配色）。</summary>
     public enum DeviceLogLevel
     {
         /// <summary>中性灰：如用户主动断开。</summary>
@@ -187,9 +187,9 @@ namespace DSH_Modbus采集工具
         }
     }
 
-    /// <summary>设备配置页展示用：地址表中的一个元件（同名元件的多段地址区合并为一项）。</summary>
     // ---------- 辅助类型：地址表元件（设备配置页展示用） ----------
 
+    /// <summary>设备配置页展示用：地址表中的一个元件（同名元件的多段地址区合并为一项）。</summary>
     public sealed class AreaElement
     {
         /// <summary>元件符号，如 M、X、SD</summary>
@@ -787,6 +787,8 @@ namespace DSH_Modbus采集工具
             LogSaveStatusText.Visibility = Visibility.Visible;
         }
 
+        // ---------- 设置：项目信息（P5-3） ----------
+
         /// <summary>
         /// 填充设置页的项目信息卡（P5-3）。
         ///
@@ -796,8 +798,6 @@ namespace DSH_Modbus采集工具
         /// 不需要像日志状态那样在进页面时刷新。
         /// </para>
         /// </summary>
-        // ---------- 设置：项目信息（P5-3） ----------
-
         private void RefreshProjectInfo()
         {
             if (InfoProductText == null)
@@ -813,13 +813,13 @@ namespace DSH_Modbus采集工具
             InfoRuntimeText.Text = $"{AppInfo.Runtime}　·　{AppInfo.OperatingSystem}";
         }
 
+        // ---------- 底栏：右侧连接参数 ----------
+
         /// <summary>
         /// 刷新底栏右侧的连接参数（驱动 / 连接方式 / 协议 / IP:端口）。
         /// 底栏左侧的状态点与状态文字由 <see cref="SetStatus"/> 负责，两者互不覆盖：
         /// 参数随表单变化，状态随连接生命周期变化。
         /// </summary>
-        // ---------- 底栏：右侧连接参数 ----------
-
         private void UpdateOverviewStatus()
         {
             if (StatusBarDetail == null
@@ -1247,13 +1247,13 @@ namespace DSH_Modbus采集工具
             _reconnectCts?.Cancel();
         }
 
+        // ---------- 底栏：左侧状态文字与颜色 ----------
+
         /// <summary>
         /// 设置底栏状态文字与状态点颜色。<paramref name="colorHex"/> 是**浅色主题下的字面值**，
         /// 由 <see cref="StatusBrushKey"/> 映射到语义画刷键 —— 这样调用点无需关心主题，
         /// 深色主题下也不会拿到浅色主题的固定色。
         /// </summary>
-        // ---------- 底栏：左侧状态文字与颜色 ----------
-
         private void SetStatus(string text, string colorHex)
         {
             StatusText.Text = text;
@@ -1281,12 +1281,12 @@ namespace DSH_Modbus采集工具
             _ => "Brush.Indicator.Off",
         };
 
+        // ---------- 设备状态日志（总览页底部） ----------
+
         /// <summary>
         /// 按新主题重建日志各行的颜色。日志行色在 <see cref="LogEntry"/> 构造时定死，
         /// 换主题后必须整表重建 —— 用「原样替换」而不是 Clear+Add，避免滚动位置跳动。
         /// </summary>
-        // ---------- 设备状态日志（总览页底部） ----------
-
         private void RefreshDeviceLogColors()
         {
             for (int i = 0; i < _deviceLog.Count; i++)
