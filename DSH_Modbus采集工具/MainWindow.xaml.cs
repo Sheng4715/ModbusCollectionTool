@@ -207,10 +207,9 @@ namespace DSH_Modbus采集工具
     /// </summary>
     public partial class MainWindow : Window, ICollectorHost
     {
-        private ModbusTcpClient? _modbus;
-        private bool _isConnected;
+        // 连接身份/生命周期（_modbus / _isConnected / _connectCts 等）已收进 _session；
+        // _pollCts 留在窗口 —— 它属于采集任务的启停（ICollectorHost 那一侧）。
         private CancellationTokenSource? _pollCts;
-        private CancellationTokenSource? _connectCts;
         private bool _windowClosed;
         private volatile int _pollIntervalMs = 100;
         private CommDriver? _currentDriver;
@@ -304,28 +303,14 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private StatusBarPresenter? _statusBar;
 
-        // ---------- 自动重连：字段与目标快照 ----------
+        // ---------- 连接状态（身份与生命周期见 Polling/ConnectionSession.cs） ----------
 
         /// <summary>
-        /// 期望保持连接的参数快照（IP / 端口 / 驱动 / 本地端点）。非 null 表示用户想连着 ——
-        /// 异常断开后据此自动重连；用户主动断开或连接失败时置 null。
+        /// 连接状态机：当前客户端 / 是否连着 / 期望目标 / 在途取消源 / 重连计数。
+        /// 规则本体内聚在 <see cref="ConnectionSession"/>；async 编排（等待循环、逐秒刷状态栏、
+        /// 按钮文案、表单锁定）刻意留在窗口 —— 那是界面驱动的东西，搬走只会多一层接口。
         /// </summary>
-        private ReconnectTarget? _reconnectTarget;
-
-        /// <summary>重连尝试任务的取消源；非 null 表示正在退避等待或正在尝试连接。</summary>
-        private CancellationTokenSource? _reconnectCts;
-
-        /// <summary>连续重连失败次数，用于计算指数退避；连接成功后清零。</summary>
-        private int _reconnectAttempt;
-
-        /// <summary>指数退避间隔（秒）：1→2→4→8→10，封顶 10s。</summary>
-        private static readonly int[] ReconnectDelaysSeconds = { 1, 2, 4, 8, 10 };
-
-        /// <summary>保持连接所需的参数快照，供自动重连复用。</summary>
-        private sealed record ReconnectTarget(string Ip, int Port, CommDriver Driver, IPEndPoint? LocalEndPoint)
-        {
-            public string Endpoint => $"{Ip}:{Port}";
-        }
+        private readonly ConnectionSession _session = new();
 
         /// <summary>日志内存条数上限：超出后丢弃最旧一条（仅内存，不落盘）。</summary>
         private const int MaxDeviceLogEntries = 200;
@@ -968,12 +953,12 @@ namespace DSH_Modbus采集工具
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_windowClosed || _connectCts != null)
+            if (_windowClosed || _session.IsConnecting)
             {
                 return;
             }
 
-            if (_isConnected)
+            if (_session.IsConnected)
             {
                 // 日志规则 2：已断开（红）—— 用户主动断开也走红色，与异常断开同色
                 AppendDeviceLog("已断开：用户主动断开", DeviceLogLevel.Disconnected);
@@ -982,7 +967,7 @@ namespace DSH_Modbus采集工具
             }
 
             // 正在自动重连时再点按钮 = 放弃重连（按钮此时显示「取消重连」）
-            if (_reconnectCts != null)
+            if (_session.IsReconnecting)
             {
                 CancelReconnect();
                 SetStatus("已取消自动重连", "#9A9A9A");
@@ -1042,8 +1027,7 @@ namespace DSH_Modbus采集工具
         private async Task<bool> TryConnectAsync(ReconnectTarget target, bool isReconnect, CancellationToken token)
         {
             var client = new ModbusTcpClient();
-            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(token);
-            _connectCts = connectCts;
+            using var connectCts = _session.BeginConnect(token);
             try
             {
                 await client.ConnectAsync(target.Ip, target.Port, TimeSpan.FromSeconds(3),
@@ -1054,10 +1038,8 @@ namespace DSH_Modbus采集工具
                     return false;
                 }
 
-                _modbus = client;
-                _isConnected = true;
-                _reconnectAttempt = 0; // 连上即清零退避计数
-                _reconnectTarget = target; // 记录期望连接参数，异常断开后据此自动重连
+                // 接管客户端、记住期望目标（异常断开后据此自动重连）、清零退避计数
+                _session.MarkConnected(client, target);
                 ConnectButton.Content = "断开";
                 ConnectButton.IsEnabled = true;
                 SetStatus("已连接", "#0B7A0B");
@@ -1094,10 +1076,7 @@ namespace DSH_Modbus采集工具
             }
             finally
             {
-                if (ReferenceEquals(_connectCts, connectCts))
-                {
-                    _connectCts = null;
-                }
+                _session.EndConnect(connectCts);
             }
         }
 
@@ -1162,18 +1141,17 @@ namespace DSH_Modbus采集工具
         private void Disconnect()
         {
             // 用户主动断开：清掉重连目标并取消在途重连，之后不再自动重连
-            _reconnectTarget = null;
-            CancelReconnect();
+            _session.ForgetTarget();
             Disconnect("未连接", "#9A9A9A");
         }
 
         private void Disconnect(string statusText, string colorHex)
         {
-            _connectCts?.Cancel();
+            // 顺序有讲究：先取消在途的连接尝试，再停采集，最后释放客户端 ——
+            // 反过来的话，正在 ConnectAsync 里等着的那一段会拿着已释放的客户端收尾。
+            _session.CancelConnect();
             StopPolling();
-            _modbus?.Dispose();
-            _modbus = null;
-            _isConnected = false;
+            _session.ReleaseClient();
             ConnectButton.Content = "连接";
             SetInputsEnabled(true);
             SetStatus(statusText, colorHex);
@@ -1182,21 +1160,19 @@ namespace DSH_Modbus采集工具
         // ---------- 自动重连：循环与退避（P1-1） ----------
 
         /// <summary>
-        /// 异常断开后启动自动重连：按 <see cref="ReconnectDelaysSeconds"/> 指数退避反复尝试，
+        /// 异常断开后启动自动重连：按 <see cref="ReconnectPolicy"/> 指数退避反复尝试，
         /// 直到连上、用户主动断开、用户点「取消重连」，或窗口关闭。
         /// 重连期间**表单保持锁定、按钮显示「取消重连」**，状态栏显示尝试次数与倒计时。
         /// </summary>
         private void StartReconnect()
         {
-            ReconnectTarget? target = _reconnectTarget;
-            if (target == null || _windowClosed || _reconnectCts != null)
+            ReconnectTarget? target = _session.Target;
+            if (target == null || _windowClosed || _session.IsReconnecting)
             {
                 return;
             }
 
-            var cts = new CancellationTokenSource();
-            _reconnectCts = cts;
-            _reconnectAttempt = 0;
+            CancellationTokenSource cts = _session.BeginReconnect();
             ConnectButton.Content = "取消重连";
             ConnectButton.IsEnabled = true;
             SetInputsEnabled(false); // 重连期间表单保持锁定：参数已快照，改了也不会生效，避免误导
@@ -1210,13 +1186,12 @@ namespace DSH_Modbus采集工具
             {
                 while (!token.IsCancellationRequested && !_windowClosed)
                 {
-                    int delay = ReconnectDelaysSeconds[
-                        Math.Min(_reconnectAttempt, ReconnectDelaysSeconds.Length - 1)];
+                    int delay = ReconnectPolicy.DelayForAttempt(_session.Attempt);
 
                     // 倒计时显示：每秒刷新状态栏，让用户看到还在推进
                     for (int remain = delay; remain > 0 && !token.IsCancellationRequested; remain--)
                     {
-                        SetStatus($"正在重连 … {remain}s（第 {_reconnectAttempt + 1} 次）",
+                        SetStatus($"正在重连 … {remain}s（第 {_session.Attempt + 1} 次）",
                             "#B26A00");
                         await Task.Delay(1000, token);
                     }
@@ -1226,7 +1201,7 @@ namespace DSH_Modbus采集工具
                         return;
                     }
 
-                    _reconnectAttempt++;
+                    _session.CountAttempt();
                     if (await TryConnectAsync(target, isReconnect: true, token))
                     {
                         return; // 成功：TryConnectAsync 已启动采集并刷新状态与日志
@@ -1244,19 +1219,13 @@ namespace DSH_Modbus采集工具
             }
             finally
             {
-                if (ReferenceEquals(_reconnectCts, cts))
-                {
-                    _reconnectCts = null;
-                }
+                _session.EndReconnect(cts);
                 cts.Dispose();
             }
         }
 
         /// <summary>取消在途的自动重连（用户主动断开、点「取消重连」或关窗时调用）。</summary>
-        private void CancelReconnect()
-        {
-            _reconnectCts?.Cancel();
-        }
+        private void CancelReconnect() => _session.CancelReconnect();
 
         // ---------- 底栏：左侧状态文字与颜色 ----------
 
@@ -1599,8 +1568,7 @@ namespace DSH_Modbus采集工具
         }
 
         private bool IsCurrentConnection(ModbusTcpClient client, CancellationToken token) =>
-            !_windowClosed && !token.IsCancellationRequested && _isConnected
-            && ReferenceEquals(_modbus, client);
+            _session.IsCurrent(client, token, _windowClosed);
 
         private void StopPolling()
         {
@@ -1679,7 +1647,7 @@ namespace DSH_Modbus采集工具
                     AppendDeviceLog($"已断开：{ClassifyDisconnectReason(reason)}",
                         DeviceLogLevel.Disconnected);
                     // 注意这里直接用 Disconnect(status,color) 重载，而不是无参 Disconnect()：
-                    // 后者会清掉 _reconnectTarget —— 那是「用户主动断开」的语义，
+                    // 后者会调 ForgetTarget() 清掉期望目标 —— 那是「用户主动断开」的语义，
                     // 异常断开必须保留目标才能自动重连（P1-1）
                     Disconnect($"已断开：{ClassifyDisconnectReason(reason)}", "#C42B1C");
                     StartReconnect();
@@ -2295,11 +2263,11 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private async Task CommitMonitorValueAsync(TextBox box, MonitorItem item)
         {
-            ModbusTcpClient? modbus = _modbus;
+            ModbusTcpClient? modbus = _session.Client;
             CommDriver? driver = _currentDriver;
 
             // 按需求：建立连接后即可写入，不要求自由监控分段可见。
-            if (!_isConnected || modbus == null || driver == null)
+            if (!_session.IsConnected || modbus == null || driver == null)
             {
                 item.WriteError = "未连接，无法写入";
                 return;
