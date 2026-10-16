@@ -1215,10 +1215,21 @@
             </Border>
 
             <!-- 内容区（商店内容已移除，留空待填充）：下边距 30 给底栏让位 -->
+            <!-- 内容区的左右留白（改这块务必看懂，容易一改就全乱）：
+                 Margin 左 112 = 让开导航列（导航 Border 是 Margin="0,0,112,0"，
+                 右边距 112 → 那根竖分隔线就落在 x=112）；
+                 Padding 左/右 = 卡片与「分隔线 / 窗口右缘」之间的呼吸间距。
+
+                 ⚠️ 左右都用同一个 Padding 值，卡片才会在内容区里居中：
+                 左边距以**分隔线**（x=112）为基准，右边距以**窗口右缘**为基准，
+                 两者本来就都是 Padding，故同值即对称（现为 20）。
+                 曾经左 20 / 右 36 是历史遗留的不对称，已统一。
+
+                 四个页面的标题与卡片共用这一个 Padding，改一处即四页同步。 -->
             <ScrollViewer x:Name="ContentScrollViewer"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
-                          Padding="36,4,36,16" Grid.ColumnSpan="2" Margin="112,0,0,30">
+                          Padding="20,4,20,16" Grid.ColumnSpan="2" Margin="112,0,0,30">
                 <StackPanel>
 
                     <!-- 总览：高度取内容区视口高度，下方 1/4 固定给设备状态日志（贴窗口底部）。
@@ -1233,8 +1244,7 @@
                         <StackPanel Grid.Row="0" VerticalAlignment="Top">
                             <TextBlock Text="总览"
                                        FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
-                                       FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
-                                       Margin="0,16,0,16"/>
+                                       FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,10,0,10"/>
                         </StackPanel>
 
                         <!-- 设备状态日志：只记设备状态（连接/断开/连接失败/心跳告警），空时不显示任何内容 -->
@@ -1285,7 +1295,7 @@
                         <TextBlock Grid.Row="0" Text="状态信息"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
-                                   Margin="0,8,0,10"/>
+                                   Margin="0,10,0,10"/>
 
                         <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
@@ -1558,7 +1568,7 @@
                         <TextBlock Text="设备配置"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
-                                   Margin="0,16,0,16"/>
+                                   Margin="0,10,0,10"/>
 
                         <Border Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
@@ -1803,7 +1813,7 @@
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Brush.Text.Primary}"
-                                   Margin="0,16,0,16"/>
+                                   Margin="0,10,0,10"/>
 
                         <!-- 显示外观 -->
                         <Border Background="{DynamicResource Brush.Card.Background}"
@@ -1882,43 +1892,51 @@
                                               Unchecked="LogSaveToggle_Changed"/>
                                 </Grid>
 
-                                <!-- 保存路径：输入框（改完失焦生效） + 按钮 -->
-                                <TextBlock Text="保存路径"
-                                           FontSize="14"
-                                           Foreground="{DynamicResource Brush.Text.Primary}"
-                                           Margin="0,16,0,0"/>
-                                <Grid Margin="0,10,0,0">
+                                <!-- 保存路径：标签与输入框**同一行**（改完失焦生效） + 按钮
+                                     标签放左列、与输入框垂直居中，故不再单独占一行 ——
+                                     标签独行时它与它描述的那个框隔着一整行，视线要上下跳。
+                                     标签列用 Auto（本页项目信息卡同款），不用 80 定宽：
+                                     这里输入框是 * 拉伸的，定宽列只会白占横向空间。 -->
+                                <Grid Margin="0,16,0,0">
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
 
+                                    <TextBlock Grid.Column="0"
+                                               Text="保存路径"
+                                               FontSize="14"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,12,0"/>
+
                                     <TextBox x:Name="LogDirectoryTextBox"
                                              Style="{StaticResource FormTextBox}"
-                                             Grid.Column="0"
+                                             Grid.Column="1"
                                              Width="Auto"
                                              HorizontalAlignment="Stretch"
                                              LostFocus="LogDirectoryTextBox_LostFocus"/>
 
                                     <Button x:Name="LogBrowseButton"
                                             Style="{StaticResource FormButton}"
-                                            Grid.Column="1"
+                                            Grid.Column="2"
                                             Margin="8,0,0,0"
                                             Content="浏览…"
                                             Click="LogBrowseButton_Click"/>
 
                                     <Button x:Name="LogOpenFolderButton"
                                             Style="{StaticResource FormButton}"
-                                            Grid.Column="2"
+                                            Grid.Column="3"
                                             Margin="8,0,0,0"
                                             Content="打开文件夹"
                                             Click="LogOpenFolderButton_Click"/>
 
                                     <Button x:Name="LogResetDirectoryButton"
                                             Style="{StaticResource FormButton}"
-                                            Grid.Column="3"
+                                            Grid.Column="4"
                                             Margin="8,0,0,0"
                                             Content="恢复默认"
                                             Click="LogResetDirectoryButton_Click"/>

@@ -17,9 +17,19 @@
 
     构建日期相反 —— 手写必然忘记更新，故由 MSBuild 在每次编译时现取写入一个
     生成常量（见下方 WriteBuildDate）。
+
+    版本号拆成 prefix + 可选的 suffix（两者由 SDK 合成 <Version>）：
+      数字部分 VersionPrefix 手写，提版本只改这一处；
+      suffix 由**构建配置**决定 —— Debug 自动带 -debug。
+    这样「哪一版」和「是不是调试版」都能一眼看出，且不必靠人记得改
+    （与构建日期同理：能推导的就别手写）。Release 下 suffix 为空，
+    版本即干净的 0.6.0。
   -->
   <PropertyGroup>
-    <Version>0.6.0</Version>
+    <VersionPrefix>0.6.0</VersionPrefix>
+    <VersionSuffix Condition="'$(Configuration)' == 'Debug'">debug</VersionSuffix>
+    <!-- AssemblyVersion / FileVersion 固定不带 suffix：程序集身份必须稳定，
+         否则每换一次配置都会让引用方全部重编（与上面 WriteBuildDate 同一考虑）。 -->
     <AssemblyVersion>0.6.0.0</AssemblyVersion>
     <FileVersion>0.6.0.0</FileVersion>
     <Product>DSH Modbus 采集工具</Product>

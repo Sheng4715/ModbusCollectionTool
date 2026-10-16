@@ -865,7 +865,9 @@ namespace DSH_Modbus采集工具
             }
 
             InfoProductText.Text = AppInfo.ProductName;
-            InfoVersionText.Text = $"v{AppInfo.Version}";
+            // 前缀用大写 V：版本号里那个字母是"Version"的缩写，属于标识的一部分，
+            // 不是句首，故不用小写（旧版小写 v 与 0.6.0 的圆点看着更"轻"，已统一为大写）。
+            InfoVersionText.Text = $"V{AppInfo.Version}";
             InfoBuildDateText.Text = AppInfo.BuildDate;
             InfoRuntimeText.Text = $"{AppInfo.Runtime}　·　{AppInfo.OperatingSystem}";
         }
