@@ -22,6 +22,8 @@ using DSH_Modbus采集工具.Themes;
 
 namespace DSH_Modbus采集工具
 {
+    // ---------- 辅助类型：IO 点位 ----------
+
     public class IoPoint : INotifyPropertyChanged
     {
         private bool _isOn;
@@ -108,6 +110,8 @@ namespace DSH_Modbus采集工具
     }
 
     /// <summary>网卡下拉项：显示 "网卡名(ip)"，携带真实 IP 供连接时绑定本地端点。</summary>
+    // ---------- 辅助类型：网卡下拉项 ----------
+
     public sealed class NicInfo
     {
         public string Name { get; init; } = string.Empty;
@@ -117,6 +121,8 @@ namespace DSH_Modbus采集工具
     }
 
     /// <summary>设备状态日志的级别，决定日志行的颜色（沿用状态栏既有配色）。</summary>
+    // ---------- 辅助类型：日志级别与日志行（LogEntry） ----------
+
     public enum DeviceLogLevel
     {
         /// <summary>中性灰：如用户主动断开。</summary>
@@ -193,6 +199,8 @@ namespace DSH_Modbus采集工具
     }
 
     /// <summary>设备配置页展示用：地址表中的一个元件（同名元件的多段地址区合并为一项）。</summary>
+    // ---------- 辅助类型：地址表元件（设备配置页展示用） ----------
+
     public sealed class AreaElement
     {
         /// <summary>元件符号，如 M、X、SD</summary>
@@ -201,6 +209,8 @@ namespace DSH_Modbus采集工具
         /// <summary>悬停提示：各段编号范围与点数</summary>
         public string ToolTipText { get; init; } = string.Empty;
     }
+
+    // ---------- 主窗口：ICollectorHost 的窗口侧实现（跨线程 / Dispatcher / 当前连接校验） ----------
 
     /// <summary>
     /// 主窗口。<see cref="ICollectorHost"/> 的实现即「窗口 → 采集引擎」的那一侧契约：
@@ -301,7 +311,7 @@ namespace DSH_Modbus采集工具
         /// <summary>底栏当前状态色的浅色字面值，经 <see cref="StatusBrushKey"/> 映射到主题键。</summary>
         private string _statusColorHex = "#9A9A9A";
 
-        // ---------- 自动重连（P1-1） ----------
+        // ---------- 自动重连：字段与目标快照 ----------
 
         /// <summary>
         /// 期望保持连接的参数快照（IP / 端口 / 驱动 / 本地端点）。非 null 表示用户想连着 ——
@@ -329,6 +339,8 @@ namespace DSH_Modbus采集工具
 
         private static string CommentsFilePath =>
             Path.Combine(AppContext.BaseDirectory, "io-comments.json");
+
+        // ---------- 构造函数 ----------
 
         public MainWindow()
         {
@@ -557,6 +569,8 @@ namespace DSH_Modbus采集工具
                 ? new Thickness(Math.Max(0, overX), Math.Max(0, overY), Math.Max(0, overX), Math.Max(0, overY))
                 : new Thickness(0);
         }
+
+        // ---------- 窗口生命周期与导航 ----------
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
@@ -864,6 +878,8 @@ namespace DSH_Modbus采集工具
         /// 不需要像日志状态那样在进页面时刷新。
         /// </para>
         /// </summary>
+        // ---------- 设置：项目信息（P5-3） ----------
+
         private void RefreshProjectInfo()
         {
             if (InfoProductText == null)
@@ -884,6 +900,8 @@ namespace DSH_Modbus采集工具
         /// 底栏左侧的状态点与状态文字由 <see cref="SetStatus"/> 负责，两者互不覆盖：
         /// 参数随表单变化，状态随连接生命周期变化。
         /// </summary>
+        // ---------- 底栏：右侧连接参数 ----------
+
         private void UpdateOverviewStatus()
         {
             if (StatusBarDetail == null
@@ -905,6 +923,8 @@ namespace DSH_Modbus采集工具
 
             StatusBarDetail.Text = $"{driver}：{connection}  {protocol}  {ipPort}";
         }
+
+        // ---------- 网卡扫描与记忆 ----------
 
         private void ScanNetworkAdapters()
         {
@@ -1016,6 +1036,8 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        // ---------- 表单控件高度同步 ----------
+
         private void SyncInputHeights()
         {
             if (ConnectionTypeComboBox == null || IpTextBox == null || PortTextBox == null)
@@ -1058,6 +1080,8 @@ namespace DSH_Modbus采集工具
                 }
             }
         }
+
+        // ---------- 连接状态机（建连 / 断开） ----------
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1272,7 +1296,7 @@ namespace DSH_Modbus采集工具
             SetStatus(statusText, colorHex);
         }
 
-        // ---------- 自动重连（P1-1） ----------
+        // ---------- 自动重连：循环与退避（P1-1） ----------
 
         /// <summary>
         /// 异常断开后启动自动重连：按 <see cref="ReconnectDelaysSeconds"/> 指数退避反复尝试，
@@ -1356,6 +1380,8 @@ namespace DSH_Modbus采集工具
         /// 由 <see cref="StatusBrushKey"/> 映射到语义画刷键 —— 这样调用点无需关心主题，
         /// 深色主题下也不会拿到浅色主题的固定色。
         /// </summary>
+        // ---------- 底栏：左侧状态文字与颜色 ----------
+
         private void SetStatus(string text, string colorHex)
         {
             StatusText.Text = text;
@@ -1387,6 +1413,8 @@ namespace DSH_Modbus采集工具
         /// 按新主题重建日志各行的颜色。日志行色在 <see cref="LogEntry"/> 构造时定死，
         /// 换主题后必须整表重建 —— 用「原样替换」而不是 Clear+Add，避免滚动位置跳动。
         /// </summary>
+        // ---------- 设备状态日志（总览页底部） ----------
+
         private void RefreshDeviceLogColors()
         {
             for (int i = 0; i < _deviceLog.Count; i++)
@@ -1394,8 +1422,6 @@ namespace DSH_Modbus采集工具
                 _deviceLog[i] = _deviceLog[i].WithThemeColors();
             }
         }
-
-        // ---------- 设备状态日志（总览页底部） ----------
 
         /// <summary>
         /// 追加一条设备状态日志：超出上限丢弃最旧一条，并滚动到最新一行。
@@ -1456,6 +1482,8 @@ namespace DSH_Modbus采集工具
         /// 把底层异常/状态文本归类为简短的中文断开原因。命中已知模式返回中文短语，
         /// 未命中则原样返回（可能含英文），保证不吞掉信息。
         /// </summary>
+        // ---------- 断开原因归类（底栏与日志共用） ----------
+
         private static string ClassifyDisconnectReason(string raw)
         {
             string text = raw.Trim();
@@ -1517,6 +1545,8 @@ namespace DSH_Modbus采集工具
             // 不再给心跳来源加「心跳：」前缀 —— 会出现「已断开：心跳：对端关闭连接」这种双冒号
             return cause;
         }
+
+        // ---------- 设备配置表单（驱动 / 字节序 / 采集周期） ----------
 
         private void RefreshNicButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1859,6 +1889,8 @@ namespace DSH_Modbus采集工具
             }));
         }
 
+        // ---------- 标题栏按钮 / 关闭 / 窗口状态 ----------
+
         private void MinimizeButton_Click(object sender, RoutedEventArgs e)
         {
             WindowState = WindowState.Minimized;
@@ -1898,7 +1930,7 @@ namespace DSH_Modbus采集工具
             Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(UpdateMaximizedInset));
         }
 
-        // ---------- IO 元件区切换 / IO 表导入（P2） ----------
+        // ---------- IO 元件区切换（P2） ----------
 
         private void IoView_Checked(object sender, RoutedEventArgs e)
         {
@@ -2604,6 +2636,8 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        // ---------- IO 表导入（P2） ----------
+
         private void ImportIoTableButton_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new Microsoft.Win32.OpenFileDialog
@@ -2661,6 +2695,8 @@ namespace DSH_Modbus采集工具
             MessageBox.Show(this, message, "导入 IO 表", MessageBoxButton.OK,
                 result.FailureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
         }
+
+        // ---------- 采集配置占位导航（P3-1 前为空壳） ----------
 
         private void RadioButton_Checked(object sender, RoutedEventArgs e)
         {
