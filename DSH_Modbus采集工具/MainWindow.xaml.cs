@@ -1624,6 +1624,12 @@ namespace DSH_Modbus采集工具
             IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
             YIoColumnsGrid.Visibility = yView ? Visibility.Visible : Visibility.Collapsed;
 
+            // X/Y 共用的滚动容器：自由监控下整层隐藏，免得空容器与自由监控面板叠在同一格
+            if (IoScrollViewer != null)
+            {
+                IoScrollViewer.Visibility = freeView ? Visibility.Collapsed : Visibility.Visible;
+            }
+
             if (FreeMonitorPanel != null)
             {
                 FreeMonitorPanel.Visibility = freeView ? Visibility.Visible : Visibility.Collapsed;
