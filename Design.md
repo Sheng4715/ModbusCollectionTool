@@ -49,7 +49,7 @@
 | 文件 | 职责 |
 |------|------|
 | `MainWindow.xaml` | 全部 UI：五页导航、IO 卡片（分段切换 / 导入 / 分页 / 空提示）、**自由监控卡片**（合并输入 + 类型/格式 + 当前值 + 删除，见 ADR-19）、**采集配置骨架页**（标题 + 占位卡）、采集周期下拉、**全局底栏**（叠放，见 ADR-16）；面板显隐由 `Nav_Checked` 控制 |
-| `MainWindow.xaml.cs` | 交互编排：连接状态机 + 任务隔离、轮询循环、心跳编排、**自动重连退避**、动态点位集与分页、xlsx 导入、**自由监控增删改与校验**、网卡扫描绑定、运行日志、**底栏状态**、最大化溢出补偿 |
+| `MainWindow.xaml.cs` | 交互编排：连接状态机 + 任务隔离、轮询循环、心跳编排、**自动重连退避**、动态点位集与分页、xlsx 导入、**自由监控增删改与校验**、网卡扫描绑定、**底栏状态**、最大化溢出补偿；运行日志只剩三处薄包装（编排在 `Ui/DeviceLogPresenter.cs`） |
 | `MonitorItem.cs` | 自由监控项：`DataPoint` 的界面包装（INPC + 行色 + ToolTip）与 `MonitorItemSet`（增删改、落盘、`AfterChange` 重解析） |
 | `XlsxIoTableReader.cs` | xlsx 解析：零依赖（`System.IO.Compression` + `XmlReader`），首个工作表 → sharedStrings/inlineStr → **地址形单元格 → 右邻为注释** |
 | `Modeling/DataTypes.cs` | 类型系统：`DataType` / `DisplayFormat` 枚举 + `DataTypeSpec`（位宽、占用寄存器数、可用格式、线圈/寄存器归属） |
@@ -79,7 +79,7 @@
 | `_comments` | 仅 UI | 点位名→注释，**既是注释表也是点位集来源**；启动 `LoadComments()`，导入后替换 + `SaveComments()` |
 | `_monitorSet` | 仅 UI | `MonitorItemSet`：自由监控项集合 + `data-points.json` 落盘；`AfterChange` 是**唯一**的重解析入口 |
 | `_freeViewActive` | volatile | 当前分段是否为自由监控（预留：自由监控读取链路接线后按它决定是否采集） |
-| `_deviceLog` | 仅 UI | `ObservableCollection<LogEntry>`，上限 200、仅内存；心跳告警经 `Dispatcher.InvokeAsync` 回切后追加 |
+| `_logPresenter` | 仅 UI | `Ui/DeviceLogPresenter.cs`；内含 `ObservableCollection<LogEntry>`，上限 200、仅内存；心跳告警经 `Dispatcher.InvokeAsync` 回切后追加 |
 | `_reconnectTarget` | 仅 UI | 重连目标快照（IP/端口/驱动/本地端点）；**无参 `Disconnect()` 会清空它**，带参重载保留 —— 这是「用户主动断开」与「异常断开」的语义分界（ADR-15） |
 | `_reconnectCts` | 仅 UI | 重连循环取消源；非 null 即表示正在重连 |
 | `_reconnectAttempt` | 仅 UI | 已重试次数，用于取退避表下标与底栏「第 M 次」文案 |
@@ -359,7 +359,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 | 多页面 IO（原 P2） | X/Y 分段：`_xPoints`/`_yPoints` 双列表 + 双网格；分页：每页 4×`IoRowsPerColumn`，页号独立。再加 M/D 段 = 复制一个列表 + 网格 + 分段按钮 | ✅ X/Y + 分页；M/D 暂缓 |
 | **结构重构（P5 步骤 1、2）** | 采集编排 → `Polling/`；IO 点位集/分页/导入 → `Io/`（**均不引用 WPF**）。自由监控**刻意未抽**（12 处直接碰控件） | ✅（ADR-21） |
 | **主题外观（P5-1，中）** | 新增 `Themes/`（`Light.xaml` + `Dark.xaml` 同键字典 + `ThemeManager`）；UI 侧把颜色字面量全部换成 `{DynamicResource}`；设置页新增三分段控件 | ✅ **已实现**（ADR-24/24/25；验证见 §10.5） |
-| **日志保存（P5-2，中）** | 落盘点挂在 `AppendDeviceLog`（5 种设备状态的唯一出口）；写入器 `Logging/DeviceLogFileWriter.cs`（**不引用 WPF**，独立工程 `LoggingCheck` 链接源码验证）；默认 `AppContext.BaseDirectory\Log\`，文件名 = 日期，纯文本 `.log`，每行 `[时间] [级别] 消息`；设置存 `app-settings.json` | ✅ **已实现**（ADR-27/27/28/29；验证见 §10.6） |
+| **日志保存（P5-2，中）** | 落盘点挂在窗口的 `AppendDeviceLog`（5 种设备状态的唯一出口），编排在 `Ui/DeviceLogPresenter.cs`；写入器 `Logging/DeviceLogFileWriter.cs`（**不引用 WPF**，独立工程 `LoggingCheck` 链接源码验证）；默认 `AppContext.BaseDirectory\Log\`，文件名 = 日期，纯文本 `.log`，每行 `[时间] [级别] 消息`；设置存 `app-settings.json` | ✅ **已实现**（ADR-27/27/28/29；验证见 §10.6） |
 | **项目信息（P5-3，低）** | `csproj` 补 `Version` / `FileVersion` 与 `<Product>` 元数据 + 编译期生成构建日期常量；`AppInfo.cs` 只读程序集元数据；设置页第三卡 `RefreshProjectInfo()` 回显 **名称 / 版本 / 构建日期 / 运行环境** | ✅ **已实现**（ADR-31；验证见 §10.7） |
 
 ### 7.1 待设计项的关键约束（来自 Brief）
@@ -427,13 +427,17 @@ D[n] = (char[2i] << 8) | char[2i+1]
 
 1. **单文件 code-behind 仍偏大**：`MainWindow.xaml.cs` 与 `MainWindow.xaml` 都是两千行量级的单文件。P5 结构重构已抽出两块 —— `Polling/`（`ICollectorHost` + `ModbusPoller` + `PollSnapshot`）与 `Io/`（`IoPointSet` + `IoPager` + `IoTableImporter`）；剩余的连接生命周期、心跳编排、导航、**自由监控**、日志、底栏、最大化补偿仍混放。此后 P4-2 读取/写入、P5 设置页（主题 / 日志落盘 / 项目信息）与网卡记忆又陆续加回本文件，规模已回到重构前。
    - ⚠️ **不要在本文件写"现约 N 行"**：该数字曾同时出现 **2590 / 2190 / 2187** 三个互相矛盾的值，且全都与当时实际不符。它对任何判断都不起作用，写上去只会下次再骗人一次 —— 要量化规模就用「两千行量级」这类定性说法。
-   - **自由监控是刻意留下的**：它有 12 处直接碰控件（行状态、聚焦、编辑态、ToolTip 去重），抽出去要么把控件带进新类、要么先造一层很薄的视图接口 —— 两者都比它现在的价值贵。真要抽，先抽 `DeviceLog` 与底栏（无控件耦合），再考虑自由监控。
+   - **自由监控是刻意留下的**：它有 12 处直接碰控件（行状态、聚焦、编辑态、ToolTip 去重），抽出去要么把控件带进新类、要么先造一层很薄的视图接口 —— 两者都比它现在的价值贵。原定的「先抽 `DeviceLog` 与底栏（无控件耦合），再考虑自由监控」**前两步已于 2026-10-16 走完**（底栏 = 批次 2、日志 = 批次 4），自由监控仍是唯一明确不抽的一块。
    - 已抽出的两块**刻意不引用 WPF**：`IoPager` 只做数值运算（`IoPagerPanel.Visibility` / `IoPageText.Text` / `IoEmptyHint.Visibility` 三处控件写入留在窗口），`IoTableImporter` 只返回数据（`MessageBox` 留在窗口）。这样它们可被 `ModelingCheck` 式的独立工程链接源码直接验证。
-   - **已开始的收窄（2026-10-16）**：`ClassifyDisconnectReason` 的规则本体已抽到 `Logging/DisconnectReasonClassifier.cs`（纯 `string→string`，窗口侧只留一层薄包装，调用点未动）。选它开头是因为它刚被**底栏与日志同时复用** —— 「两处各写一套」的口子已经真实出现过。`FileLevelOf` **未一并抽出**：它依赖窗口文件里的 `DeviceLogLevel` 枚举，为 6 行代码搬枚举不划算。
+   - **已开始的收窄（2026-10-16）**：`ClassifyDisconnectReason` 的规则本体已抽到 `Logging/DisconnectReasonClassifier.cs`（纯 `string→string`，窗口侧只留一层薄包装，调用点未动）。选它开头是因为它刚被**底栏与日志同时复用** —— 「两处各写一套」的口子已经真实出现过。`FileLevelOf` 当时**未一并抽出**（它依赖窗口文件里的 `DeviceLogLevel` 枚举，为 6 行代码搬枚举不划算）—— 这个悬置已在**批次 4** 随枚举一起解决，见下。
    - **第二批（同日）**：`NicInfo` 与网卡扫描/还原规则抽到 `Net/NicScanner.cs` —— 扫描（`NetworkInterface` 的三重过滤）与「本次选择 → 记住的 → 第 0 项」的优先级都是纯逻辑，窗口只留 `_restoringNicSelection` 闸门与下拉框填充（那是「用户意图 vs 程序改动」的判断，离不开控件事件）。`IndexOfNic` 随之删除。验证：`.tmp/NicCheck` 17 项断言全通过（未提交，与 `PollerCheck` 同处）。
    - **第三批（同日）**：最大化溢出补偿抽到 `Ui/MaximizedInset.cs` —— P/Invoke、`MONITORINFO` 结构、DPI 换算与内缩量计算整体搬走，窗口侧只留一行 `MaximizedInset.Apply(this, RootGrid)`。验证方式：与搬走前的实现做**归一化逐行比对**，除参数名外 26 行正文完全一致（该算法必须有真实窗口才能跑，进不了控制台断言；真机结论仍以 AGENTS §3.6 的记录为准）。
    - **批次 2（同日）**：底栏抽到 `Ui/StatusBarPresenter.cs`。状态文字 / 状态点颜色 / 右侧连接参数原本散在窗口的 `SetStatus` / `StatusBrushKey` / `UpdateOverviewStatus` 三个方法里，正是「底栏文案两次漂移」的土壤；现在三条规则集中一处。窗口只留薄包装与 `BuildConnectionDetail()`（拼串要读表单控件，故留在窗口）。
      - ⚠️ **教训（真实回归）**：接线后**构建通过但应用一启动就崩** —— `UpdateOverviewStatus()` 会在 `InitializeComponent()` 期间被 ComboBox 的 `SelectionChanged` 触发，那时呈现器还没创建，而原代码正是靠该方法里那串控件 null 检查挡住这条路的（检查搬进 `BuildConnectionDetail` 后防线就没了）。**接线类改动的「构建绿灯」不等于「能启动」，必须真跑一次**；陷阱已写进 AGENTS §3.5。
+   - **批次 4（同日，日志）**：日志的**编排**抽到 `Ui/DeviceLogPresenter.cs`，`DeviceLogLevel` 与 `LogEntry` 两个类型随之一并搬走。搬的是三条**规则**：入内存 + 上限裁剪（200）、**界面与文件共用同一个时间戳**、界面级别 → 落盘级别（`FileLevelOf` → `ToFileLevel`）。窗口侧 `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `RefreshDeviceLogColors` 各剩一两行，只保留**控件**动作：`ScrollIntoView`、设置页失败提示刷新。
+     - **为什么 `LogEntry` 必须跟着走**：`LogEntry.LevelBrush` 要按主题取色（ADR-25 的 C# 侧路径），而 `ToFileLevel` 的入参是 `DeviceLogLevel` —— 只搬编排、把枚举留在窗口，就等于让 `Ui/` 反过来依赖窗口文件，方向是错的。这与批次 1 里 `FileLevelOf` 悬置的顾虑（「为 6 行代码搬枚举不划算」）不矛盾：**这次搬的是整个编排，枚举只是搭车**。
+     - **落盘写入器不跟着搬**：`_logWriter` 的生命周期由窗口掌握（设置页改目录 / 开关、关窗 `Dispose`），presenter 只把它作为 `Append` 的入参 —— 「写入时用哪个时间戳与哪个级别」是 presenter 的规则，「写到哪、开不开」是窗口的决策。
+     - 验证：UIA 端到端（假从站真连 / 真断）+ **像素采样**验日志行色随主题变（深色 `#4EC94E`、浅色 `#0B7A0B`，与设计值逐字符相同）+ 独立工程 `.tmp/DeviceLogCheck` 23 项断言（上限裁剪 / 级别映射 / 共用时间戳 / 清空 / 换主题重建）。详见 §10.13。
    - **批次 3（同日）**：连接状态机的**身份与生命周期**抽到 `Polling/ConnectionSession.cs`，退避策略抽到 `Polling/ReconnectPolicy.cs`。**async 编排刻意留在窗口** —— 连接/重连的等待循环里逐秒刷状态栏、改按钮文案、锁表单，全是界面驱动的东西，搬进类里只会凭空多一层接口，却不增加任何可断言性。反之抽走的都带不变量：连接身份判定（`IsCurrent`）、两种「断开」语义、在途取消源「只清自己那一段」、退避表越界夹取、重连计数清零。验证见 §10.2。
 2. ~~X 点位与注释硬编码~~ → **已解决**：点位集完全由 IO 表驱动，内置 `XComments` 已删除。
 3. ~~目标网卡下拉无实际作用~~ → **已解决**：连接时 `Bind(所选IP, 0)` 强制源地址，错误路径与成功路径均已端到端验证。
@@ -1109,6 +1113,41 @@ private void RadioButton_Checked(object sender, RoutedEventArgs e) { }
 
 > 用的是 §10.9 那两条踩坑后的写法：窗口用 `FindAll` + **按宽度 > 500 过滤**取真窗口（进程有两个顶层窗口，`FindFirst` 会抓到 39px 幽灵）；同名元素用**宽度 > 1000** 区分页标题与导航项文字。切页用 `SelectionItemPattern.Select()`（真实鼠标点击对导航项无效）。
 > ⚠️ 本次**未做**：深色主题下的截图核对（新增卡用的是与设置页相同的主题键，风险低）；P3-1 的采集项勾选 / 触发方式 / CSV 输出**均未实现**。
+
+### 10.13 日志编排抽到 `Ui/DeviceLogPresenter.cs`（2026-10-16，B 项）
+
+**1. 抽什么、留什么**
+
+`Design.md` §8-1 原定顺序是「先抽 `DeviceLog` 与底栏（无控件耦合），再考虑自由监控」。底栏已于批次 2 抽走，本次走完第二步。
+
+| 搬进 `Ui/DeviceLogPresenter.cs` | 留在窗口 |
+|---|---|
+| `DeviceLogLevel` / `LogEntry` 两个类型 | `DeviceLogList` 等控件本身 |
+| 内存集合 `ObservableCollection<LogEntry>` | `ScrollIntoView`（滚动是控件行为） |
+| 上限裁剪（200，`DefaultMaxEntries`） | 设置页失败提示的刷新时机 |
+| **界面与文件共用同一个时间戳** | `_logWriter` 的创建 / 改目录 / 开关 / 关窗释放 |
+| `FileLevelOf` → `ToFileLevel`（级别映射） | — |
+| 换主题整表重建（`RefreshThemeColors`） | — |
+
+**2. 两处方向性的判断**
+
+- **`LogEntry` 必须跟着走**：它的 `LevelBrush` 要按主题取色（ADR-25 的 C# 侧路径），而 `ToFileLevel` 的入参是 `DeviceLogLevel`。只搬编排、把枚举留在窗口，等于让 `Ui/` 反过来依赖窗口文件。这与批次 1 里「`FileLevelOf` 悬置」的顾虑不矛盾 —— **这次搬的是整个编排，枚举只是搭车**。
+- **落盘写入器不跟着搬**：`_logWriter` 的生命周期（设置页改目录 / 开关、关窗 `Dispose`）由窗口掌握。presenter 只把它作为 `Append` 的入参：「写入时用哪个时间戳与哪个级别」是 presenter 的规则，「写到哪、开不开」是窗口的决策。
+
+**3. 验证（三层，各自覆盖对方盖不到的地方）**
+
+| 层 | 手段 | 结果 |
+|---|---|---|
+| 端到端 | UIA 驱动真程序 + `.tmp/E2ESlave` 假从站（`192.168.1.15:1502`）真连、真断 | 底栏「已连接」/「未连接」、按钮「断开」/「连接」随连接态正确翻转；日志出现 `已连接：192.168.1.15:1502` 与 `已断开：用户主动断开` 各一条 |
+| 落盘 | 读 exe 旁 `Log\2026-10-16.log` | `[2026-10-16 13:59:24] [INFO] 已连接：192.168.1.15:1502` / `[13:59:53] [ERROR] 已断开：用户主动断开` —— **时间戳与界面显示的 `13:59:24` / `13:59:53` 逐字符相同**，「共用时间戳」这条不变量搬家后仍成立；级别按颜色语义分档（绿 INFO / 红 ERROR）也对 |
+| 换主题 | **像素采样**：截图日志行「已连接」那行的绿色笔画，取主色 | 深色 **`#4EC94E`**、浅色 **`#0B7A0B`**，与 `Themes/Dark.xaml` / `Light.xaml` 的设计值**逐字符相同**；两种主题下日志文本完全一致（未丢内容） |
+| 清空 | UIA 点「清空」 | 日志 Text 元素 4 → **0**；而**文件仍是 3 行**（清空只清内存，不碰已落盘内容） |
+| 独立断言 | `.tmp/DeviceLogCheck`（链接源码 + 打桩 `ThemeManager`） | **23 / 23 通过** —— 覆盖端到端够不着的部分：上限裁剪（5 条只留最新 3 条）、四级别映射、共用时间戳（逐字符比对界面 `TimeText` 与文件行首）、清空、换主题重建后「时间/消息/级别三项不变、实例已换」 |
+
+构建：`--no-incremental` 全量重编 **0 警告 0 错误**；回归 `LoggingCheck` **44/44**、`ModelingCheck` **86/86**。
+
+> ⚠️ **为什么像素采样是必需的**：`LogEntry.LevelBrush` 是 C# 侧直接赋的画刷，**不经过 `DynamicResource`**，XAML 绑定不会自己更新。换主题后若忘了重建，界面**不会报错**、文本也**完全正常** —— 只有颜色是旧的。这正是 ADR-25 点名要覆盖的路径，也是「文本比对通过」并不能证明这件事的原因。
+> ⚠️ **本次未做**：日志落盘失败的设置页提示（`LogSaveStatusText`）未构造失败场景复验 —— 该路径本次未改动，仍以 §10.6 的记录为准。
 
 ## 11. 构建与运行
 

@@ -109,83 +109,6 @@ namespace DSH_Modbus采集工具
         public event PropertyChangedEventHandler? PropertyChanged;
     }
 
-    // ---------- 辅助类型：日志级别与日志行（LogEntry） ----------
-
-    /// <summary>设备状态日志的级别，决定日志行的颜色（沿用状态栏既有配色）。</summary>
-    public enum DeviceLogLevel
-    {
-        /// <summary>中性灰：如用户主动断开。</summary>
-        Neutral,
-
-        /// <summary>绿色：连接成功、心跳恢复。</summary>
-        Connected,
-
-        /// <summary>红色：连接失败、通讯异常断开。</summary>
-        Disconnected,
-
-        /// <summary>琥珀色：告警，如心跳响应异常。</summary>
-        Warning,
-    }
-
-    /// <summary>设备状态日志的一行，供总览页底部的 ListBox 绑定。</summary>
-    public sealed class LogEntry
-    {
-        private readonly DateTime _time;
-
-        public LogEntry(DateTime time, string message, DeviceLogLevel level)
-        {
-            _time = time;
-            TimeText = $"[{time:yyyy-MM-dd HH:mm:ss}]";
-            Message = message;
-            Level = level;
-            LevelBrush = MakeLevelBrush(level);
-        }
-
-        /// <summary>形如 "[2026-10-08 10:23:45]"，固定灰色显示。</summary>
-        public string TimeText { get; }
-
-        public string Message { get; }
-
-        /// <summary>级别（换主题时按它重算颜色）。</summary>
-        public DeviceLogLevel Level { get; }
-
-        public Brush LevelBrush { get; }
-
-        /// <summary>
-        /// 按当前主题取该级别的画刷。走 <see cref="Themes.ThemeManager.GetBrush"/>，
-        /// 取不到时回退到浅色字面值，保证任何时候都有颜色。
-        /// </summary>
-        private static Brush MakeLevelBrush(DeviceLogLevel level)
-        {
-            string key = level switch
-            {
-                DeviceLogLevel.Connected => "Brush.Success",
-                DeviceLogLevel.Disconnected => "Brush.Danger",
-                DeviceLogLevel.Warning => "Brush.Warning",
-                _ => "Brush.Text.Secondary",
-            };
-
-            return Themes.ThemeManager.GetBrush(key) ?? Fallback(level);
-        }
-
-        /// <summary>换主题后重建一行（颜色随主题变，其它字段不变）。</summary>
-        public LogEntry WithThemeColors() => new(_time, Message, Level);
-
-        /// <summary>主题资源不可用时的兜底色（= 浅色主题的对应值）。</summary>
-        private static Brush Fallback(DeviceLogLevel level)
-        {
-            Color color = level switch
-            {
-                DeviceLogLevel.Connected => Color.FromRgb(0x0B, 0x7A, 0x0B),
-                DeviceLogLevel.Disconnected => Color.FromRgb(0xC4, 0x2B, 0x1C),
-                DeviceLogLevel.Warning => Color.FromRgb(0xB2, 0x6A, 0x00),
-                _ => Color.FromRgb(0x5D, 0x5D, 0x5D),
-            };
-            var brush = new SolidColorBrush(color);
-            brush.Freeze();
-            return brush;
-        }
-    }
 
     // ---------- 辅助类型：地址表元件（设备配置页展示用） ----------
 
@@ -281,8 +204,11 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private readonly IoPointSet _ioSet = new();
 
-        /// <summary>设备状态日志（总览页底部展示）。只在 UI 线程追加。</summary>
-        private readonly ObservableCollection<LogEntry> _deviceLog = new();
+        /// <summary>
+        /// 设备状态日志（总览页底部展示）。内存集合、上限裁剪、落盘旁路与级别映射都在
+        /// <see cref="DeviceLogPresenter"/>；窗口侧只留滚动到最新一行与设置页失败提示刷新。
+        /// </summary>
+        private readonly DeviceLogPresenter _logPresenter = new();
 
         /// <summary>
         /// 设备状态日志的落盘写入器（P5-2）。所有写入都在 UI 线程（<see cref="AppendDeviceLog"/>
@@ -312,9 +238,6 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private readonly ConnectionSession _session = new();
 
-        /// <summary>日志内存条数上限：超出后丢弃最旧一条（仅内存，不落盘）。</summary>
-        private const int MaxDeviceLogEntries = 200;
-
         private static string CommentsFilePath =>
             Path.Combine(AppContext.BaseDirectory, "io-comments.json");
 
@@ -337,7 +260,7 @@ namespace DSH_Modbus采集工具
             LoadComments();
 
             // 设备状态日志：只在总览页展示，仅内存保存
-            DeviceLogList.ItemsSource = _deviceLog;
+            DeviceLogList.ItemsSource = _logPresenter.Entries;
 
             _ioInitialized = true;
             RebuildIoPoints();
@@ -1245,19 +1168,13 @@ namespace DSH_Modbus采集工具
         // ---------- 设备状态日志（总览页底部） ----------
 
         /// <summary>
-        /// 按新主题重建日志各行的颜色。日志行色在 <see cref="LogEntry"/> 构造时定死，
-        /// 换主题后必须整表重建 —— 用「原样替换」而不是 Clear+Add，避免滚动位置跳动。
+        /// 薄包装：按新主题重建日志各行的颜色。规则本体在
+        /// <see cref="DeviceLogPresenter.RefreshThemeColors"/>（整表重建，避免滚动位置跳动）。
         /// </summary>
-        private void RefreshDeviceLogColors()
-        {
-            for (int i = 0; i < _deviceLog.Count; i++)
-            {
-                _deviceLog[i] = _deviceLog[i].WithThemeColors();
-            }
-        }
+        private void RefreshDeviceLogColors() => _logPresenter.RefreshThemeColors();
 
         /// <summary>
-        /// 追加一条设备状态日志：超出上限丢弃最旧一条，并滚动到最新一行。
+        /// 追加一条设备状态日志：入内存（含上限裁剪）并落盘，然后滚动到最新一行。
         /// 只在 UI 线程调用（连接/断开/心跳告警回切后均已处于 UI 线程）。
         /// <para>
         /// 日志规则（5 种，2026-10-09 定稿）：
@@ -1269,22 +1186,17 @@ namespace DSH_Modbus采集工具
         /// 注意「完全无响应」不产生第 ④ 条：它由 NotifyConnectionLost 按第 ② 条记红色「已断开」，
         /// 因此一次断线只产生一条日志。
         /// </para>
+        /// <para>
+        /// 入内存、上限裁剪、**界面与文件共用同一个时间戳**、级别映射都在
+        /// <see cref="DeviceLogPresenter.Append"/>；这里只做两件**控件**的事：
+        /// 滚动到最新一行、设置页可见时刷新失败提示。
+        /// </para>
         /// </summary>
         private void AppendDeviceLog(string message, DeviceLogLevel level)
         {
-            var now = DateTime.Now;
+            LogEntry entry = _logPresenter.Append(message, level, _logWriter);
 
-            _deviceLog.Add(new LogEntry(now, message, level));
-            while (_deviceLog.Count > MaxDeviceLogEntries)
-            {
-                _deviceLog.RemoveAt(0);
-            }
-
-            DeviceLogList.ScrollIntoView(_deviceLog[^1]);
-
-            // P5-2：落盘与界面**共用同一个时间戳**。分成两次取时，跨秒时写下的
-            // 时间会与界面差一秒，事后对照两边对不上。
-            _logWriter?.Write(now, FileLevelOf(level), message);
+            DeviceLogList.ScrollIntoView(entry);
 
             // 设置页可见时刷新失败提示（失败 → 显示，自愈后 → 自动隐藏）。不可见就不刷 ——
             // 日志是高频旁路，让它去更新一个没人看的 TextBlock 没有必要。
@@ -1294,21 +1206,9 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        /// <summary>
-        /// 界面级别 → 落盘级别的映射（P5-2，用户定稿按**颜色语义**分档）：
-        /// 绿（已连接 / 通讯恢复）= INFO，琥珀（通讯异常）= WARN，红（已断开 / 连接失败）= ERROR。
-        /// <c>Neutral</c> 是默认灰，按 INFO 处理。
-        /// </summary>
-        private static Logging.LogFileLevel FileLevelOf(DeviceLogLevel level) => level switch
-        {
-            DeviceLogLevel.Warning => Logging.LogFileLevel.WARN,
-            DeviceLogLevel.Disconnected => Logging.LogFileLevel.ERROR,
-            _ => Logging.LogFileLevel.INFO,
-        };
-
         private void ClearDeviceLogButton_Click(object sender, RoutedEventArgs e)
         {
-            _deviceLog.Clear();
+            _logPresenter.Clear();
         }
 
         // ---------- 断开原因归类（底栏与日志共用） ----------

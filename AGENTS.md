@@ -58,7 +58,8 @@ DSH_Modbus采集工具/
 │   └── NicScanner.cs           # 网络接口 → NicInfo + 「上次选择」还原优先级
 ├── Ui/                         # 窗口呈现辅助（引 WPF，但不碰业务）
 │   ├── MaximizedInset.cs       # 最大化溢出补偿：物理像素测量 + 按 DPI 内缩根元素
-│   └── StatusBarPresenter.cs   # 底栏：状态文字 / 状态点颜色 / 右侧连接参数
+│   ├── StatusBarPresenter.cs   # 底栏：状态文字 / 状态点颜色 / 右侧连接参数
+│   └── DeviceLogPresenter.cs   # 运行日志：内存集合 + 上限裁剪 + 落盘旁路 + 级别映射
 └── Drivers/
     ├── CommDriver.cs           # 模型：ModbusArea / NumberBase / AddressArea / CommDriver（含字节顺序枚举）
     ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
@@ -221,12 +222,12 @@ Window
 | **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 §5.1） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（闸门 + 填下拉框）/ `TargetNicComboBox_SelectionChanged`；扫描与还原规则在 `Net/NicScanner.cs`。选择持久化见 §3.4 |
-| 日志 | `AppendDeviceLog`（顺带落盘 P5-2）/ `ClearDeviceLogButton_Click` / `ClassifyDisconnectReason` / `RefreshDeviceLogColors`（换主题时重建行色）/ `FileLevelOf`（界面级别 → 落盘级别） |
+| 日志 | 窗口侧只留三处**控件**动作：`AppendDeviceLog`（薄包装 → 追加 + `ScrollIntoView` + 设置页失败提示）、`ClearDeviceLogButton_Click`、`RefreshDeviceLogColors`（薄包装）；**编排与规则在 `Ui/DeviceLogPresenter.cs`**（内存集合 / 上限 200 / 落盘旁路 / **界面与文件共用时间戳** / 界面级别 → 落盘级别）；`ClassifyDisconnectReason` 仍是薄包装 |
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `BuildConnectionDetail`（窗口侧薄包装）→ `Ui/StatusBarPresenter.cs`（规则本体）；`UpdateMaximizedInset` → `Ui/MaximizedInset.cs` |
 | **主题（P5-1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged`（底栏的状态色映射在 `Ui/StatusBarPresenter.cs`）；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
 | **日志落盘（P5-2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveToggle_Changed` / `SyncLogSaveToggle` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（见 §7.1） |
 | **项目信息（P5-3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（见 §7.2） |
-| 关键字段 | `_session`（连接身份与生命周期）/ `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_deviceLog` / `_logWriter` / `_statusBar`（底栏呈现器）（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
+| 关键字段 | `_session`（连接身份与生命周期）/ `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_logPresenter`（日志呈现器）/ `_logWriter` / `_statusBar`（底栏呈现器）（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -324,14 +325,14 @@ Window
 | 通讯恢复 | `通讯恢复` | 绿 |
 
 - 格式 `[yyyy-MM-dd HH:mm:ss] 消息`；**空日志不显示占位文字**；**不记**关窗
-- 仅内存保留最近 `MaxDeviceLogEntries`(200) 条，超出丢最旧、不落盘，可一键清空
+- 仅内存保留最近 `DeviceLogPresenter.DefaultMaxEntries`(200) 条，超出丢最旧、不落盘，可一键清空（上限与裁剪在 `Ui/DeviceLogPresenter.cs`）
 - **边界**：「完全无响应」不产生「通讯异常」—— 由 `NotifyConnectionLost` 记红色「已断开」，**一次断线只有一条日志**
 - 原因经 `ClassifyDisconnectReason` 归一为简短中文（Socket 原文 →「网络不可达」，Modbus 帧错误 →「响应帧校验失败」），未命中原样保留
 - 日志区套一层内嵌框线 `Border`（`#C8C8C8` 1px、圆角 4）；时间列用 `SharedSizeGroup="DeviceLogTime"` 跨行共享宽度（**否则比例字宽会让消息左边界抖动**），`DeviceLogList` 上须有 `Grid.IsSharedSizeScope="True"`
 
 ### 7.1 日志落盘（P5-2）
 
-同一条日志**既进界面又进文件**，落盘挂在 `AppendDeviceLog` —— 那是 5 种设备状态的唯一出口，7 个调用点零改动。
+同一条日志**既进界面又进文件**，落盘挂在 `Ui/DeviceLogPresenter.Append` —— 窗口的 `AppendDeviceLog` 是 5 种设备状态的唯一出口，7 个调用点零改动。
 
 ```
 [2026-10-15 11:41:45] [INFO] 已连接：192.168.1.66:502
@@ -343,7 +344,7 @@ Window
 | 默认目录 | `AppContext.BaseDirectory\Log`（exe 旁） |
 | 文件名 | 日期，如 `2026-10-15.log`（**一天一个**，跨天自动换） |
 | 格式 | 纯文本 UTF-8 无 BOM，每行 `[yyyy-MM-dd HH:mm:ss] [级别] 消息` |
-| 级别 | **按颜色语义**（见 `FileLevelOf`）：绿 → `INFO`、琥珀 → `WARN`、红 → `ERROR` |
+| 级别 | **按颜色语义**（见 `DeviceLogPresenter.ToFileLevel`）：绿 → `INFO`、琥珀 → `WARN`、红 → `ERROR` |
 | 默认状态 | **启用**（用户定稿） |
 | 保留 | **不自动清理**，一直追加 |
 | 设置项 | `app-settings.json` → `LogSaveEnabled` / `LogDirectory`（空串 = 默认目录） |
@@ -362,6 +363,7 @@ Window
 - 设置页路径改动**失焦才落盘**，且**先 `Directory.CreateDirectory` 再保存** —— 非法路径当场报错并回退，不拖到第一条日志写不进去才暴露
 - 开关/路径改动**立即生效**（`SetEnabled` / `SetDirectory`），关掉或换目录时释放旧句柄（否则用户没法移动文件夹）
 - 独立验证工程 `LoggingCheck`（**44 项**断言）覆盖行格式 / 跨天 / 续写 / 换目录 / 开关 / 容错 / **断开原因归类**，改动写入器或归类规则后跑它
+- 独立验证工程 `DeviceLogCheck`（`.tmp/`，**23 项**断言）覆盖 `DeviceLogPresenter` 的内存上限裁剪 / 级别映射 / **共用时间戳** / 清空 / 换主题重建；改动日志编排后跑它（**未提交**，随用随弃，手法同 `PollerCheck`：链接源码 + 打桩 WPF 类型）
 - ⚠️ **在 DSH 下跑它时先改 TEMP**：`%TEMP%` 上挂着沙箱 ACE，子进程（`dotnet run`）建目录会被拒（`UnauthorizedAccessException`），而 pwsh 自己建得出来，故报错看着莫名其妙。先 `$env:TEMP = "$PWD\.tmp\lc-temp"` 再跑
 
 ### 7.2 项目信息（P5-3）
@@ -489,7 +491,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 位置 | 做法 |
 |---|---|
 | `IoPoint.StateBrush`（灯色） | 每次取值都 `ThemeManager.GetBrush("Io.*")`；换主题后由 `OnThemeChanged` 调 `RaiseStateBrushChanged()` 通知绑定重算 |
-| `LogEntry.LevelBrush`（日志行色） | 构造时按主题取；换主题后 `RefreshDeviceLogColors()` 重建整表（保留原 `DateTime`，不重新 `Parse` 文本） |
+| `LogEntry.LevelBrush`（日志行色） | 构造时按主题取（类在 `Ui/DeviceLogPresenter.cs`）；换主题后 `RefreshDeviceLogColors()` → `DeviceLogPresenter.RefreshThemeColors()` 重建整表（保留原 `DateTime`，不重新 `Parse` 文本） |
 | `SetStatus(text, colorHex)`（底栏） | 实现在 `Ui/StatusBarPresenter.cs`：入参仍是**浅色字面值**，由内部 `BrushKey()` 映射到语义键；它记住上次的文字与颜色，换主题后 `ReapplyTheme()` 重设一次 |
 
 **几条容易踩的**：
@@ -545,9 +547,9 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | **IO 合法异常码不再断开（连续 5 次才记日志）** | `ModbusPoller.PollOnceAsync` 的 `catch (ModbusResponseException)` + `ConsecutiveExceptionThreshold` + `_blockExceptionStreaks`；告警通道 `ICollectorHost.ReportCommunicationWarning` → 窗口 `ReportCommunicationWarning`（见 §5，证据 `Design.md` §10.2） |
 | 网卡扫描/绑定/记忆 | `Net/NicScanner.cs`（`NicInfo` / `Scan` / `IndexOf` / `RestoreIndex`）；窗口侧 `ScanNetworkAdapters` / `TargetNicComboBox_SelectionChanged` / `ConnectButton_Click` |
 | 采集周期档位 | `PollIntervalComboBox` + `_pollIntervalMs` |
-| 日志追加/清空/上限 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `MaxDeviceLogEntries` |
-| 日志颜色与格式 | `LogEntry`（`DeviceLogLevel` → `LevelBrush`）+ `DeviceLogItemTemplate` |
-| **日志落盘（改落盘行为必读）** | `Logging/DeviceLogFileWriter.cs`；窗口侧 `_logWriter` / `FileLevelOf` / `RefreshLogSaveStatus`；独立验证 `LoggingCheck`（见 **§7.1**） |
+| **日志编排（上限 / 落盘旁路 / 级别映射）** | `Ui/DeviceLogPresenter.cs`（`Append` / `Clear` / `RefreshThemeColors` / `ToFileLevel`）；窗口侧 `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `RefreshDeviceLogColors` 只是薄包装（见 **§7.1**） |
+| 日志颜色与格式 | `LogEntry`（`DeviceLogLevel` → `LevelBrush`，类在 `Ui/DeviceLogPresenter.cs`）+ `DeviceLogItemTemplate` |
+| **日志落盘（改落盘行为必读）** | `Logging/DeviceLogFileWriter.cs`；窗口侧 `_logWriter` / `RefreshLogSaveStatus`；级别映射 `Ui/DeviceLogPresenter.ToFileLevel`；独立验证 `LoggingCheck`（见 **§7.1**） |
 | 断开原因归类 | `Logging/DisconnectReasonClassifier.cs`（规则本体，纯函数、可独立断言）；窗口侧 `ClassifyDisconnectReason` 只是薄包装，为满足 `ICollectorHost` |
 | 连接任务隔离/关闭清理 | `RunConnectionTasksAsync` / `IsCurrentConnection` / `OnClosed` |
 
