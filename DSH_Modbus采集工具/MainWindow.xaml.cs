@@ -17,6 +17,7 @@ using DSH_Modbus采集工具.Drivers;
 using DSH_Modbus采集工具.Io;
 using DSH_Modbus采集工具.Logging;
 using DSH_Modbus采集工具.Modeling;
+using DSH_Modbus采集工具.Net;
 using DSH_Modbus采集工具.Polling;
 using DSH_Modbus采集工具.Themes;
 
@@ -110,17 +111,6 @@ namespace DSH_Modbus采集工具
     }
 
     /// <summary>网卡下拉项：显示 "网卡名(ip)"，携带真实 IP 供连接时绑定本地端点。</summary>
-    // ---------- 辅助类型：网卡下拉项 ----------
-
-    public sealed class NicInfo
-    {
-        public string Name { get; init; } = string.Empty;
-        public IPAddress Ip { get; init; } = IPAddress.None;
-
-        public override string ToString() => $"{Name}({Ip})";
-    }
-
-    /// <summary>设备状态日志的级别，决定日志行的颜色（沿用状态栏既有配色）。</summary>
     // ---------- 辅助类型：日志级别与日志行（LogEntry） ----------
 
     public enum DeviceLogLevel
@@ -941,76 +931,30 @@ namespace DSH_Modbus采集工具
             _restoringNicSelection = true;
             try
             {
+                List<NicInfo> found = NicScanner.Scan();
+
                 TargetNicComboBox.Items.Clear();
-
-                foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+                foreach (NicInfo nic in found)
                 {
-                    if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback)
-                    {
-                        continue;
-                    }
-
-                    if (nic.OperationalStatus != OperationalStatus.Up)
-                    {
-                        continue;
-                    }
-
-                    IPAddress? ipv4 = nic.GetIPProperties().UnicastAddresses
-                        .Select(a => a.Address)
-                        .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
-
-                    if (ipv4 == null)
-                    {
-                        continue;
-                    }
-
-                    TargetNicComboBox.Items.Add(new NicInfo { Name = nic.Name, Ip = ipv4 });
+                    TargetNicComboBox.Items.Add(nic);
                 }
 
-                if (TargetNicComboBox.Items.Count == 0)
+                if (found.Count == 0)
                 {
                     TargetNicComboBox.Items.Add("未找到可用网卡");
                     TargetNicComboBox.SelectedIndex = 0;
                     return;
                 }
 
-                // 还原优先级：本次扫描前的选择 → 上次运行记住的选择 → 第 0 项。
-                // 都按**网卡名**匹配（每次扫描都是新对象，不能用引用比较）；
-                // 不用显示文本，因为文本里含 IP，而同一块网卡换网络后 IP 会变 ——
-                // 笔记本的 WLAN 在家是 192.168.1.15、在公司可能是 10.0.0.5，
-                // 按文本匹配恰好在最需要它的场景下失效。
-                int index = IndexOfNic(previous);
-                if (index < 0)
-                {
-                    index = IndexOfNic(ThemeManager.TargetNic);
-                }
-
-                TargetNicComboBox.SelectedIndex = index >= 0 ? index : 0;
+                // 还原优先级（本次选择 → 记住的 → 第 0 项）与「按网卡名而非显示文本
+                // 匹配」的理由见 NicScanner.RestoreIndex。
+                TargetNicComboBox.SelectedIndex =
+                    NicScanner.RestoreIndex(found, previous, ThemeManager.TargetNic);
             }
             finally
             {
                 _restoringNicSelection = false;
             }
-        }
-
-        /// <summary>按网卡名找下拉项下标；名字为空或未命中返回 -1。</summary>
-        private int IndexOfNic(string? name)
-        {
-            if (string.IsNullOrEmpty(name))
-            {
-                return -1;
-            }
-
-            for (int i = 0; i < TargetNicComboBox.Items.Count; i++)
-            {
-                if (TargetNicComboBox.Items[i] is NicInfo nic
-                    && string.Equals(nic.Name, name, StringComparison.Ordinal))
-                {
-                    return i;
-                }
-            }
-
-            return -1;
         }
 
         /// <summary>
