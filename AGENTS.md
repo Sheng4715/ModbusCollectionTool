@@ -26,10 +26,12 @@ dotnet run --project DSH_Modbus采集工具
 ```
 DSH_Modbus采集工具/
 ├── App.xaml / App.xaml.cs      # 入口（OnStartup 里先 ThemeManager.Initialize）
+├── AssemblyInfo.cs             # 仅供 ThemeInfo 特性等程序集级声明（无逻辑）
 ├── AppInfo.cs                  # 项目信息（P5-3）：版本号 / 构建日期 / 运行环境（只读程序集元数据）
 ├── MainWindow.xaml             # 全部 UI（单窗口，无 UserControl 拆分）
 ├── MainWindow.xaml.cs          # 交互逻辑（见 §4 分工）
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
+├── NumberInputDialog.cs        # STRING 长度输入弹窗（选 STRING 类型时用）
 ├── XlsxIoTableReader.cs        # xlsx 点位表解析（零依赖 zip+XML）
 ├── Themes/                     # 主题（P5-1）
 │   ├── Light.xaml              # 浅色字典（50 键）；值 = 主题化前的字面值
@@ -188,9 +190,13 @@ Window
 
 ## 4. 代码分工（MainWindow.xaml.cs）
 
-> `MainWindow.xaml.cs` 现约 **2590 行**（P5 重构前 2576）。采集编排已抽到 `Polling/`、
+> `MainWindow.xaml.cs` 仍是本工程最大的单文件（两千行量级；P5 重构抽出两块后，又因
+> P4-2 读取/写入与 P5 设置页陆续加回，规模回到重构前）。采集编排已抽到 `Polling/`、
 > IO 点位集/分页/导入已抽到 `Io/`，主题在 `Themes/`；其余（连接生命周期 / 心跳 / 导航 /
 > 自由监控 / 日志）仍在本文件。**自由监控刻意未抽** —— 它有 12 处直接碰控件，见 `Design.md` §8-1。
+>
+> ⚠️ **不要在这里写具体行数**：该数字已三次未跟上（曾同时出现 2590 / 2190 / 2187 三个
+> 互相矛盾的值），它对判断没有作用，只会下次再骗人一次。
 
 | 区块 | 关键成员 |
 |---|---|
