@@ -219,6 +219,39 @@ try
         Check("默认目录是 exe 旁的 Log", def == Path.Combine(AppContext.BaseDirectory, "Log"), def);
         Check("默认目录以 Log 结尾", Path.GetFileName(def) == "Log");
     }
+
+    // ---------- 8. 断开原因归类（底栏与日志共用，2026-10-16 抽出） ----------
+    Console.WriteLine("8. 断开原因归类");
+    {
+        Check("网络不可达（中文）",
+            DisconnectReasonClassifier.Classify("无法连接的网络") == "网络不可达");
+        Check("网络不可达（英文）",
+            DisconnectReasonClassifier.Classify("network is unreachable") == "网络不可达");
+        Check("主机不可达",
+            DisconnectReasonClassifier.Classify("无法访问目标主机") == "主机不可达");
+        Check("目标拒绝连接（真实 Socket 原文）",
+            DisconnectReasonClassifier.Classify("由于目标计算机积极拒绝，无法连接。 192.168.1.66:502")
+                == "目标拒绝连接");
+        Check("对端关闭连接",
+            DisconnectReasonClassifier.Classify("远程主机强迫关闭了一个现有的连接。") == "对端关闭连接");
+        Check("对端关闭连接（英文）",
+            DisconnectReasonClassifier.Classify("An existing connection was forcibly closed by the remote host")
+                == "对端关闭连接");
+        Check("响应超时",
+            DisconnectReasonClassifier.Classify("操作超时") == "响应超时");
+        Check("Modbus 帧错误 → 校验失败",
+            DisconnectReasonClassifier.Classify("Modbus 响应长度不匹配") == "响应帧校验失败");
+        Check("Modbus 异常码：只剥前缀",
+            DisconnectReasonClassifier.Classify("Modbus 异常：从站设备忙（异常码 6）") == "从站设备忙（异常码 6）");
+        Check("心跳前缀剥掉且不加双冒号",
+            DisconnectReasonClassifier.Classify("心跳检查失败：读取超时") == "读取超时");
+        Check("已是中文短语：原样沿用",
+            DisconnectReasonClassifier.Classify("连接被对方关闭") == "连接被对方关闭");
+        Check("首尾空白先裁掉",
+            DisconnectReasonClassifier.Classify("  读取超时  ") == "读取超时");
+        Check("未归类：原样保留、不吞信息",
+            DisconnectReasonClassifier.Classify("某种没见过的原因") == "某种没见过的原因");
+    }
 }
 finally
 {

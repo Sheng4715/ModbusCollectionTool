@@ -19,6 +19,7 @@
   <ItemGroup>
     <!-- 链接源码而非引用工程：主工程是 WPF/Windows 目标，不能直接被 net8.0 引用 -->
     <Compile Include="..\DSH_Modbus采集工具\Logging\DeviceLogFileWriter.cs"/>
+    <Compile Include="..\DSH_Modbus采集工具\Logging\DisconnectReasonClassifier.cs"/>
     <Compile Include="Program.cs"/>
   </ItemGroup>
 

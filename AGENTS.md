@@ -49,8 +49,9 @@ DSH_Modbus采集工具/
 │   ├── DataTypes.cs            # DataType / DisplayFormat 枚举 + DataTypeSpec 规格表
 │   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
 │   └── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
-├── Logging/                    # 日志落盘（P5-2，不含 WPF 类型）
-│   └── DeviceLogFileWriter.cs  # 按天追加纯文本 .log + 跨天换文件 + 失败自愈
+├── Logging/                    # 日志落盘与文案规则（不含 WPF 类型）
+│   ├── DeviceLogFileWriter.cs  # 按天追加纯文本 .log + 跨天换文件 + 失败自愈
+│   └── DisconnectReasonClassifier.cs  # 异常原文 → 简短中文（底栏与日志共用）
 └── Drivers/
     ├── CommDriver.cs           # 模型：ModbusArea / NumberBase / AddressArea / CommDriver（含字节顺序枚举）
     ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
@@ -350,7 +351,8 @@ Window
 - 写完立即 `Flush`：崩溃后复盘才看得到最后几条，而那几条往往正是崩溃原因
 - 设置页路径改动**失焦才落盘**，且**先 `Directory.CreateDirectory` 再保存** —— 非法路径当场报错并回退，不拖到第一条日志写不进去才暴露
 - 开关/路径改动**立即生效**（`SetEnabled` / `SetDirectory`），关掉或换目录时释放旧句柄（否则用户没法移动文件夹）
-- 独立验证工程 `LoggingCheck`（31 项断言）覆盖行格式 / 跨天 / 续写 / 换目录 / 开关 / 容错，改动写入器后跑它
+- 独立验证工程 `LoggingCheck`（**44 项**断言）覆盖行格式 / 跨天 / 续写 / 换目录 / 开关 / 容错 / **断开原因归类**，改动写入器或归类规则后跑它
+- ⚠️ **在 DSH 下跑它时先改 TEMP**：`%TEMP%` 上挂着沙箱 ACE，子进程（`dotnet run`）建目录会被拒（`UnauthorizedAccessException`），而 pwsh 自己建得出来，故报错看着莫名其妙。先 `$env:TEMP = "$PWD\.tmp\lc-temp"` 再跑
 
 ### 7.2 项目信息（P5-3）
 
@@ -536,7 +538,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | 日志追加/清空/上限 | `AppendDeviceLog` / `ClearDeviceLogButton_Click` / `MaxDeviceLogEntries` |
 | 日志颜色与格式 | `LogEntry`（`DeviceLogLevel` → `LevelBrush`）+ `DeviceLogItemTemplate` |
 | **日志落盘（改落盘行为必读）** | `Logging/DeviceLogFileWriter.cs`；窗口侧 `_logWriter` / `FileLevelOf` / `RefreshLogSaveStatus`；独立验证 `LoggingCheck`（见 **§7.1**） |
-| 断开原因归类 | `ClassifyDisconnectReason` |
+| 断开原因归类 | `Logging/DisconnectReasonClassifier.cs`（规则本体，纯函数、可独立断言）；窗口侧 `ClassifyDisconnectReason` 只是薄包装，为满足 `ICollectorHost` |
 | 连接任务隔离/关闭清理 | `RunConnectionTasksAsync` / `IsCurrentConnection` / `OnClosed` |
 
 ## 11. 版本控制
