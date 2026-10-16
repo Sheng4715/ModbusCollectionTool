@@ -77,7 +77,7 @@ DSH_Modbus采集工具/
 
 ## 3. 页面与 UI
 
-单窗口两行布局：48px 标题栏 + 主体（导航 224 列 + 内容），底部另有一条**全局状态栏**（30px，三页都可见）。
+单窗口两行布局：48px 标题栏 + 主体（导航 224 列 + 内容），底部另有一条**全局状态栏**（30px，五个页面都可见）。
 
 ```
 Window
@@ -98,14 +98,14 @@ Window
 | `OverviewNav` 总览 | `OverviewPanel` | 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
-| `采集配置` | — | 占位项，不切面板 |
+| `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **骨架页**（P3-1）：标题 + 「采集数据」占位卡；采集导出功能未实现 |
 | `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5-1）+ 日志保存（P5-2）+ 项目信息（P5-3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
 
 ### 3.2 设计器预览
 
-三个面板同处一个 `StackPanel`，运行时由 `Nav_Checked` 切换，而**设计器只认 `d:Visibility`**（`d:` 在 `mc:Ignorable="d"` 中，不影响编译与运行）。
+五个面板同处一个 `StackPanel`，运行时由 `Nav_Checked` 切换，而**设计器只认 `d:Visibility`**（`d:` 在 `mc:Ignorable="d"` 中，不影响编译与运行）。
 
 - 当前 `OverviewPanel` = `d:Visible`（设计器默认预览总览页）
 - 要预览其它页：目标页改 `d:Visible`，其余改回 `d:Collapsed`
@@ -150,7 +150,7 @@ Window
 
 ### 3.5 全局底栏（连接状态）
 
-30px 高，**三个页面都可见**（在面板之外，不随导航切换显隐）。
+30px 高，**五个页面都可见**（在面板之外，不随导航切换显隐）。
 
 | 位置 | 控件 | 内容 |
 |---|---|---|
@@ -179,8 +179,8 @@ Window
 
 ### 3.7 内容区左右留白（改卡片宽度/对齐必读）
 
-四个页面的标题与所有卡片都挂在**同一个** `ContentScrollViewer` 下（并列兄弟节点），
-故左右留白由它一个元素决定，改一处即四页同步：
+五个页面的标题与所有卡片都挂在**同一个** `ContentScrollViewer` 下（并列兄弟节点），
+故左右留白由它一个元素决定，改一处即五页同步：
 
 ```xml
 <ScrollViewer x:Name="ContentScrollViewer"

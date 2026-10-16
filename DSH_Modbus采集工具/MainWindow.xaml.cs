@@ -519,6 +519,13 @@ namespace DSH_Modbus采集工具
                     : Visibility.Collapsed;
             }
 
+            if (AcquisitionConfigPanel != null)
+            {
+                AcquisitionConfigPanel.Visibility = ReferenceEquals(sender, AcquisitionConfigNav)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+
             if (SettingsPanel != null)
             {
                 bool settingsVisible = ReferenceEquals(sender, SettingsNav);
@@ -2462,11 +2469,5 @@ namespace DSH_Modbus采集工具
                 result.FailureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
         }
 
-        // ---------- 采集配置占位导航（P3-1 前为空壳） ----------
-
-        private void RadioButton_Checked(object sender, RoutedEventArgs e)
-        {
-
-        }
     }
 }

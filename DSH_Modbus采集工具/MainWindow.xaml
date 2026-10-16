@@ -1198,8 +1198,9 @@
                         <RadioButton x:Name="StatusInfoNav"
                                      Style="{StaticResource NavRadioButton}" GroupName="Nav"
                                      Content="状态信息"/>
-                        <RadioButton Style="{StaticResource NavRadioButton}" GroupName="Nav"
-                                     Content="采集配置" Checked="RadioButton_Checked"/>
+                        <RadioButton x:Name="AcquisitionConfigNav"
+                                     Style="{StaticResource NavRadioButton}" GroupName="Nav"
+                                     Content="采集配置"/>
                         <RadioButton x:Name="DeviceConfigNav"
                                      Style="{StaticResource NavRadioButton}" GroupName="Nav"
                                      Content="设备配置"/>
@@ -1560,6 +1561,34 @@
                             </Grid>
                         </Border>
                     </Grid>
+
+                    <!-- ================= 采集配置（P3-1 占位） =================
+                         采集导出（CSV）与触发方式尚未实现，本页先立骨架：标题 + 一张卡。
+                         立页的意义不止占位 —— 该导航项原先没有对应面板，点进去会把
+                         所有面板都隐藏（白屏），与 §10.5 里 SettingsNav 漏 x:Name 是同一类缺陷。 -->
+                    <StackPanel x:Name="AcquisitionConfigPanel" Visibility="Collapsed"
+                                d:Visibility="Collapsed">
+
+                        <TextBlock Text="采集配置"
+                                   FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
+                                   FontSize="20" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Brush.Text.Primary}"
+                                   Margin="0,10,0,10"/>
+
+                        <Border Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="24,20,24,20">
+                            <StackPanel>
+                                <TextBlock Text="采集数据"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"/>
+                                <TextBlock Text="尚未实现"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource Brush.Text.Muted}"
+                                           Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
 
                     <!-- 设备配置 -->
                     <StackPanel x:Name="DeviceConfigPanel"

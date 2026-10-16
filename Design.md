@@ -1,7 +1,7 @@
 # Design.md — 技术设计文档
 
 > 当前基线：Modbus TCP 采集（读 + 写）+ IO 监控（X/Y 分段、xlsx 导入、分页、持久化、输入/输出异色）+ **数据类型系统（P3-3）** + **自由监控（P4-2，读取与 FC05/06/16 写入均已落地）** + 独立心跳 + 运行日志 + 异常断开自动重连 + 全局底栏 + **主题外观（P5-1）** + **日志落盘（P5-2）** + **项目信息（P5-3）** + 目标网卡记忆，均已实现并验证。
-> **未实现**：串口（Modbus RTU）；「采集配置」页仍是占位导航项（P3-1 落地前须先建该页）。
+> **未实现**：串口（Modbus RTU）；「采集配置」页**骨架已建**（标题 + 占位卡），P3-1 采集导出功能未实现。
 > 需求与优先级见 `Brief.md`；代码位置见 `AGENTS.md`；**本文件只讲「为什么这么设计」**。
 
 ---
@@ -48,7 +48,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `MainWindow.xaml` | 全部 UI：三页导航、IO 卡片（分段切换 / 导入 / 分页 / 空提示）、**自由监控卡片**（合并输入 + 类型/格式 + 当前值 + 删除，见 ADR-19）、采集周期下拉、**全局底栏**（叠放，见 ADR-16）；面板显隐由 `Nav_Checked` 控制 |
+| `MainWindow.xaml` | 全部 UI：五页导航、IO 卡片（分段切换 / 导入 / 分页 / 空提示）、**自由监控卡片**（合并输入 + 类型/格式 + 当前值 + 删除，见 ADR-19）、**采集配置骨架页**（标题 + 占位卡）、采集周期下拉、**全局底栏**（叠放，见 ADR-16）；面板显隐由 `Nav_Checked` 控制 |
 | `MainWindow.xaml.cs` | 交互编排：连接状态机 + 任务隔离、轮询循环、心跳编排、**自动重连退避**、动态点位集与分页、xlsx 导入、**自由监控增删改与校验**、网卡扫描绑定、运行日志、**底栏状态**、最大化溢出补偿 |
 | `MonitorItem.cs` | 自由监控项：`DataPoint` 的界面包装（INPC + 行色 + ToolTip）与 `MonitorItemSet`（增删改、落盘、`AfterChange` 重解析） |
 | `XlsxIoTableReader.cs` | xlsx 解析：零依赖（`System.IO.Compression` + `XmlReader`），首个工作表 → sharedStrings/inlineStr → **地址形单元格 → 右邻为注释** |
@@ -313,7 +313,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 
 - 设备类型在连接中锁定 → 保证轮询期间 `_currentDriver` 不被换表
 - 通讯异常（连接仍在）与通讯恢复另有琥珀/绿两条，详见 `AGENTS.md` §7
-- **底栏为全局控件**（三页可见），故其状态不随导航切换而重置
+- **底栏为全局控件**（五页可见），故其状态不随导航切换而重置
 - **底栏状态色走主题**：`SetStatus` 传入的仍是浅色字面值，由 `StatusBrushKey()` 映射到语义键；窗口另存 `_statusText`/`_statusColorHex`，换主题后重设一次（ADR-25）
 
 ### 6.2 主题（P5-1）
@@ -352,7 +352,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 | Modbus RTU 串口（P1-2，低） | 新建 `ModbusRtuClient`，复用 PDU 构造/解析（MBAP 之外加 CRC16）；`ConnectionTypeComboBox` 已能切换面板 | 协议层 PDU 与传输无关，可抽出共用 |
 | **数据类型系统（P3-3，中）** | 新增类型/格式模型（`DataType` + `DisplayFormat`），点位模型从「bool + 注释」扩展为「类型 + 位宽 + 格式 + 值」 | ✅ **已全部实现**（`Modeling/`：`DataTypes` + `ValueCodec` + `DataPoint`；字序/字符串序真机定案见 §10.3 / §10.4，独立工程 `ModelingCheck/` 86 项断言全通过）。自由监控的读取链路已接通（见下行） |
 | **寄存器读写（P3-3 前置）** | `ModbusTcpClient` 的 FC03/04**读**已就绪；需补 FC06/16**写**。点位模型需支持寄存器组（`DINT` 占 2 个、`STRING[n]` 占 ⌈n/2⌉ 个） | ✅ **读写 API 均已实现**（读 FC01/02/03/04 + 写 FC05/06/16）。⚠️ **注意：两次字序/字符串实测均未使用应用侧写入**（由 XDPPro 写、应用侧只读），故 FC16 在真机上的可用性**仍未验证** |
-| **采集导出 CSV（P3-1，低）** | 需先建「采集配置」页（现为占位导航项）；轮询成功回调处挂录制旁路，支持周期/条件触发两种启动方式 | 待设计（触发细节见 Brief §6-4） |
+| **采集导出 CSV（P3-1，低）** | 「采集配置」页骨架已建（`AcquisitionConfigPanel`：标题 + 占位卡）；轮询成功回调处挂录制旁路，支持周期/条件触发两种启动方式 | 页面骨架 ✅（2026-10-16）；采集导出待设计（触发细节见 Brief §6-4） |
 | **MES 上报（P3-2，低）** | 在采集数据基础上做 HTTP + JSON 上报；可复用录制旁路的数据快照 | 待设计 |
 | **自由监控（P4-2，中）** | 「状态信息」页第三分段新增列表式监控区：**方案 2** 合并输入（`TrySplitName`）+ 类型反推（`AreasOfElement`）+ `data-points.json` 即时落盘；**写入需新增 FC05/06/16** | ✅ **已全部实现**（ADR-19 界面；读取 `MonitorItemSet.BuildReadPlan` 跟随可见性、按区分块；写入 FC05/06/16 见 §5.6 与 `AGENTS.md` §5.1） |
 | xlsx 导入 IO 表 | `ImportIoTableButton_Click` → `XlsxIoTableReader.Read` → 逐行按 `_currentDriver` 校验 → 整体替换 `_comments` → `RebuildIoPoints()` + 复位第 1 页 → `SaveComments()` | ✅（解析限制见 §8-8） |
@@ -418,7 +418,7 @@ D[n] = (char[2i] << 8) | char[2i+1]
 
 **采集导出（P3-1）**
 
-- 配置位置：「采集配置」页（**当前是占位导航项，需先建成真页面**）
+- 配置位置：「采集配置」页（`AcquisitionConfigPanel`，**骨架已建**：标题 + 「采集数据」占位卡；采集项勾选 / 触发方式 / CSV 输出待填）
 - 采集内容：用户勾选要录制的线圈/寄存器项
 - 启动方式：周期式 或 值条件触发 —— 触发细节待定（Brief §6-4）
 - 输出：CSV，列格式待定
@@ -1068,6 +1068,47 @@ SDK 把两者合成 `<Version>`。理由与「构建日期不手写」完全一�
 | 旧格式 json（无该字段）→ 手动选一次 | 正常启动、回退第 0 项、选后升级字段 | ✅ |
 
 跨重启复测：关掉应用再启动，下拉框仍为 `WLAN(192.168.1.15)`，即 §10.11-1 那个误导性报错不再出现。
+
+### 10.12 「采集配置」页骨架（2026-10-16）
+
+**1. 为什么先建这个页**
+
+Brief §7-4 一直记着「点『采集配置』不切面板」。它不只是"点了没反应" —— 该导航项原先没有 `x:Name`、也没有对应面板，`Checked="RadioButton_Checked"` 是个空方法：
+
+```csharp
+private void RadioButton_Checked(object sender, RoutedEventArgs e) { }
+```
+
+而 `Nav_Checked` 是按 sender 逐个显隐面板的，sender 落不进任何一支 → **所有面板都被隐藏 = 白屏**。这与 §10.5 里 `SettingsNav` 漏 `x:Name` 那次是**同一类缺陷**，那次也是白屏。
+
+**2. 改法（骨架，不含 P3-1 功能）**
+
+| 处 | 改动 |
+|---|---|
+| `MainWindow.xaml` 导航区 | `采集配置` 项补 `x:Name="AcquisitionConfigNav"`，删掉 `Checked="RadioButton_Checked"` |
+| `MainWindow.xaml` 内容区 | 新增 `AcquisitionConfigPanel`（`StackPanel` + 标题 + 一张「采集数据」卡），置于 `DeviceConfigPanel` 之前 |
+| `MainWindow.xaml.cs` | `Nav_Checked` 增加一支显隐 `AcquisitionConfigPanel`；删除空壳 `RadioButton_Checked` |
+
+卡片样式与设置页一致（`Brush.Card.Background` / `BorderBrush` / `CornerRadius 8` / `Padding 24,20,24,20`），标题 `Margin="0,10,0,10"` 与其余四页统一（§10.9）。占位文字用 `Brush.Text.Muted`，**不写颜色字面量**（§9.2）。
+
+**3. 验证（UIA，真跑起来 —— 不靠"构建绿灯"）**
+
+⚠️ 这一步是必需的：§10.5 的教训是**接线类改动构建通过也可能一启动就崩**。故实际启动 exe 后用 UIA 驱动。
+
+| 项 | 结果 |
+|---|---|
+| 切换前，页标题（宽 > 1000）数 | **0** —— 面板还是 `Collapsed`，符合预期 |
+| 点「采集配置」后，页标题数 | **1**（w=1308）→ **白屏已修** |
+| 卡片标题「采集数据」/ 占位文字「尚未实现」 | 各 **1** 个，均可见 |
+| 其它页内容（`运行日志` / `显示外观` / `设备类型` / `尚未导入 IO 表`） | 全部 **0** → 确实换了面板，不是叠着 |
+| **五页导航往返**（总览 / 状态信息 / 采集配置 / 设备配置 / 设置） | 每页页标题恰好 **1** 个，**5/5 OK** |
+| 五页大标题位置 | 全部 `relX=198 relY=93 w=1308 h=40`（device px）—— 与 §10.9 实测值一致，**新增页未破坏标题统一** |
+| 卡片内标题左缘 | `采集数据` 的 `relX=236`，与设置页 `显示外观` 的 `relX=236` **逐像素相同**（两卡 `Padding` 同为 24）→ 卡片外框与其余页对齐 |
+
+构建：`--no-incremental` 全量重编 **0 警告 0 错误**。
+
+> 用的是 §10.9 那两条踩坑后的写法：窗口用 `FindAll` + **按宽度 > 500 过滤**取真窗口（进程有两个顶层窗口，`FindFirst` 会抓到 39px 幽灵）；同名元素用**宽度 > 1000** 区分页标题与导航项文字。切页用 `SelectionItemPattern.Select()`（真实鼠标点击对导航项无效）。
+> ⚠️ 本次**未做**：深色主题下的截图核对（新增卡用的是与设置页相同的主题键，风险低）；P3-1 的采集项勾选 / 触发方式 / CSV 输出**均未实现**。
 
 ## 11. 构建与运行
 
