@@ -1112,7 +1112,7 @@ namespace DSH_Modbus采集工具
 
             ConnectButton.IsEnabled = false;
             SetInputsEnabled(false);
-            SetStatus($"正在连接 {ip}:{port} …", "#B26A00");
+            SetStatus("正在连接 …", "#B26A00");
 
             var target = new ReconnectTarget(ip, port, driver, localEndPoint);
             if (await TryConnectAsync(target, isReconnect: false, CancellationToken.None))
@@ -1309,7 +1309,7 @@ namespace DSH_Modbus采集工具
                     // 倒计时显示：每秒刷新状态栏，让用户看到还在推进
                     for (int remain = delay; remain > 0 && !token.IsCancellationRequested; remain--)
                     {
-                        SetStatus($"正在重连 {target.Endpoint} … {remain}s（第 {_reconnectAttempt + 1} 次）",
+                        SetStatus($"正在重连 … {remain}s（第 {_reconnectAttempt + 1} 次）",
                             "#B26A00");
                         await Task.Delay(1000, token);
                     }
