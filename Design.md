@@ -510,6 +510,12 @@ D[n] = (char[2i] << 8) | char[2i+1]
 
 > **截图仅作辅助**：自动化过程可能被人工操作干扰，且截图相对动作滞后一拍 → **以功能证据为准**（报文日志、按钮态、json 内容、UIA 属性查询）。
 
+> ⚠️ **§10.2 及以下记录里点名的一次性脚本，部分已不存在**（`.tmp/` 随用随弃，见 `AGENTS.md` §2）：
+> `NameSplitCheck`（40/40）、`ResolveCheck`（18/18）、`%TEMP%\modbus-mock` 与 `%TEMP%\dsh-modbus-verify` 均已删除；
+> 「驱动层 29 项地址断言」当时也没有留下工程。这些是**历史记录**，记录的是当时怎么验的、结论是什么，
+> **不代表现在能直接复跑**。仍可复跑的在 `AGENTS.md` §2 列了清单（`ModelingCheck` / `LoggingCheck` / `.tmp/` 下四个断言型工程）。
+> 需要重验上述已删脚本覆盖的行为时，按 `ModelingCheck` 的「链接源码 + 打桩」手法重建。
+
 ### 10.2 关键验证记录
 
 **真机验收（2026-10-08，信捷 XD `192.168.1.66`，网卡 `以太网(192.168.1.80)`）**
@@ -754,7 +760,7 @@ RESULT: every replaced literal maps to an identical Light.xaml value
 
 分两层：**先独立证明写入器逻辑，再真机证明接线正确**。
 
-**1. 独立工程 `LoggingCheck`（31 项断言，全通过）**
+**1. 独立工程 `LoggingCheck`（44 项断言，全通过）**
 
 链接 `DeviceLogFileWriter.cs` 源码（不引用主工程，故不需要窗口）跑断言。刻意覆盖"只看代码不容易发现、一错就静默丢数据"的点：
 
@@ -767,6 +773,9 @@ RESULT: every replaced literal maps to an identical Light.xaml value
 | 开关 | 关闭期间那条被丢弃；重新开启后**续写**而非新建；关闭不产生错误 |
 | 容错 | 目录不可写时 `Write` 不抛、`LastError` 有值、行数不增；**删掉挡路文件后自愈** |
 | 默认目录 | = `AppContext.BaseDirectory\Log` |
+| 断开原因归类 | 13 项：Socket / Modbus 帧错误 / 心跳前缀剥离 / 已是中文短语原样沿用 / 首尾空白裁掉 / 未归类原样保留不吞信息（2026-10-16 随 `DisconnectReasonClassifier` 抽出补入） |
+
+> 分组小计：行格式 7 + 跨天 5 + 续写 3 + 换目录 4 + 开关 5 + 容错 5 + 默认目录 2 + 断开原因归类 13 = **44 项**。
 
 > ⚠️ 写这个测试**当场暴露了一个真问题**：最初写入器用 `FileShare.Read`，断言里一读文件就 `IOException: being used by another process`。这不是测试写法问题 —— **用户排障时打开正在写的日志会撞到同一堵墙**。改为 `FileShare.ReadWrite` 后通过（ADR-28）。
 > 注意测试自身必须用 `FileShare.ReadWrite` 打开文件来模拟"应用在跑、用户在看日志"的真实姿势；若先把写入器关掉再读，就测不到共享行为了。

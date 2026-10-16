@@ -67,14 +67,23 @@ DSH_Modbus采集工具/
     └── ModbusHeartbeat.cs      # 独立心跳调度与异常分类
 ```
 
-> `Polling/` 与 `Io/` 是 P5 结构重构的产物，**刻意不引用 WPF**：
-> 采集编排与点位集判断可脱离界面阅读/验证；控件写入（分页控件显隐、绑列、弹窗）
-> 一律留在 `MainWindow.xaml.cs`。新增逻辑时按同一原则归位。
+> **不引用 WPF 的层**（可脱离界面阅读/验证，也能被独立工程链接源码断言）：`Drivers/`、`Io/`、
+> `Logging/`、`Modeling/`、`Net/`、`Polling/` —— 这 6 个目录下**没有任何** `using System.Windows*`。
+> 控件写入（分页控件显隐、绑列、弹窗、`MessageBox`）一律留在 `MainWindow.xaml.cs`。
+> 新增逻辑时按同一原则归位。
+>
+> **引 WPF 的层**：`Ui/`（窗口呈现辅助，不碰业务）与 `Themes/`（`ThemeManager` 要换资源字典），
+> 以及根目录的 `MainWindow.xaml.cs` / `MonitorItem.cs` / `NumberInputDialog.cs` / `App.xaml.cs`。
+> ⚠️ `MonitorItem.cs` 是「`DataPoint` 的界面包装」、碰 WPF 属正常，但它在**根目录**而不在 `Ui/`
+> —— 判断一个文件该不该碰 WPF 看**所在目录**，不要以为「根目录都不碰」。
 
 > `ModelingCheck/`（仓库根，**不属于本工程**）是 P3-3 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
 > `LoggingCheck/`（同上）是 P5-2 的独立验证工程：链接 `DeviceLogFileWriter.cs` 与 `DisconnectReasonClassifier.cs` 源码，断言逐字符行格式 / 跨天换文件 / 续写 / 容错 / 断开原因归类，**44 项**，不参与主程序构建。
 
-> `.tmp/` 下另有几个**一次性**回归断言工程（**未提交**，随用随弃）：`PollerCheck`（IO 轮询异常码策略）、`NicCheck`（网卡选择还原优先级）、`ConnCheck`（退避策略 + 连接身份 / 两种断开语义，35 项）与 `E2ESlave`（端到端验证用最小假从站）。它们验的是「改一次就够」的行为，不值当长期维护；要重跑时会话记录里有完整源码。
+> `.tmp/` 下另有一批**一次性**验证工程（**未提交**，随用随弃）。**断言型**（自带 `Check()`，直接 `dotnet run` 即出结论）：
+> `ConnCheck`（退避策略 + 连接身份 / 两种断开语义，**35 项**）、`DeviceLogCheck`（日志编排：上限裁剪 / 级别映射 / 共用时间戳 / 清空 / 换主题重建，**23 项**）、`NicCheck`（网卡选择还原优先级，**17 项**）、`PollerCheck`（IO 轮询异常码策略，**10 项**）。
+> **探针型**（无断言，需传参数人工读输出）：`IoCheck`（接 xlsx 路径，打印 `IoTableImporter` / `IoPager` 的解析与分页结果）、`FakeSlave` 与 `E2ESlave`（端到端验证用最小假从站）。
+> 它们验的是「改一次就够」的行为，不值当长期维护；要重跑时会话记录里有完整源码。
 
 ## 3. 页面与 UI
 
