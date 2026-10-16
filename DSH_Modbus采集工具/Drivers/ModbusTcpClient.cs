@@ -249,7 +249,7 @@ namespace DSH_Modbus采集工具.Drivers
         /// 注意：部分 PLC 对越界或跨地址区的请求回非标准码 —— 实测信捷 XD 对跨本体/扩展空隙的
         /// 读取回 <c>06</c>（标准语义为「从站设备忙」，而非「非法数据地址」02）。
         /// </summary>
-        private static string DescribeException(byte code) => code switch
+        internal static string DescribeException(byte code) => code switch
         {
             1 => "非法功能码",
             2 => "非法数据地址",

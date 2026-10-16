@@ -39,4 +39,10 @@ internal interface ICollectorHost
 
     /// <summary>把 Socket / Modbus 的异常原文归一为简短中文。</summary>
     string ClassifyDisconnectReason(string raw);
+
+    /// <summary>
+    /// 连续多次收到**合法异常码**时的告警（链路仍在，只是从站拒绝了这次请求）。
+    /// 由宿主回 UI 线程写「通讯异常」日志 —— 引擎层碰不到日志，也**不断开**连接。
+    /// </summary>
+    void ReportCommunicationWarning(ModbusTcpClient client, CancellationToken token, string reason);
 }

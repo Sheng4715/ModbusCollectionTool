@@ -1812,6 +1812,29 @@ namespace DSH_Modbus采集工具
 
         string ICollectorHost.ClassifyDisconnectReason(string raw) => ClassifyDisconnectReason(raw);
 
+        void ICollectorHost.ReportCommunicationWarning(ModbusTcpClient client, CancellationToken token, string reason) =>
+            ReportCommunicationWarning(client, token, reason);
+
+        /// <summary>
+        /// IO 轮询某块**连续多次**收到合法异常码的告警：链路仍在，只是从站拒绝了该请求。
+        /// 走与心跳同一条「通讯异常」现象（琥珀），不新增日志种类，也**不断开**连接。
+        /// </summary>
+        private void ReportCommunicationWarning(ModbusTcpClient client, CancellationToken token, string reason)
+        {
+            if (token.IsCancellationRequested || Dispatcher.HasShutdownStarted)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (IsCurrentConnection(client, token))
+                {
+                    AppendDeviceLog($"通讯异常：{reason}", DeviceLogLevel.Warning);
+                }
+            }));
+        }
+
         private void NotifyConnectionLost(ModbusTcpClient client, CancellationToken token, string reason)
         {
             if (token.IsCancellationRequested || Dispatcher.HasShutdownStarted)

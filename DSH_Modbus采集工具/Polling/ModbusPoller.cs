@@ -26,7 +26,19 @@ internal sealed class ModbusPoller
     /// <summary>单次 FC01 最多读的点数；同区跨度超限时按此切窗。</summary>
     public const int MaxCoilsPerRead = 2000;
 
+    /// <summary>
+    /// 同一块**连续**收到几次合法异常码才记一条日志。
+    /// 不触发断开：异常响应本身证明链路是通的（ADR-11 对心跳同理）。
+    /// </summary>
+    public const int ConsecutiveExceptionThreshold = 5;
+
     private readonly ICollectorHost _host;
+
+    /// <summary>记下计数所属的客户端；重连/换设备时据此清空下面的计数。</summary>
+    private ModbusTcpClient? _streakOwner;
+
+    /// <summary>每块的连续异常码计数，键 = 块的地址范围（如 "20480-20543"）。读成功一次即清零。</summary>
+    private readonly Dictionary<string, int> _blockExceptionStreaks = new();
 
     public ModbusPoller(ICollectorHost host) => _host = host;
 
@@ -109,6 +121,13 @@ internal sealed class ModbusPoller
         // 连接期间设备类型下拉已置灰，驱动不会变化。
         var results = new List<(IoPoint[] Points, int Min, bool[] Coils)>();
 
+        // 换客户端（重连、或连到别的设备）就清空计数，避免上一段连接的失败次数被继承
+        if (!ReferenceEquals(_streakOwner, modbus))
+        {
+            _streakOwner = modbus;
+            _blockExceptionStreaks.Clear();
+        }
+
         foreach (var group in points.GroupBy(p => driver.FindArea(ModbusArea.Coil, p.Address)))
         {
             // 单次 FC01 最多 2000 点；同区跨度超限时再按 2000 切分
@@ -118,8 +137,29 @@ internal sealed class ModbusPoller
                 IoPoint[] chunkPoints = chunk.ToArray();
                 int min = chunkPoints.Min(p => p.Address);
                 int max = chunkPoints.Max(p => p.Address);
-                bool[] coils = await modbus.ReadCoilsAsync((ushort)min, (ushort)(max - min + 1), token);
-                results.Add((chunkPoints, min, coils));
+                string key = $"{min}-{max}";
+
+                try
+                {
+                    bool[] coils = await modbus.ReadCoilsAsync((ushort)min, (ushort)(max - min + 1), token);
+                    _blockExceptionStreaks.Remove(key);
+                    results.Add((chunkPoints, min, coils));
+                }
+                catch (ModbusResponseException ex)
+                {
+                    // 合法异常码 = 链路正常、从站拒绝了这个请求（例如 IO 表里有、现场没接的点位回异常码 2），
+                    // 不能当断线：跳过本块、其余块照读，本块的点保持上次值（results 里没有它）。
+                    // 只有**连续**凑满阈值才记一条日志 —— 100ms 一拍，挨拍就记会瞬间刷满日志。
+                    _blockExceptionStreaks.TryGetValue(key, out int streak);
+                    streak++;
+                    _blockExceptionStreaks[key] = streak;
+                    if (streak == ConsecutiveExceptionThreshold)
+                    {
+                        // 措辞：原因（地址 xxx 异常码 N）
+                        _host.ReportCommunicationWarning(modbus, token,
+                            $"{ModbusTcpClient.DescribeException(ex.ExceptionCode)}（地址 {min}-{max} 异常码 {ex.ExceptionCode}）");
+                    }
+                }
             }
         }
 
