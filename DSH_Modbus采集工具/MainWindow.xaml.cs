@@ -292,13 +292,17 @@ namespace DSH_Modbus采集工具
         private readonly DeviceLogFileWriter _logWriter =
             new(ThemeManager.LogDirectory, ThemeManager.LogSaveEnabled);
 
-        // ---------- 底栏状态（换主题时据此重取颜色） ----------
+        // ---------- 底栏状态（呈现规则在 Ui/StatusBarPresenter.cs） ----------
 
-        /// <summary>底栏当前状态文字。换主题后按新主题重设颜色，文字不变。</summary>
-        private string _statusText = "未连接";
-
-        /// <summary>底栏当前状态色的浅色字面值，经 <see cref="StatusBrushKey"/> 映射到主题键。</summary>
-        private string _statusColorHex = "#9A9A9A";
+        /// <summary>
+        /// 底栏呈现器：状态文字、状态点颜色、右侧连接参数三者由它统一维护。
+        /// <para>
+        /// ⚠️ **必须可空**：<see cref="UpdateOverviewStatus"/> 会在 <c>InitializeComponent()</c>
+        /// **期间**被 ComboBox 的 <c>SelectionChanged</c> 触发（早于构造函数体），那时这里还是 null。
+        /// 改成不可空会在启动时直接 <c>NullReferenceException</c>（实测过）。
+        /// </para>
+        /// </summary>
+        private StatusBarPresenter? _statusBar;
 
         // ---------- 自动重连：字段与目标快照 ----------
 
@@ -336,6 +340,9 @@ namespace DSH_Modbus采集工具
             InitializeComponent();
 
             _poller = new ModbusPoller(this);
+
+            // 底栏：状态文字 / 状态点颜色 / 右侧连接参数三者的规则集中在 StatusBarPresenter
+            _statusBar = new StatusBarPresenter(StatusDot, StatusText, StatusBarDetail, BuildConnectionDetail);
 
             // 设备类型下拉绑定驱动注册表（品牌地址表）
             DeviceTypeComboBox.ItemsSource = DriverRegistry.All.Select(d => d.DisplayName).ToList();
@@ -625,7 +632,7 @@ namespace DSH_Modbus采集工具
             RefreshDeviceLogColors();
 
             // 底栏：按当前状态重取颜色（文字不变）
-            SetStatus(_statusText, _statusColorHex);
+            _statusBar?.ReapplyTheme();
         }
 
         // ---------- 设置：日志保存（P5-2） ----------
@@ -816,18 +823,22 @@ namespace DSH_Modbus采集工具
         // ---------- 底栏：右侧连接参数 ----------
 
         /// <summary>
-        /// 刷新底栏右侧的连接参数（驱动 / 连接方式 / 协议 / IP:端口）。
-        /// 底栏左侧的状态点与状态文字由 <see cref="SetStatus"/> 负责，两者互不覆盖：
-        /// 参数随表单变化，状态随连接生命周期变化。
+        /// 刷新底栏右侧连接参数。底栏左侧的状态点与状态文字由 <see cref="SetStatus"/> 负责，
+        /// 两者互不覆盖：参数随表单变化，状态随连接生命周期变化。
         /// </summary>
-        private void UpdateOverviewStatus()
+        private void UpdateOverviewStatus() => _statusBar?.RefreshDetail();
+
+        /// <summary>
+        /// 拼底栏右侧的连接参数串（读的是表单当前值）。控件尚未就绪时返回 <c>null</c>，
+        /// 由 <see cref="StatusBarPresenter.RefreshDetail"/> 保持原样。
+        /// </summary>
+        private string? BuildConnectionDetail()
         {
-            if (StatusBarDetail == null
-                || DeviceTypeComboBox == null || ConnectionTypeComboBox == null
+            if (DeviceTypeComboBox == null || ConnectionTypeComboBox == null
                 || ProtocolTypeComboBox == null
                 || IpTextBox == null || PortTextBox == null)
             {
-                return;
+                return null;
             }
 
             string driver = DeviceTypeComboBox.SelectedItem as string
@@ -839,7 +850,7 @@ namespace DSH_Modbus采集工具
                               ?? ProtocolTypeComboBox.Text;
             string ipPort = $"{IpTextBox.Text.Trim()}:{PortTextBox.Text.Trim()}";
 
-            StatusBarDetail.Text = $"{driver}：{connection}  {protocol}  {ipPort}";
+            return $"{driver}：{connection}  {protocol}  {ipPort}";
         }
 
         // ---------- 网卡扫描与记忆 ----------
@@ -1250,36 +1261,10 @@ namespace DSH_Modbus采集工具
         // ---------- 底栏：左侧状态文字与颜色 ----------
 
         /// <summary>
-        /// 设置底栏状态文字与状态点颜色。<paramref name="colorHex"/> 是**浅色主题下的字面值**，
-        /// 由 <see cref="StatusBrushKey"/> 映射到语义画刷键 —— 这样调用点无需关心主题，
-        /// 深色主题下也不会拿到浅色主题的固定色。
+        /// 薄包装：状态色 → 主题键的映射、以及「换主题后按记住的文字重设颜色」都在
+        /// <see cref="StatusBarPresenter"/>；窗口侧保留这个名字，12 个调用点未动。
         /// </summary>
-        private void SetStatus(string text, string colorHex)
-        {
-            StatusText.Text = text;
-
-            var brush = Themes.ThemeManager.GetBrush(StatusBrushKey(colorHex))
-                        ?? new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
-            StatusText.Foreground = brush;
-            StatusDot.Fill = brush;
-
-            _statusText = text;
-            _statusColorHex = colorHex;
-
-            UpdateOverviewStatus();
-        }
-
-        /// <summary>
-        /// 底栏状态色字面值 → 语义画刷键。三个出口与 §9.1 的颜色语义一致：
-        /// 红＝配置要改、琥珀＝通讯侧的事、绿＝正常、灰＝未连接。
-        /// </summary>
-        private static string StatusBrushKey(string colorHex) => colorHex switch
-        {
-            "#0B7A0B" => "Brush.Success",
-            "#C42B1C" => "Brush.Danger",
-            "#B26A00" => "Brush.Warning",
-            _ => "Brush.Indicator.Off",
-        };
+        private void SetStatus(string text, string colorHex) => _statusBar?.Set(text, colorHex);
 
         // ---------- 设备状态日志（总览页底部） ----------
 

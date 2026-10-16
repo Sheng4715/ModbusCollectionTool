@@ -432,6 +432,8 @@ D[n] = (char[2i] << 8) | char[2i+1]
    - **已开始的收窄（2026-10-16）**：`ClassifyDisconnectReason` 的规则本体已抽到 `Logging/DisconnectReasonClassifier.cs`（纯 `string→string`，窗口侧只留一层薄包装，调用点未动）。选它开头是因为它刚被**底栏与日志同时复用** —— 「两处各写一套」的口子已经真实出现过。`FileLevelOf` **未一并抽出**：它依赖窗口文件里的 `DeviceLogLevel` 枚举，为 6 行代码搬枚举不划算。
    - **第二批（同日）**：`NicInfo` 与网卡扫描/还原规则抽到 `Net/NicScanner.cs` —— 扫描（`NetworkInterface` 的三重过滤）与「本次选择 → 记住的 → 第 0 项」的优先级都是纯逻辑，窗口只留 `_restoringNicSelection` 闸门与下拉框填充（那是「用户意图 vs 程序改动」的判断，离不开控件事件）。`IndexOfNic` 随之删除。验证：`.tmp/NicCheck` 17 项断言全通过（未提交，与 `PollerCheck` 同处）。
    - **第三批（同日）**：最大化溢出补偿抽到 `Ui/MaximizedInset.cs` —— P/Invoke、`MONITORINFO` 结构、DPI 换算与内缩量计算整体搬走，窗口侧只留一行 `MaximizedInset.Apply(this, RootGrid)`。验证方式：与搬走前的实现做**归一化逐行比对**，除参数名外 26 行正文完全一致（该算法必须有真实窗口才能跑，进不了控制台断言；真机结论仍以 AGENTS §3.6 的记录为准）。
+   - **批次 2（同日）**：底栏抽到 `Ui/StatusBarPresenter.cs`。状态文字 / 状态点颜色 / 右侧连接参数原本散在窗口的 `SetStatus` / `StatusBrushKey` / `UpdateOverviewStatus` 三个方法里，正是「底栏文案两次漂移」的土壤；现在三条规则集中一处。窗口只留薄包装与 `BuildConnectionDetail()`（拼串要读表单控件，故留在窗口）。
+     - ⚠️ **教训（真实回归）**：接线后**构建通过但应用一启动就崩** —— `UpdateOverviewStatus()` 会在 `InitializeComponent()` 期间被 ComboBox 的 `SelectionChanged` 触发，那时呈现器还没创建，而原代码正是靠该方法里那串控件 null 检查挡住这条路的（检查搬进 `BuildConnectionDetail` 后防线就没了）。**接线类改动的「构建绿灯」不等于「能启动」，必须真跑一次**；陷阱已写进 AGENTS §3.5。
 2. ~~X 点位与注释硬编码~~ → **已解决**：点位集完全由 IO 表驱动，内置 `XComments` 已删除。
 3. ~~目标网卡下拉无实际作用~~ → **已解决**：连接时 `Bind(所选IP, 0)` 强制源地址，错误路径与成功路径均已端到端验证。
    - **后续补充（2026-10-15）**：绑定本身早已可用，但**选择没有持久化** —— 每次启动都回落到网卡列表第 0 项，于是启动后第一次连接可能绑错网卡，把本该是「对端无响应」的超时变成 `WSAENETUNREACH`，界面上显示成「连接失败：… 网络不可达」，看着像现场网络故障。已由 §10.11 修掉。
