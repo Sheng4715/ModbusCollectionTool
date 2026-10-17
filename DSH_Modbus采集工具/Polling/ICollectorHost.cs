@@ -20,9 +20,6 @@ internal interface ICollectorHost
     /// <summary>自由监控项集合（读取计划的来源、回填的目标）。</summary>
     MonitorItemSet MonitorSet { get; }
 
-    /// <summary>全局变量集合（P3.3）：只读关联了地址的那些，回填目标同是它。</summary>
-    GlobalVarItemSet GlobalVarSet { get; }
-
     /// <summary>
     /// 拍下当前界面可见性快照。**必须在 UI 线程调用**（读的都是 UI 线程维护的字段）。
     /// </summary>

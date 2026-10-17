@@ -21,12 +21,10 @@ namespace DSH_Modbus采集工具.Polling;
 /// </summary>
 /// <param name="IoPageActive">是否停在「状态信息」页（离开则三个分段全停，心跳不受影响）。</param>
 /// <param name="FreeViewActive">是否显示「自由监控」分段。</param>
-/// <param name="GlobalVarActive">是否停在采集配置页的「全局变量」分段（P3.3）。</param>
 /// <param name="VisiblePage">当前显示分段「当前页」的 IO 点位快照；未导入 IO 表时为空数组。</param>
 /// <param name="PollIntervalMs">本拍结束后到下一拍的目标间隔。</param>
 internal readonly record struct PollSnapshot(
     bool IoPageActive,
     bool FreeViewActive,
-    bool GlobalVarActive,
     IoPoint[] VisiblePage,
     int PollIntervalMs);

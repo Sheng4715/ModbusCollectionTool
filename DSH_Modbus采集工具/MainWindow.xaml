@@ -1044,10 +1044,8 @@
                         <ColumnDefinition Width="34"/>
                         <ColumnDefinition Width="140"/>
                         <ColumnDefinition Width="106"/>
-                        <ColumnDefinition Width="88"/>
                         <ColumnDefinition Width="140"/>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="120"/>
                         <ColumnDefinition Width="40"/>
                     </Grid.ColumnDefinitions>
 
@@ -1067,35 +1065,19 @@
                               Style="{StaticResource MonitorTypeCombo}"
                               SelectionChanged="GlobalVarType_SelectionChanged"/>
 
-                    <ComboBox Grid.Column="3" x:Name="VarFormatCombo"
-                              Width="76"
-                              HorizontalAlignment="Left"
-                              Style="{StaticResource MonitorInlineComboBox}"
-                              ItemContainerStyle="{StaticResource MonitorComboItem}"
-                              ItemTemplate="{StaticResource EnumUpperTemplate}"
-                              SelectionChanged="GlobalVarFormat_SelectionChanged"/>
-
                     <!-- 映射地址：空 = 不关联地址的内存变量 -->
-                    <TextBox Grid.Column="4" x:Name="VarAddressBox"
+                    <TextBox Grid.Column="3" x:Name="VarAddressBox"
                              Style="{StaticResource MonitorInlineTextBox}"
                              Margin="0,0,6,0"
                              LostFocus="GlobalVarAddress_LostFocus"/>
 
-                    <!-- 当前值：可编辑。关联地址时由轮询回填，不关联时纯手工 -->
-                    <TextBox Grid.Column="5" x:Name="VarValueBox"
-                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
-                             Style="{StaticResource MonitorValueTextBox}"
-                             GotKeyboardFocus="GlobalVarValue_GotFocus"
-                             LostKeyboardFocus="GlobalVarValue_LostFocus"
-                             KeyDown="GlobalVarValue_KeyDown"/>
-
                     <!-- 注释：仅给人看，不上报、不参与读写 -->
-                    <TextBox Grid.Column="6" x:Name="VarCommentBox"
+                    <TextBox Grid.Column="4" x:Name="VarCommentBox"
                              Style="{StaticResource MonitorInlineTextBox}"
                              Margin="0,0,6,0"
                              LostFocus="GlobalVarComment_LostFocus"/>
 
-                    <Button Grid.Column="7"
+                    <Button Grid.Column="5"
                             Content="&#xE711;"
                             ToolTip="删除本变量"
                             Style="{StaticResource MonitorIconButton}"
@@ -1747,19 +1729,15 @@
                                                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
                                                         <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
                                                         <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
-                                                        <ColumnDefinition Width="88"/>   <!-- 显示格式 -->
                                                         <ColumnDefinition Width="140"/>  <!-- 映射地址 -->
-                                                        <ColumnDefinition Width="*"/>    <!-- 当前值 -->
-                                                        <ColumnDefinition Width="120"/>  <!-- 注释 -->
+                                                        <ColumnDefinition Width="*"/>    <!-- 注释 -->
                                                         <ColumnDefinition Width="40"/>   <!-- 删除 -->
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                     <TextBlock Grid.Column="1" Text="变量名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                     <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" Margin="6,0,0,0" VerticalAlignment="Center"/>
-                                                    <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                                    <TextBlock Grid.Column="4" Text="映射地址" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                                    <TextBlock Grid.Column="5" Text="当前值" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                                    <TextBlock Grid.Column="6" Text="注释" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="3" Text="映射地址" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="4" Text="注释" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                 </Grid>
 
                                                 <StackPanel Orientation="Horizontal"

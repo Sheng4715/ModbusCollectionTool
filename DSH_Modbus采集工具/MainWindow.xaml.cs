@@ -163,7 +163,6 @@ namespace DSH_Modbus采集工具
         private readonly GlobalVarItemSet _globalVarSet = new();
 
         /// <summary>是否停在采集配置页的「全局变量」分段（跨线程读，故 volatile）。</summary>
-        private volatile bool _globalVarActive;
 
         /// <summary>STRING 长度的允许范围（选 STRING 时弹框校验用）。</summary>
         private const int StringLengthMin = 1;
@@ -1511,8 +1510,6 @@ namespace DSH_Modbus采集工具
 
         MonitorItemSet ICollectorHost.MonitorSet => _monitorSet;
 
-        GlobalVarItemSet ICollectorHost.GlobalVarSet => _globalVarSet;
-
         /// <summary>
         /// 拍下界面可见性快照。由采集引擎在**每一拍开头**与**自由监控每块发送前**调用，
         /// 故必须便宜（只读几个字段、不分配）—— <c>VisiblePage</c> 直接交引用，
@@ -1521,7 +1518,6 @@ namespace DSH_Modbus采集工具
         PollSnapshot ICollectorHost.CaptureSnapshot() => new(
             IoPageActive: _ioPageActive,
             FreeViewActive: _freeViewActive,
-            GlobalVarActive: _globalVarActive,
             VisiblePage: _visiblePage,
             PollIntervalMs: _pollIntervalMs);
 
@@ -1697,8 +1693,7 @@ namespace DSH_Modbus采集工具
 
             bool varView = GlobalVarSegment?.IsChecked == true;
 
-            // 采集跟随可见性：只有停在全局变量分段时才读关联了地址的变量
-            _globalVarActive = varView;
+            // 本页只管理变量定义，不采集值（值/格式的读写属后续阶段）
 
             AcquisitionDataPanel.Visibility = varView ? Visibility.Collapsed : Visibility.Visible;
             GlobalVarPanel.Visibility = varView ? Visibility.Visible : Visibility.Collapsed;
@@ -1884,14 +1879,15 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            combo.Items.Clear();
-            foreach (DataTypeSpec spec in AllTypeSpecs())
-            {
-                combo.Items.Add(spec.DisplayName);
-            }
+            // ⚠️ 必须放 DataTypeSpec **对象**，不能放 DisplayName 字符串：
+            // MonitorTypeItemTemplate 绑的是 {Binding DisplayName}，字符串没这个属性，
+            // 展开列表会整列空白（只看到选中条，没有文字）。
+            List<DataTypeSpec> specs = AllTypeSpecs().ToList();
+            combo.ItemsSource = specs;
 
-            int idx = combo.Items.IndexOf(item.Model.TypeDisplayName);
-            combo.SelectedIndex = idx >= 0 ? idx : 0;
+            DataTypeSpec current = DataTypes.Get(item.Model.Type);
+            DataTypeSpec? hit = specs.FirstOrDefault(sp => sp.Type == current.Type);
+            combo.SelectedItem = hit ?? specs[0];
         }
 
         private static void SyncGlobalVarFormatCombo(DependencyObject root, GlobalVarItem item)
@@ -1901,14 +1897,12 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            combo.Items.Clear();
-            foreach (DisplayFormat f in DataTypes.Get(item.Model.Type).AllowedFormats)
-            {
-                combo.Items.Add(f);
-            }
+            // 格式下拉放枚举值本身，由 EnumUpperTemplate 转成大写名
+            IReadOnlyList<DisplayFormat> formats = DataTypes.Get(item.Model.Type).AllowedFormats;
+            combo.ItemsSource = formats;
 
-            int idx = combo.Items.IndexOf(item.Model.Format);
-            combo.SelectedIndex = idx >= 0 ? idx : 0;
+            bool known = formats.Contains(item.Model.Format);
+            combo.SelectedItem = known ? item.Model.Format : formats[0];
         }
 
         private static GlobalVarItem? VarRowOf(object sender)
@@ -1982,13 +1976,6 @@ namespace DSH_Modbus采集工具
             item.Address = wanted;
             _globalVarSet.ResolveOnly(item);
 
-            if (item.ResolveError.Length > 0)
-            {
-                // 地址解析失败：保留用户输入（便于就地修改），只标红
-                item.ReadError = string.Empty;
-                item.WriteError = string.Empty;
-            }
-
             _globalVarSet.Save();
         }
 
@@ -2010,28 +1997,21 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            if (combo.SelectedItem is not string typeName)
+            // 下拉项是 DataTypeSpec 对象（见 SyncGlobalVarTypeCombo），不是显示名字符串
+            if (combo.SelectedItem is not DataTypeSpec picked)
             {
                 return;
             }
 
-            DataType? matched = null;
-            foreach (DataTypeSpec spec in AllTypeSpecs())
-            {
-                if (spec.DisplayName == typeName)
-                {
-                    matched = spec.Type;
-                    break;
-                }
-            }
+            DataType matched = picked.Type;
 
-            if (matched == null || item.Model.Type == matched.Value)
+            if (item.Model.Type == matched)
             {
                 return;
             }
 
             // STRING 需要用户声明长度
-            if (matched.Value == DataType.String)
+            if (matched == DataType.String)
             {
                 int? len = NumberInputDialog.Ask(this, "字符串长度",
                     "每个寄存器存 2 个字符，如 9 表示 STRING[9]", 9, 1, 255);
@@ -2045,139 +2025,20 @@ namespace DSH_Modbus采集工具
                 item.Model.Length = len.Value;
             }
 
-            item.Model.Type = matched.Value;
+            item.Model.Type = matched;
+            item.RaiseTypeChanged();
 
-            // 格式必须随类型纠正（BOOL 只允许 BIN、STRING 只允许 ASCII）
-            DataTypeSpec newSpec = DataTypes.Get(matched.Value);
+            // 格式必须随类型纠正（BOOL 只允许 BIN、STRING 只允许 ASCII）——
+            // 本页不显示格式列，但模型仍要合法，否则读取/后续导出会拿到非法组合
+            DataTypeSpec newSpec = DataTypes.Get(matched);
             if (!newSpec.AllowsFormat(item.Model.Format))
             {
                 item.Model.Format = newSpec.DefaultFormat;
             }
 
-            // 类型变了，值也要按新类型重置（旧的文本可能无法按新类型解析）
-            item.Value = GlobalVariableRules.InitialValue(matched.Value);
-
             _globalVarSet.ResolveOnly(item);
             _globalVarSet.Save();
-
-            if (combo.Parent is DependencyObject parent)
-            {
-                SyncGlobalVarFormatCombo(parent, item);
-            }
-
             RefreshGlobalVarView();
-        }
-
-        private void GlobalVarFormat_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (sender is not ComboBox combo || VarRowOf(combo) is not GlobalVarItem item)
-            {
-                return;
-            }
-
-            if (combo.SelectedItem is not DisplayFormat fmt || item.Model.Format == fmt)
-            {
-                return;
-            }
-
-            item.Model.Format = fmt;
-            _globalVarSet.ResolveOnly(item);
-            _globalVarSet.Save();
-        }
-
-        private void GlobalVarValue_GotFocus(object sender, KeyboardFocusChangedEventArgs e)
-        {
-            if (VarRowOf(sender) is GlobalVarItem item)
-            {
-                item.IsEditing = true;
-            }
-        }
-
-        private void GlobalVarValue_LostFocus(object sender, KeyboardFocusChangedEventArgs e)
-        {
-            if (sender is TextBox tb && VarRowOf(tb) is GlobalVarItem item)
-            {
-                item.IsEditing = false;
-                CommitGlobalVarValue(item, tb.Text);
-            }
-        }
-
-        private void GlobalVarValue_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.Key != Key.Enter || sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
-            {
-                return;
-            }
-
-            e.Handled = true;
-            item.IsEditing = false;
-            CommitGlobalVarValue(item, tb.Text);
-        }
-
-        /// <summary>
-        /// 提交变量的当前值。
-        /// <para>关联地址 → 写入 PLC；不关联地址 → 只更新内存值（后续场景会用）。</para>
-        /// </summary>
-        private async void CommitGlobalVarValue(GlobalVarItem item, string text)
-        {
-            item.WriteError = string.Empty;
-
-            if (!item.HasAddress)
-            {
-                // 内存变量：只改值，不碰通讯
-                item.Value = text;
-                return;
-            }
-
-            if (item.IsReadOnly)
-            {
-                item.WriteError = "该地址为只读输入区，不可写";
-                return;
-            }
-
-            if (_currentDriver == null || _session.Client == null)
-            {
-                item.WriteError = "未连接";
-                return;
-            }
-
-            WritePlan plan;
-            string error;
-            if (!GlobalVarWrite.TryBuild(item.Model, text, _currentDriver, out plan, out error))
-            {
-                item.WriteError = error;
-                return;
-            }
-
-            try
-            {
-                await WriteGlobalVarToDeviceAsync(plan, _session.Client);
-                item.Value = text;
-            }
-            catch (Exception ex)
-            {
-                item.WriteError = ClassifyWriteError(ex);
-            }
-        }
-
-        /// <summary>把一条变量的写入计划发到设备（按值长度选 FC05/06/16）。</summary>
-        private static async Task WriteGlobalVarToDeviceAsync(WritePlan plan, ModbusTcpClient client)
-        {
-            if (plan.IsCoil)
-            {
-                await client.WriteSingleCoilAsync((ushort)plan.Address, plan.CoilValue);
-                return;
-            }
-
-            ushort[] registers = plan.Registers ?? Array.Empty<ushort>();
-            if (registers.Length == 1)
-            {
-                await client.WriteSingleRegisterAsync((ushort)plan.Address, registers[0]);
-            }
-            else
-            {
-                await client.WriteMultipleRegistersAsync((ushort)plan.Address, registers);
-            }
         }
 
         /// <summary>把焦点移到指定变量的名称框（新增后连续录入用）。</summary>
