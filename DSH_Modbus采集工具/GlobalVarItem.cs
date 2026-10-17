@@ -190,10 +190,16 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>重新解析一条（改类型 / 改地址后调用）</summary>
-        public void ResolveOnly(GlobalVarItem item)
+        public void ResolveOnly(GlobalVarItem item) => ResolveOnly(item, out _);
+
+        /// <summary>
+        /// 同上，并返回失败**类别** —— 界面据此决定弹哪句提示。
+        /// </summary>
+        public bool ResolveOnly(GlobalVarItem item, out AddressErrorKind kind)
         {
-            _set.ResolveOnly(item.Model);
+            bool ok = _set.ResolveOnly(item.Model, out kind);
             item.ResolveError = item.Model.ResolveError;
+            return ok;
         }
 
         /// <summary>重新解析全部（换设备类型后调用）</summary>

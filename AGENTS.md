@@ -311,6 +311,14 @@ Window
   - ⚠️ **不要写死 `Format = DisplayFormat.Dec`**：新建 `BOOL` 变量会立刻校验失败。取默认值一律用 `GlobalVariable.DefaultFormatFor(type)`
 - **持久化只存定义**（`GlobalVar.json`）：`[JsonIgnore]` 标记 `Value`，**值不落盘**，每次 `Load()` 重置为 `0`（`STRING` 空串）
 - **注释仅给人看**；**与自由监控独立维护**（各用自己的 json）
+- **映射地址失焦即校验，失败弹框**（用户定稿）：
+  - 软元件与数据类型不符 → 标题「数据类型不符」，正文「软元件与当前数据类型不符合。」
+  - 软元件无效（符号不存在 / 编号越界 / 超出地址范围 / 拆不出元件+编号）→ 标题「软元件无效」，正文「{输入内容}不是有效软元件」
+  - 其余（显示格式、STRING 长度、未选设备类型）→ 标题「映射地址无法解析」，正文转达原因
+  - 文案本体在 `GlobalVariableRules.DescribeAddressError`（**纯函数**，离线断言直接核对这两句）；
+    分类由 `AddressErrorKind`（`None` / `TypeMismatch` / `InvalidElement` / `Configuration`）表达
+  - ⚠️ **分类不能靠匹配错误字符串**：`TypeMismatch` 与 `InvalidElement` 的判据是「元件存在、但存储区与类型不匹配」vs「元件本身解析不出来」，
+    两者在 `TryResolve` 里走的是**不同分支**（`AreasOfElement` 有候选但 `CanMapTo` 全不通过 = 类型不符）
 
 **下拉框数据源（踩过坑，改前必读）**：
 
@@ -318,7 +326,7 @@ Window
 - 闭合态由 `MonitorTypeCombo` 模板直接读数据上下文的 `GlobalVarItem.TypeDisplayName`，缺这个属性同样显示空白
 - 选中处理器要接 `DataTypeSpec`，不是 `string`
 
-**离线断言**：`.tmp/GlobalVarCheck`（**121 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
+**离线断言**：`.tmp/GlobalVarCheck`（**118 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
 
 ## 6. 心跳与连接生命周期
 

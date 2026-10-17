@@ -96,6 +96,7 @@ namespace DSH_Modbus采集工具.Modeling
     }
 
     /// <summary>变量名与初始值的规则（纯函数，可独立断言）。</summary>
+    /// <summary>    /// 映射地址解析失败的原因类别 —— 决定界面弹哪一句提示。    /// <para>    /// 分成两类是因为**用户的改法完全不同**：类型不符要改数据类型或换元件，    /// 软元件无效要改地址本身。笼统报一句「地址无效」会把人引向错误方向。    /// </para>    /// </summary>    public enum AddressErrorKind    {        /// <summary>解析通过（或空地址 = 内存变量）。</summary>        None,        /// <summary>软元件与当前数据类型不符（如 BOOL 配 D100、INT 配 M10）。</summary>        TypeMismatch,        /// <summary>软元件无效：符号不存在、编号越界、格式不对、超出地址范围。</summary>        InvalidElement,        /// <summary>与地址无关的配置问题（显示格式、STRING 长度、未选设备类型）。</summary>        Configuration,    }
     public static class GlobalVariableRules
     {
         /// <summary>变量名最大长度（需求：限制 32 个字符）。</summary>
@@ -171,6 +172,45 @@ namespace DSH_Modbus采集工具.Modeling
         /// </summary>
         public static string InitialValue(DataType type) =>
             type == DataType.String ? string.Empty : "0";
+
+        /// <summary>
+        /// 映射地址校验失败时给用户看的**标题**与**正文**（纯函数，可独立断言）。
+        /// <para>
+        /// 文案由用户定稿：类型不符 → 「软元件与当前数据类型不符合。」；
+        /// 软元件无效 → 「{输入内容}不是有效软元件」。放在这里而不是窗口里，
+        /// 是为了让离线断言能直接核对这两句，不必跑起界面。
+        /// </para>
+        /// </summary>
+        /// <param name="kind">解析失败类别</param>
+        /// <param name="input">用户输入的地址原文（回显到「不是有效软元件」里）</param>
+        /// <param name="detail">解析器的详细原因（配置类问题原样转达）</param>
+        /// <param name="title">提示框标题</param>
+        /// <param name="body">提示框正文</param>
+        public static void DescribeAddressError(
+            AddressErrorKind kind, string? input, string? detail, out string title, out string body)
+        {
+            input ??= string.Empty;
+            detail ??= string.Empty;
+
+            switch (kind)
+            {
+                case AddressErrorKind.TypeMismatch:
+                    title = "数据类型不符";
+                    body = "软元件与当前数据类型不符合。";
+                    return;
+
+                case AddressErrorKind.InvalidElement:
+                    title = "软元件无效";
+                    body = $"{input}不是有效软元件";
+                    return;
+
+                default:
+                    // 与地址无关的配置问题（显示格式 / STRING 长度 / 未选设备类型）
+                    title = "映射地址无法解析";
+                    body = detail.Length > 0 ? detail : "映射地址无法解析，请检查设备类型与地址格式。";
+                    return;
+            }
+        }
     }
 
     /// <summary>
@@ -231,14 +271,27 @@ namespace DSH_Modbus采集工具.Modeling
         /// </summary>
         /// <param name="v">要解析的变量，成功时回填 ResolvedAddress / Area / IsReadOnly</param>
         /// <param name="driver">当前设备类型的驱动</param>
-        /// <param name="error">失败原因</param>
+        /// <param name="error">失败原因（详细，供行内标红与日志）</param>
         public static bool TryResolve(GlobalVariable v, CommDriver driver, out string error)
+            => TryResolve(v, driver, out error, out _);
+
+        /// <summary>
+        /// 同上，额外给出失败**类别** —— 界面按类别决定弹哪一句提示。
+        /// </summary>
+        /// <param name="kind">
+        /// <see cref="AddressErrorKind.TypeMismatch"/> = 软元件与数据类型不符；
+        /// <see cref="AddressErrorKind.InvalidElement"/> = 软元件无效（符号/编号/范围）。
+        /// </param>
+        public static bool TryResolve(
+            GlobalVariable v, CommDriver driver, out string error, out AddressErrorKind kind)
         {
             error = string.Empty;
+            kind = AddressErrorKind.None;
 
             if (v == null || driver == null)
             {
                 error = "参数为空";
+                kind = AddressErrorKind.Configuration;
                 return false;
             }
 
@@ -256,6 +309,7 @@ namespace DSH_Modbus采集工具.Modeling
             if (!spec.AllowsFormat(v.Format))
             {
                 error = $"{spec.DisplayName} 不支持所选显示格式";
+                kind = AddressErrorKind.Configuration;
                 v.ResolveError = error;
                 return false;
             }
@@ -263,13 +317,16 @@ namespace DSH_Modbus采集工具.Modeling
             if (spec.HasVariableLength && v.Length <= 0)
             {
                 error = "STRING 长度必须大于 0";
+                kind = AddressErrorKind.Configuration;
                 v.ResolveError = error;
                 return false;
             }
 
+            // 拆不出「符号 + 编号」= 这个软元件根本不存在，与类型无关
             if (!CommDriver.TrySplitName(v.Address, out string element, out string index, out string splitError))
             {
                 error = splitError;
+                kind = AddressErrorKind.InvalidElement;
                 v.ResolveError = error;
                 return false;
             }
@@ -279,6 +336,7 @@ namespace DSH_Modbus采集工具.Modeling
             if (candidates.Count == 0)
             {
                 error = $"元件 {element} 不在当前设备类型的地址表内";
+                kind = AddressErrorKind.InvalidElement;
                 v.ResolveError = error;
                 return false;
             }
@@ -293,18 +351,22 @@ namespace DSH_Modbus采集工具.Modeling
                 }
             }
 
+            // 元件存在、但存储区与类型对不上 → 这是「类型不符」，不是「元件无效」
             if (matched == null)
             {
                 error = spec.CoilOnly
                     ? $"{spec.DisplayName} 只能映射线圈区元件"
                     : $"{spec.DisplayName} 只能映射寄存器区元件";
+                kind = AddressErrorKind.TypeMismatch;
                 v.ResolveError = error;
                 return false;
             }
 
+            // 元件与类型都说得通，只是编号越界 / 超出地址范围
             if (!driver.TryResolve(v.Address, matched.Value, out int address, out string resolveError))
             {
                 error = resolveError;
+                kind = AddressErrorKind.InvalidElement;
                 v.ResolveError = error;
                 return false;
             }
@@ -456,14 +518,24 @@ namespace DSH_Modbus采集工具.Modeling
             _items.FindIndex(v => string.Equals(v.Name, name, StringComparison.Ordinal));
 
         /// <summary>重新解析一条变量的地址（改动类型 / 地址后调用）</summary>
-        public void ResolveOnly(GlobalVariable v)
+        public void ResolveOnly(GlobalVariable v) => ResolveOnly(v, out _);
+
+        /// <summary>
+        /// 同上，并把失败**类别**交给调用方（界面据此决定弹哪句提示）。
+        /// <para>未选设备类型时返回 false + <see cref="AddressErrorKind.Configuration"/>。</para>
+        /// </summary>
+        public bool ResolveOnly(GlobalVariable v, out AddressErrorKind kind)
         {
+            kind = AddressErrorKind.None;
+
             if (Driver == null)
             {
-                return;
+                // 没选设备类型就无从解析；此时不该报「软元件无效」，那是配置没做完
+                kind = AddressErrorKind.Configuration;
+                return false;
             }
 
-            GlobalVariableStore.TryResolve(v, Driver, out _);
+            return GlobalVariableStore.TryResolve(v, Driver, out _, out kind);
         }
 
         /// <summary>重新解析全部（换设备类型后调用）</summary>

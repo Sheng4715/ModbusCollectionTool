@@ -1964,7 +1964,13 @@ namespace DSH_Modbus采集工具
             item.ResolveError = error;
         }
 
-        /// <summary>映射地址失焦：空 = 内存变量；非空则按驱动解析。</summary>
+        /// <summary>
+        /// 映射地址失焦：空 = 内存变量；非空则按驱动解析。
+        /// <para>
+        /// 解析失败**弹框告知**，因为地址是「元件 + 编号」的自由文本，用户看不出自己错在哪：
+        /// 类型不符要说清「这个元件不能配这种类型」，软元件无效要说清「这个地址不存在」。
+        /// </para>
+        /// </summary>
         private void GlobalVarAddress_LostFocus(object sender, RoutedEventArgs e)
         {
             if (sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
@@ -1974,9 +1980,29 @@ namespace DSH_Modbus采集工具
 
             string wanted = tb.Text.Trim();
             item.Address = wanted;
-            _globalVarSet.ResolveOnly(item);
+            _globalVarSet.ResolveOnly(item, out AddressErrorKind kind);
+
+            if (kind != AddressErrorKind.None)
+            {
+                ShowGlobalVarAddressError(item, wanted, kind);
+            }
 
             _globalVarSet.Save();
+        }
+
+        /// <summary>
+        /// 映射地址校验失败的提示框。
+        /// <para>
+        /// 文案本身在 <see cref="GlobalVariableRules.DescribeAddressError"/> —— 那是纯函数，
+        /// 离线断言能直接核对，这里只负责弹出来。
+        /// </para>
+        /// </summary>
+        private void ShowGlobalVarAddressError(GlobalVarItem item, string input, AddressErrorKind kind)
+        {
+            GlobalVariableRules.DescribeAddressError(
+                kind, input, item.ResolveError, out string title, out string body);
+
+            MessageBox.Show(this, body, title, MessageBoxButton.OK, MessageBoxImage.Warning);
         }
 
         private void GlobalVarComment_LostFocus(object sender, RoutedEventArgs e)
