@@ -27,13 +27,13 @@ dotnet run --project DSH_Modbus采集工具
 DSH_Modbus采集工具/
 ├── App.xaml / App.xaml.cs      # 入口（OnStartup 里先 ThemeManager.Initialize）
 ├── AssemblyInfo.cs             # 仅供 ThemeInfo 特性等程序集级声明（无逻辑）
-├── AppInfo.cs                  # 项目信息（P5-3）：版本号 / 构建日期 / 运行环境（只读程序集元数据）
+├── AppInfo.cs                  # 项目信息（P5.3）：版本号 / 构建日期 / 运行环境（只读程序集元数据）
 ├── MainWindow.xaml             # 全部 UI（单窗口，无 UserControl 拆分）
 ├── MainWindow.xaml.cs          # 交互逻辑（见 §4 分工）
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
 ├── NumberInputDialog.cs        # STRING 长度输入弹窗（选 STRING 类型时用）
 ├── XlsxIoTableReader.cs        # xlsx 点位表解析（零依赖 zip+XML）
-├── Themes/                     # 主题（P5-1）
+├── Themes/                     # 主题（P5.1）
 │   ├── Light.xaml              # 浅色字典（50 键）；值 = 主题化前的字面值
 │   ├── Dark.xaml               # 深色字典（同 50 键）
 │   └── ThemeManager.cs         # 换字典 / 跟随系统 / 键一致性校验 / app-settings.json
@@ -47,7 +47,7 @@ DSH_Modbus采集工具/
 │   ├── IoPointSet.cs           # 注释表读写 + 名称归一化 / 地址换算 / 分组排序 / 导入校验
 │   ├── IoPager.cs              # 分页纯计算（页数 / 夹取 / 切片 / 翻页 / 页号文本）
 │   └── IoTableImporter.cs      # xlsx → 注释表 + 失败明细
-├── Modeling/                   # 数据类型系统（P6-4 数据模型层）
+├── Modeling/                   # 数据类型系统（P6.4 数据模型层）
 │   ├── DataTypes.cs            # DataType / DisplayFormat 枚举 + DataTypeSpec 规格表
 │   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
 │   └── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
@@ -77,8 +77,8 @@ DSH_Modbus采集工具/
 > ⚠️ `MonitorItem.cs` 是「`DataPoint` 的界面包装」、碰 WPF 属正常，但它在**根目录**而不在 `Ui/`
 > —— 判断一个文件该不该碰 WPF 看**所在目录**，不要以为「根目录都不碰」。
 
-> `ModelingCheck/`（仓库根，**不属于本工程**）是 P6-4 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
-> `LoggingCheck/`（同上）是 P5-2 的独立验证工程：链接 `DeviceLogFileWriter.cs` 与 `DisconnectReasonClassifier.cs` 源码，断言逐字符行格式 / 跨天换文件 / 续写 / 容错 / 断开原因归类，**44 项**，不参与主程序构建。
+> `ModelingCheck/`（仓库根，**不属于本工程**）是 P6.4 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
+> `LoggingCheck/`（同上）是 P5.2 的独立验证工程：链接 `DeviceLogFileWriter.cs` 与 `DisconnectReasonClassifier.cs` 源码，断言逐字符行格式 / 跨天换文件 / 续写 / 容错 / 断开原因归类，**44 项**，不参与主程序构建。
 
 > `.tmp/` 下另有一批**一次性**验证工程（**未提交**，随用随弃）。**断言型**（自带 `Check()`，直接 `dotnet run` 即出结论）：
 > `ConnCheck`（退避策略 + 连接身份 / 两种断开语义，**35 项**）、`DeviceLogCheck`（日志编排：上限裁剪 / 级别映射 / 共用时间戳 / 清空 / 换主题重建，**23 项**）、`NicCheck`（网卡选择还原优先级，**17 项**）、`PollerCheck`（IO 轮询异常码策略，**10 项**）。
@@ -108,8 +108,8 @@ Window
 | `OverviewNav` 总览 | `OverviewPanel` | 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
-| `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **骨架页**（P3-1）：标题 + 「采集数据」占位卡；采集导出功能未实现 |
-| `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5-1）+ 日志保存（P5-2）+ 项目信息（P5-3） |
+| `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **骨架页**（P3.1）：标题 + 「采集数据」占位卡；采集导出功能未实现 |
+| `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 日志保存（P5.2）+ 项目信息（P5.3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
 
@@ -212,7 +212,7 @@ Window
 ## 4. 代码分工（MainWindow.xaml.cs）
 
 > `MainWindow.xaml.cs` 仍是本工程最大的单文件（两千行量级；P5 重构抽出两块后，又因
-> P2-2 读取/写入与 P5 设置页陆续加回，规模回到重构前）。采集编排已抽到 `Polling/`、
+> P2.2 读取/写入与 P5 设置页陆续加回，规模回到重构前）。采集编排已抽到 `Polling/`、
 > IO 点位集/分页/导入已抽到 `Io/`，主题在 `Themes/`；其余（连接生命周期 / 心跳 / 导航 /
 > 自由监控 / 日志）仍在本文件。**自由监控刻意未抽** —— 它有 12 处直接碰控件，见 `Design.md` §8-1。
 >
@@ -234,9 +234,9 @@ Window
 | 网卡 | `ScanNetworkAdapters`（闸门 + 填下拉框）/ `TargetNicComboBox_SelectionChanged`；扫描与还原规则在 `Net/NicScanner.cs`。选择持久化见 §3.4 |
 | 日志 | 窗口侧只留三处**控件**动作：`AppendDeviceLog`（薄包装 → 追加 + `ScrollIntoView` + 设置页失败提示）、`ClearDeviceLogButton_Click`、`RefreshDeviceLogColors`（薄包装）；**编排与规则在 `Ui/DeviceLogPresenter.cs`**（内存集合 / 上限 200 / 落盘旁路 / **界面与文件共用时间戳** / 界面级别 → 落盘级别）；`ClassifyDisconnectReason` 仍是薄包装 |
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `BuildConnectionDetail`（窗口侧薄包装）→ `Ui/StatusBarPresenter.cs`（规则本体）；`UpdateMaximizedInset` → `Ui/MaximizedInset.cs` |
-| **主题（P5-1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged`（底栏的状态色映射在 `Ui/StatusBarPresenter.cs`）；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
-| **日志落盘（P5-2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveToggle_Changed` / `SyncLogSaveToggle` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（见 §7.1） |
-| **项目信息（P5-3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（见 §7.2） |
+| **主题（P5.1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged`（底栏的状态色映射在 `Ui/StatusBarPresenter.cs`）；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
+| **日志落盘（P5.2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveToggle_Changed` / `SyncLogSaveToggle` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（见 §7.1） |
+| **项目信息（P5.3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（见 §7.2） |
 | 关键字段 | `_session`（连接身份与生命周期）/ `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_logPresenter`（日志呈现器）/ `_logWriter` / `_statusBar`（底栏呈现器）（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
@@ -260,7 +260,7 @@ Window
 - 换主题后靠 `RaiseStateBrushChanged()` 触发绑定重算（`StateBrush` 无 setter）
 - XAML 侧不用改：`IoItemTemplate` 的灯仍绑 `Background="{Binding StateBrush}"`
 
-### 5.1 自由监控（P2-2，第三分段）
+### 5.1 自由监控（P2.2，第三分段）
 
 状态信息页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**。
 
@@ -303,7 +303,7 @@ Window
 - `StopPolling` 只取消并置 null，**释放交给任务自身 `finally`**（确认自己仍是当前连接后）；`OnClosed` 统一取消连接尝试、停任务并释放
 - **连接的身份与生命周期状态**（当前客户端 / 是否连着 / 期望目标 / 在途取消源 / 重连计数）在 `Polling/ConnectionSession.cs`，**async 编排留在窗口** —— 等待循环里逐秒刷状态栏、锁表单、改按钮文案全是界面驱动的东西。两种「断开」语义也在那里落了地：`ForgetTarget()` = 用户主动断开（目标清掉 → 不重连），只 `ReleaseClient()` = 异常断开（目标留着 → 才能重连）
 
-### 6.1 自动重连（P6-3）
+### 6.1 自动重连（P6.3）
 
 | 项 | 行为 |
 |---|---|
@@ -341,7 +341,7 @@ Window
 - 原因经 `ClassifyDisconnectReason` 归一为简短中文（Socket 原文 →「网络不可达」，Modbus 帧错误 →「响应帧校验失败」），未命中原样保留
 - 日志区套一层内嵌框线 `Border`（`#C8C8C8` 1px、圆角 4）；时间列用 `SharedSizeGroup="DeviceLogTime"` 跨行共享宽度（**否则比例字宽会让消息左边界抖动**），`DeviceLogList` 上须有 `Grid.IsSharedSizeScope="True"`
 
-### 7.1 日志落盘（P5-2）
+### 7.1 日志落盘（P5.2）
 
 同一条日志**既进界面又进文件**，落盘挂在 `Ui/DeviceLogPresenter.Append` —— 窗口的 `AppendDeviceLog` 是 5 种设备状态的唯一出口，7 个调用点零改动。
 
@@ -377,7 +377,7 @@ Window
 - 独立验证工程 `DeviceLogCheck`（`.tmp/`，**23 项**断言）覆盖 `DeviceLogPresenter` 的内存上限裁剪 / 级别映射 / **共用时间戳** / 清空 / 换主题重建；改动日志编排后跑它（**未提交**，随用随弃，手法同 `PollerCheck`：链接源码 + 打桩 WPF 类型）
 - ⚠️ **在 DSH 下跑它时先改 TEMP**：`%TEMP%` 上挂着沙箱 ACE，子进程（`dotnet run`）建目录会被拒（`UnauthorizedAccessException`），而 pwsh 自己建得出来，故报错看着莫名其妙。先 `$env:TEMP = "$PWD\.tmp\lc-temp"` 再跑
 
-### 7.2 项目信息（P5-3）
+### 7.2 项目信息（P5.3）
 
 设置页第三张卡，显示 **名称 / 版本 / 构建日期 / 运行环境**。全是常量，在 `Window_Loaded` 里 `RefreshProjectInfo()` 填一次。
 
@@ -488,7 +488,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 - `IO模板.xlsx` 仅**导入功能测试用**，其注释列与 `io-comments.json` 都是占位文本（`CommentX0`/`Comment0`），**无业务含义** —— 不必维护、不必恢复，也不是待处理问题
 
-### 9.2 主题与配色（P5-1，改颜色必读）
+### 9.2 主题与配色（P5.1，改颜色必读）
 
 **XAML 里不得再出现颜色字面量**（`#RRGGBB`）。所有颜色都写成 `{DynamicResource Brush.Xxx}`，值取自 `Themes/Light.xaml` / `Dark.xaml`。
 
