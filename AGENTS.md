@@ -312,7 +312,12 @@ Window
   - `INT → REAL` 这类**同区**换类型 → **保留**，地址完全可用，清掉只是让用户重打一遍
   - 模型与**控件文本**必须一起清：地址框不是双向绑定（失焦才提交），只改 `Model.Address` 界面还留着旧字
   - 清空发生在「类型已确认」之后 —— 切到 `STRING` 时若用户取消长度输入框，**不清地址**（类型根本没变）
-- **显示格式不在界面出现**，但模型仍要合法（`BOOL` 只 `BIN`、`STRING` 只 `ASCII`）：类型变更时按 `DataTypes.Get(type).DefaultFormat` 自动纠正
+- **STRING 长度弹框与自由监控共用同一个入口**（`AskStringLength`）：标题「字符串长度」、
+  提示语「请输入 STRING 的字符数（1 ~ 128）。」、范围 `StringLengthMin` ~ `StringLengthMax`、
+  默认值 `StringLengthDefault` 都只在窗口顶部定义一次
+  - ⚠️ 两处曾各自内联调用 `NumberInputDialog.Ask`，参数却不同（全局变量写死 `1~255` 与另一套提示语），
+    同一个问题在两页得到不同答案。**不要再内联调用**，一律走 `AskStringLength`
+  - 初值取该行现有长度（>0 时），重复改类型不丢已有设置（`BOOL` 只 `BIN`、`STRING` 只 `ASCII`）：类型变更时按 `DataTypes.Get(type).DefaultFormat` 自动纠正
   - ⚠️ **不要写死 `Format = DisplayFormat.Dec`**：新建 `BOOL` 变量会立刻校验失败。取默认值一律用 `GlobalVariable.DefaultFormatFor(type)`
 - **持久化只存定义**（`GlobalVar.json`）：`[JsonIgnore]` 标记 `Value`，**值不落盘**，每次 `Load()` 重置为 `0`（`STRING` 空串）
 - **注释仅给人看**；**与自由监控独立维护**（各用自己的 json）
@@ -331,7 +336,7 @@ Window
 - 闭合态由 `MonitorTypeCombo` 模板直接读数据上下文的 `GlobalVarItem.TypeDisplayName`，缺这个属性同样显示空白
 - 选中处理器要接 `DataTypeSpec`，不是 `string`
 
-**离线断言**：`.tmp/GlobalVarCheck`（**139 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
+**离线断言**：`.tmp/GlobalVarCheck`（**144 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
 
 ## 6. 心跳与连接生命周期
 

@@ -172,6 +172,29 @@ namespace DSH_Modbus采集工具
         /// <summary>新建 STRING 时的默认长度（弹框的初值）。</summary>
         private const int StringLengthDefault = 8;
 
+        /// <summary>
+        /// 询问 STRING 的字符数。**自由监控与全局变量共用这一个入口**，
+        /// 标题 / 提示语 / 范围 / 默认值都只在这里定义一次。
+        /// <para>
+        /// 两处各自内联调用过 NumberInputDialog.Ask，参数却不一样（一边 1~128、一边写死 1~255，
+        /// 提示语也各说一套），同一个问题在两页得到不同答案。收在这里就不会再分叉。
+        /// </para>
+        /// </summary>
+        /// <param name="current">该行现有的长度；大于 0 时作为初值，让重复改类型不丢已有设置</param>
+        /// <returns>用户确认的长度；取消返回 null</returns>
+        private int? AskStringLength(int current)
+        {
+            int initial = current > 0 ? current : StringLengthDefault;
+
+            return NumberInputDialog.Ask(
+                this,
+                "字符串长度",
+                $"请输入 STRING 的字符数（{StringLengthMin} ~ {StringLengthMax}）。",
+                initial,
+                StringLengthMin,
+                StringLengthMax);
+        }
+
         /// <summary>当前显示的是「自由监控」分段（采集跟随可见分段用）。</summary>
         private volatile bool _freeViewActive;
 
@@ -2078,11 +2101,12 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // STRING 需要用户声明长度
+            // STRING 需要用户声明长度。
+            // 与自由监控走**同一个**对话框与同一套参数（见 AskStringLength），
+            // 不在这里另写一份文案与范围 —— 两处各写一份，改一处就悄悄不一致了。
             if (matched == DataType.String)
             {
-                int? len = NumberInputDialog.Ask(this, "字符串长度",
-                    "每个寄存器存 2 个字符，如 9 表示 STRING[9]", 9, 1, 255);
+                int? len = AskStringLength(item.Model.Length);
 
                 if (len == null)
                 {
@@ -2538,17 +2562,8 @@ namespace DSH_Modbus采集工具
 
             if (spec.HasVariableLength)
             {
-                int initial = item.Model.Length > 0
-                    ? item.Model.Length
-                    : StringLengthDefault;
-
-                int? len = NumberInputDialog.Ask(
-                    this,
-                    "字符串长度",
-                    $"请输入 STRING 的字符数（{StringLengthMin} ~ {StringLengthMax}）。",
-                    initial,
-                    StringLengthMin,
-                    StringLengthMax);
+                // 与全局变量共用同一个入口，参数不在这里重复定义
+                int? len = AskStringLength(item.Model.Length);
 
                 if (len == null)
                 {
