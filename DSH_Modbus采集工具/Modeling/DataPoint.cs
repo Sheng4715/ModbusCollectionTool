@@ -44,6 +44,24 @@ namespace DSH_Modbus采集工具.Modeling
         [JsonIgnore]
         public ModbusArea Area { get; set; } = ModbusArea.Coil;
 
+        /// <summary>
+        /// 全局变量名；非空 = 本项监控的是该变量（此时 <see cref="Element"/> /
+        /// <see cref="Index"/> 不使用）。
+        /// <para>
+        /// 为什么不复用 <see cref="Element"/> 存变量名：元件与变量名是两个不同命名空间，
+        /// 混在一个字段里，读代码的人无法判断「D100」是元件还是恰好叫这个名字的变量。
+        /// </para>
+        /// <para>
+        /// 类型 / 长度 / 地址**不从这里取** —— 每次解析都从变量表现取，
+        /// 变量改了类型，监控行自动跟着变，不会留一份过期副本。
+        /// </para>
+        /// </summary>
+        public string VariableName { get; set; } = string.Empty;
+
+        /// <summary>是否监控的是全局变量（而非直接的元件地址）。</summary>
+        [JsonIgnore]
+        public bool IsVariable => !string.IsNullOrWhiteSpace(VariableName);
+
         /// <summary>格式化的显示名，如 <c>HD100</c> / <c>D810</c></summary>
         [JsonIgnore]
         public string DisplayName => Element + Index;

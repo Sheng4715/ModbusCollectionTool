@@ -295,17 +295,19 @@ namespace DSH_Modbus采集工具
             RefreshDriverAreas();
             SyncByteOrderCombos();
 
-            // 自由监控：载入持久化项 + 绑定列表（解析失败项保留并标红）
-            _monitorSet.SetDriver(_currentDriver);
-            _monitorSet.Load();
-            MonitorItemsControl.ItemsSource = _monitorSet.Items;
-            RefreshMonitorView();
-
-            // 全局变量（P3.3）：同样载入 + 绑定；值在 Load 里已重置为初始值
+            // 全局变量（P3.3）：先载入 —— 自由监控里可能有监控变量行，
+            // 载入时就要按变量表解析，否则第一轮会把这些行当成元件行标红
             _globalVarSet.SetDriver(_currentDriver);
             _globalVarSet.Load();
             GlobalVarItemsControl.ItemsSource = _globalVarSet.Items;
             RefreshGlobalVarView();
+
+            // 自由监控：载入持久化项 + 绑定列表（解析失败项保留并标红）
+            _monitorSet.SetDriver(_currentDriver);
+            _monitorSet.SetVariableLookup(_globalVarSet.FindByName);
+            _monitorSet.Load();
+            MonitorItemsControl.ItemsSource = _monitorSet.Items;
+            RefreshMonitorView();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -1803,6 +1805,9 @@ namespace DSH_Modbus采集工具
             {
                 _globalVarSet.Remove(item);
                 RefreshGlobalVarView();
+
+                // 被删的变量可能正被监控行引用，那些行现在应标红「变量不存在」
+                RefreshMonitorRowsAfterVariableChange();
             }
         }
 
@@ -1822,6 +1827,9 @@ namespace DSH_Modbus采集工具
 
             _globalVarSet.Clear();
             RefreshGlobalVarView();
+
+            // 全部删完，所有监控变量行都会变成「变量不存在」
+            RefreshMonitorRowsAfterVariableChange();
         }
 
         /// <summary>行容器加载：把行对象挂到 Tag，供事件处理器取用。</summary>
@@ -2006,6 +2014,49 @@ namespace DSH_Modbus采集工具
                 : err;
         }
 
+        /// <summary>
+        /// 变量定义变了（改名 / 改类型 / 改地址 / 删除）之后，让自由监控里引用变量的行重新解析。
+        /// <para>
+        /// 监控行的类型与地址都是从变量表现取的，变量一改它就得跟着重算 ——
+        /// 不刷新的话，界面上会继续显示旧类型、继续按旧地址采集。
+        /// </para>
+        /// </summary>
+        private void RefreshMonitorRowsAfterVariableChange()
+        {
+            if (_monitorSet.Items.Count == 0)
+            {
+                return;
+            }
+
+            _monitorSet.ReResolveAll();
+
+            // 已生成的行容器要同步类型框（置灰与否、显示的类型名都可能变了）。
+            // 遍历**可视树**而不是 ItemContainerGenerator：容器未必已生成，
+            // 且这里要的是模板根（Tag 上挂着 MonitorItem 的那个），容器层级并不保证。
+            if (MonitorItemsControl != null)
+            {
+                foreach (FrameworkElement row in EnumerateRows(MonitorItemsControl))
+                {
+                    if (row.Tag is not MonitorItem item)
+                    {
+                        continue;
+                    }
+
+                    if (item.IsVariable)
+                    {
+                        ApplyVariableRowState(row, item);
+                    }
+                    else
+                    {
+                        SyncMonitorTypeWithElement(row, item, autoCorrect: false);
+                    }
+                }
+            }
+
+            // 不落盘：变量定义变了但监控行的持久化字段（变量名 / 元件）没变，
+            // 类型与地址都是解析时从变量表现取的临时值，本来就不进 json
+        }
+
         /// <summary>变量名失焦：唯一提交点。非法或重名则回退到上次有效名称。</summary>
         private void GlobalVarName_LostFocus(object sender, RoutedEventArgs e)
         {
@@ -2021,6 +2072,9 @@ namespace DSH_Modbus采集工具
                 tb.Text = item.Name;
                 item.ResolveError = string.Empty;
                 _globalVarSet.Save();
+
+                // 改名会让引用旧名字的监控行失效，必须重解析一遍
+                RefreshMonitorRowsAfterVariableChange();
                 return;
             }
 
@@ -2053,6 +2107,9 @@ namespace DSH_Modbus采集工具
             }
 
             _globalVarSet.Save();
+
+            // 地址变了，引用该变量的监控行要跟着换地址
+            RefreshMonitorRowsAfterVariableChange();
         }
 
         /// <summary>
@@ -2140,6 +2197,9 @@ namespace DSH_Modbus采集工具
             _globalVarSet.ResolveOnly(item);
             _globalVarSet.Save();
             RefreshGlobalVarView();
+
+            // 类型变了，引用该变量的监控行要跟着换类型与读取长度
+            RefreshMonitorRowsAfterVariableChange();
         }
 
         /// <summary>把焦点移到指定变量的名称框（新增后连续录入用）。</summary>
@@ -2349,6 +2409,10 @@ namespace DSH_Modbus采集工具
             return null;
         }
 
+        /// <summary>输入既不是变量名也不是合法元件名时，给出拆分器的原因（用于行内标红）。</summary>
+        private static string DescribeNameError(string? text) =>
+            CommDriver.TrySplitName(text, out _, out _, out string error) ? string.Empty : error;
+
         /// <summary>
         /// 元件名称（方案 2 的合并输入框）改动：拆成「符号 + 编号」写回模型，再统一重解析 + 落盘。
         /// <para>
@@ -2382,13 +2446,17 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 只用「拆分能否成功」做即时标红，**不写模型** ——
+            // 只用「能否解析」做即时标红，**不写模型** ——
             // 写了模型就等于提交了一半：下一拍轮询会拿这个半成品去采集，
             // 而磁盘上还是旧值（内存/磁盘不一致）。
             // 提交（含越界校验、落盘）统一在失焦时做。
-            item.SetPreviewError(CommDriver.TrySplitName(tb.Text, out _, out _, out string nameError)
-                ? null
-                : $"配置有误：{nameError}");
+            //
+            // 变量名也在这里认：输入到一半（如 "MyVa"）既不是合法变量名也不是合法元件名，
+            // 标红是对的；一旦打全成已定义的变量名，红字立刻消失。
+            string typed = tb.Text.Trim();
+            bool ok = _globalVarSet.FindByName(typed) != null
+                || CommDriver.TrySplitName(tb.Text, out _, out _, out _);
+            item.SetPreviewError(ok ? null : $"配置有误：{DescribeNameError(tb.Text)}");
         }
 
         /// <summary>
@@ -2411,7 +2479,7 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            string previous = item.Model.DisplayName;
+            string previous = item.Name;
             string typed = tb.Text;
 
             if (!item.SetName(typed, out _))
@@ -2424,8 +2492,8 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 归一（符号大写）后回填输入框
-            string canonical = item.Model.DisplayName;
+            // 归一（元件符号大写 / 变量名原样）后回填输入框
+            string canonical = item.Name;
             if (tb.Text != canonical)
             {
                 tb.Text = canonical;
@@ -2437,6 +2505,33 @@ namespace DSH_Modbus采集工具
             if (canonical == previous && !item.HasError)
             {
                 item.SetPreviewError(null);
+                return;
+            }
+
+            // 变量行：类型由变量表决定，**不能**按元件反推类型（那会把变量声明改掉）
+            if (item.IsVariable)
+            {
+                item.Resolve(_currentDriver!, out string varError);
+                if (item.HasError)
+                {
+                    MessageBox.Show(
+                        this,
+                        $"变量「{canonical}」不可用于监控：\n\n{varError}",
+                        "变量无法采集",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+
+                    tb.Text = previous;
+                    item.SetName(previous, out _);
+                    _monitorSet.ResolveOnly(item);
+                    return;
+                }
+
+                _monitorSet.AfterChange(item);
+                if (FindMonitorRowRoot(tb) is FrameworkElement varRow)
+                {
+                    ApplyVariableRowState(varRow, item);
+                }
                 return;
             }
 
@@ -2471,6 +2566,65 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
+        /// 变量行：类型下拉框**置灰**并显示变量声明的类型。
+        /// <para>
+        /// 类型来自变量表，改它等于绕过变量表另立一份定义，两边立刻不一致 ——
+        /// 故这里只展示、不开放编辑。要改类型请去「全局变量」页。
+        /// </para>
+        /// </summary>
+        private static void ApplyVariableRowState(FrameworkElement row, MonitorItem item)
+        {
+            if (row.FindName("TypeCombo") is not ComboBox typeCombo)
+            {
+                return;
+            }
+
+            // 候选集只放「变量声明的这一个类型」：置灰后用户点不开，
+            // 但闭合态仍要显示正确文字（模板绑的是数据上下文的 TypeDisplayName）
+            typeCombo.ItemsSource = new[] { DataTypes.Get(item.Model.Type) };
+            typeCombo.SelectedIndex = 0;
+            typeCombo.IsEnabled = item.IsTypeEditable;
+        }
+
+        /// <summary>深度遍历可视树，取出所有「Tag 上挂着 MonitorItem」的行根。</summary>
+        private static IEnumerable<FrameworkElement> EnumerateRows(DependencyObject root)
+        {
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                DependencyObject child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+                if (child is FrameworkElement fe && fe.Tag is MonitorItem)
+                {
+                    yield return fe;
+                }
+
+                foreach (FrameworkElement nested in EnumerateRows(child))
+                {
+                    yield return nested;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 从行内某个控件往上找该行的模板根（<c>MonitorRow_Loaded</c> 把行对象挂在它的 Tag 上）。
+        /// </summary>
+        private static FrameworkElement? FindMonitorRowRoot(DependencyObject from)
+        {
+            DependencyObject? node = from;
+            while (node != null)
+            {
+                if (node is FrameworkElement fe && fe.Tag is MonitorItem)
+                {
+                    return fe;
+                }
+
+                node = System.Windows.Media.VisualTreeHelper.GetParent(node);
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// 按「元件名称」决定该行可选的数据类型。
         /// <para>
         /// 方案 2 里元件是自由文本，故<b>由元件反推类型</b>（方案 1 是反过来的：
@@ -2502,6 +2656,9 @@ namespace DSH_Modbus采集工具
 
             if (row.FindName("TypeCombo") is ComboBox typeCombo)
             {
+                // 从变量行改回元件行时，类型框要恢复可用（变量行里它是灰的）
+                typeCombo.IsEnabled = item.IsTypeEditable;
+
                 // 候选集跟随「元件」；但元件未知（输入未完成）或载入时声明与元件不符时跟随「当前类型」——
                 // 保证下拉框里始终能看到并选中已声明的类型，不会显示成空白
                 bool useCoil = known && autoCorrect ? coilElement : spec.CoilOnly;
@@ -2786,10 +2943,19 @@ namespace DSH_Modbus采集工具
 
             row.Tag = item;
 
-            // 元件名称（方案 2：符号 + 编号合并输入）；文本已一致时不写，避免触发无谓的落盘
-            if (row.FindName("NameBox") is TextBox nameBox && nameBox.Text != item.Model.DisplayName)
+            // 输入框文本：变量行是变量名，元件行是 HD100 这样的元件名。
+            // 文本已一致时不写，避免触发无谓的落盘
+            if (row.FindName("NameBox") is TextBox nameBox && nameBox.Text != item.Name)
             {
-                nameBox.Text = item.Model.DisplayName;
+                nameBox.Text = item.Name;
+            }
+
+            // 变量行：类型来自变量表，下拉框置灰只展示，不再按元件反推候选
+            if (item.IsVariable)
+            {
+                ApplyVariableRowState(row, item);
+                ApplyMonitorRowState(row, item);
+                return;
             }
 
             // 载入时不自动纠正类型：持久化里的「元件↔类型」不匹配要留给用户看见（标红），

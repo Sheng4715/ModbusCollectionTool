@@ -294,6 +294,23 @@ Window
   - ⚠️ **范围校验必须在截断前做**：`-32769` 先截成 `0x7FFF` 就会变成"合法的 32767"。十进制在解析时校验，HEX/BIN 在 `CheckIntegerRange` 里比对"截断前后是否相等"
   - 写失败（`WriteError`）与读失败**共用琥珀色**（对用户都是"通讯侧的事"），ToolTip 文字区分读写
   - 只读区（输入寄存器 / 离散输入）**不预先拦截**，由从站回异常码 2 → 提示"该地址不可写"。**注意：当前两个驱动的地址表里都没有这两类区**，故实际走不到这条路径，代码是防御性的
+
+**自由监控里可以监控全局变量**（变量行）：
+
+- 输入框里填**变量名**即可（如 `speed`）；填元件名（如 `D100`）则仍是元件行。
+  判定顺序：**先查变量表**，命中即变量行；否则按元件拆分
+- 变量行**类型下拉框置灰**（`MonitorItem.IsTypeEditable` = false），显示变量声明的类型 ——
+  类型由变量表决定，在监控行里改它等于绕过变量表另立一份定义
+- 变量行的类型 / 长度 / 映射地址**每次解析都从变量表现取**（`MonitorItem.ResolveVariable`），
+  变量改了类型，监控行自动跟着变，不留过期副本
+- 变量**没有映射地址**（内存变量）→ 监控行标红「未关联映射地址，无法采集」，不参与轮询
+- 变量**改名 / 删除**后，引用它的监控行会标红「变量不存在」——
+  窗口在变量的改名 / 改类型 / 改地址 / 删除 / 清空后统一调 `RefreshMonitorRowsAfterVariableChange`
+- ⚠️ 变量名与元件名是两个命名空间（`DataPoint.VariableName` vs `Element`+`Index`），
+  **不要合并到一个字段** —— 混在一起读代码的人分不清 `D100` 是元件还是恰好叫这名字的变量
+- ⚠️ `MonitorItemSet.SetVariableLookup` 必须在 `Load()` **之前**调用，
+  否则第一轮会把变量行当成元件行标红
+
 - ⏳ **未实现**：**串口（Modbus RTU）** —— 设备配置页的串口模式只隐藏以太网面板，功能未做
 
 ### 5.2 全局变量（P3.3，采集配置页第二分段）
@@ -330,13 +347,15 @@ Window
   - ⚠️ **分类不能靠匹配错误字符串**：`TypeMismatch` 与 `InvalidElement` 的判据是「元件存在、但存储区与类型不匹配」vs「元件本身解析不出来」，
     两者在 `TryResolve` 里走的是**不同分支**（`AreasOfElement` 有候选但 `CanMapTo` 全不通过 = 类型不符）
 
+
 **下拉框数据源（踩过坑，改前必读）**：
 
 - 类型下拉框放 **`DataTypeSpec` 对象**，不能放 `DisplayName` 字符串 —— `MonitorTypeItemTemplate` 绑的是 `{Binding DisplayName}`，放字符串会让展开列表**整列空白**（只剩选中高亮条）
 - 闭合态由 `MonitorTypeCombo` 模板直接读数据上下文的 `GlobalVarItem.TypeDisplayName`，缺这个属性同样显示空白
 - 选中处理器要接 `DataTypeSpec`，不是 `string`
 
-**离线断言**：`.tmp/GlobalVarCheck`（**144 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
+**离线断言**：`.tmp/GlobalVarCheck`（**158 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` / `DataPoint.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
+变量行另有一个 WPF 断言工程 `.tmp/MonitorVarCheck`（**42 项**，未提交）：`MonitorItem.cs` 用了 `System.Windows.Media.Brush`，故它必须 `UseWPF`；跑前先 `$env:TEMP = "$PWD\.tmp\mv-temp"`。
 
 ## 6. 心跳与连接生命周期
 

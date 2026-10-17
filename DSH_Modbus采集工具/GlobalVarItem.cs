@@ -177,6 +177,15 @@ namespace DSH_Modbus采集工具
             Save();
         }
 
+        /// <summary>
+        /// 按名称查找变量定义（大小写敏感 —— C 标识符语义）。
+        /// <para>
+        /// 自由监控用它判断「输入框里打的是不是一个已定义的变量」，
+        /// 故返回的是**模型**而非界面包装：那边只需要类型 / 地址这些定义字段。
+        /// </para>
+        /// </summary>
+        public GlobalVariable? FindByName(string name) => _set.FindByName(name);
+
         /// <summary>改名（含合法性与重名检查）</summary>
         public bool Rename(GlobalVarItem item, string newName, out string error)
         {

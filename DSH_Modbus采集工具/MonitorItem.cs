@@ -44,10 +44,23 @@ namespace DSH_Modbus采集工具
         private bool _isEditing;
         private int _address = -1;
 
+        /// <summary>
+        /// 变量查找器：由 <see cref="MonitorItemSet.SetVariableLookup"/> 注入，
+        /// 按名字取全局变量定义（取不到返回 null）。
+        /// <para>
+        /// 传委托而不是直接引用 <c>GlobalVariableSet</c>：本类在根目录、属于界面层，
+        /// 而变量表是另一套独立数据（各存各的 json），不该在这里硬绑死。
+        /// </para>
+        /// </summary>
+        private Func<string, GlobalVariable?>? _variableLookup;
+
         public MonitorItem(DataPoint model)
         {
             Model = model ?? throw new ArgumentNullException(nameof(model));
         }
+
+        /// <summary>注入变量查找器（见 <see cref="_variableLookup"/>）。</summary>
+        internal void SetVariableLookup(Func<string, GlobalVariable?>? lookup) => _variableLookup = lookup;
 
         /// <summary>底层数据模型（持久化的就是它）。</summary>
         public DataPoint Model { get; }
@@ -65,11 +78,13 @@ namespace DSH_Modbus采集工具
         public string DisplayName => Model.DisplayName;
 
         /// <summary>
-        /// 完整元件名称，如 <c>HD100</c> —— Brief 方案 2 的合并输入框绑定它。
-        /// 持久化仍是 <see cref="DataPoint.Element"/> + <see cref="DataPoint.Index"/> 两个字段
-        /// （故旧 <c>data-points.json</c> 无损），此处只是把两者拼起来给界面用。
+        /// 输入框里显示的文本：变量行是变量名，元件行是 <c>HD100</c> 这样的元件名。
+        /// <para>
+        /// 持久化对元件行仍是 <see cref="DataPoint.Element"/> + <see cref="DataPoint.Index"/>
+        /// 两个字段（故旧 <c>data-points.json</c> 无损）；变量行存 <see cref="DataPoint.VariableName"/>。
+        /// </para>
         /// </summary>
-        public string Name => Model.DisplayName;
+        public string Name => Model.IsVariable ? Model.VariableName : Model.DisplayName;
 
         /// <summary>
         /// 把合并输入框的文本拆成「符号 + 编号」写回模型（符号统一转大写）。
@@ -85,6 +100,25 @@ namespace DSH_Modbus采集工具
         /// </summary>
         public bool SetName(string? text, out string error)
         {
+            string trimmed = (text ?? string.Empty).Trim();
+
+            // 先当**变量名**试：变量名是 C 标识符，与元件名（元件符号 + 数字）不重叠，
+            // 故「能匹配到变量表里的名字」就按变量行处理，否则退回元件解析。
+            if (_variableLookup?.Invoke(trimmed) != null)
+            {
+                error = string.Empty;
+                if (Model.VariableName == trimmed)
+                {
+                    return true;
+                }
+
+                Model.VariableName = trimmed;
+                OnPropertyChanged(nameof(Name));
+                OnPropertyChanged(nameof(IsVariable));
+                OnPropertyChanged(nameof(IsTypeEditable));
+                return true;
+            }
+
             if (!CommDriver.TrySplitName(text, out string element, out string number, out error))
             {
                 Address = -1;
@@ -93,11 +127,14 @@ namespace DSH_Modbus采集工具
             }
 
             element = element.ToUpperInvariant();
-            if (Model.Element == element && Model.Index == number)
+            bool wasVariable = Model.IsVariable;
+            if (Model.Element == element && Model.Index == number && !wasVariable)
             {
                 return true;
             }
 
+            // 从变量行改回元件行：变量名要清掉，否则 Resolve 仍走变量分支
+            Model.VariableName = string.Empty;
             Model.Element = element;
             Model.Index = number;
 
@@ -105,8 +142,19 @@ namespace DSH_Modbus采集工具
             OnPropertyChanged(nameof(DisplayName));
             OnPropertyChanged(nameof(Element));
             OnPropertyChanged(nameof(Index));
+            OnPropertyChanged(nameof(IsVariable));
+            OnPropertyChanged(nameof(IsTypeEditable));
             return true;
         }
+
+        /// <summary>本项是否监控的是全局变量（而非直接的元件地址）。</summary>
+        public bool IsVariable => Model.IsVariable;
+
+        /// <summary>
+        /// 变量行：类型下拉框必须**置灰** —— 类型由变量定义决定，
+        /// 在监控行里改它等于绕过变量表，改完两边就不一致了。
+        /// </summary>
+        public bool IsTypeEditable => !IsVariable;
 
         /// <summary>类型显示名（STRING 带长度），如 <c>DINT</c> / <c>STRING[9]</c>。</summary>
         public string TypeDisplayName => Model.TypeDisplayName;
@@ -348,6 +396,12 @@ namespace DSH_Modbus采集工具
                 return false;
             }
 
+            // 变量行：类型 / 长度 / 地址都从变量表取，不用本行的副本
+            if (Model.IsVariable)
+            {
+                return ResolveVariable(driver, out error);
+            }
+
             if (DataPointStore.TryResolve(Model, driver, out error))
             {
                 Address = Model.Address;
@@ -358,6 +412,75 @@ namespace DSH_Modbus采集工具
             Address = -1;
             ResolveError = error;
             return false;
+        }
+
+        /// <summary>
+        /// 变量行的解析：把变量表的类型 / 长度 / 映射地址**同步进本行模型**，再按元件路径解析。
+        /// <para>
+        /// 同步而不是各读各的，是因为读写链路（<see cref="MonitorItemSet.TryBuildWrite"/>、
+        /// <c>ApplyBlock</c> 的解码）都只认 <see cref="DataPoint"/> 自己的字段。
+        /// 每次解析都覆盖一次，变量改了类型本行立刻跟着变，不会留过期副本。
+        /// </para>
+        /// </summary>
+        private bool ResolveVariable(CommDriver driver, out string error)
+        {
+            GlobalVariable? variable = _variableLookup?.Invoke(Model.VariableName);
+            if (variable == null)
+            {
+                error = $"全局变量 {Model.VariableName} 不存在";
+                Address = -1;
+                ResolveError = error;
+                return false;
+            }
+
+            // 变量没有映射地址 = 内存变量，不参与轮询
+            if (!variable.HasAddress)
+            {
+                error = $"全局变量 {variable.Name} 未关联映射地址，无法采集";
+                Address = -1;
+                ResolveError = error;
+                return false;
+            }
+
+            if (variable.ResolvedAddress < 0)
+            {
+                error = variable.ResolveError.Length > 0
+                    ? $"全局变量 {variable.Name} 的映射地址无效：{variable.ResolveError}"
+                    : $"全局变量 {variable.Name} 的映射地址未解析";
+                Address = -1;
+                ResolveError = error;
+                return false;
+            }
+
+            // 同步定义（类型决定读几个寄存器、怎么解码）
+            Model.Type = variable.Type;
+            Model.Format = variable.Format;
+            Model.Length = variable.Length;
+            Model.Element = ExtractElementOf(variable.Address);
+            Model.Index = variable.Address[Model.Element.Length..];
+            Model.Address = variable.ResolvedAddress;
+            Model.Area = variable.Area;
+
+            OnPropertyChanged(nameof(TypeDisplayName));
+            OnPropertyChanged(nameof(FormatDisplayName));
+            OnPropertyChanged(nameof(RawCount));
+
+            Address = variable.ResolvedAddress;
+            ResolveError = null;
+            error = string.Empty;
+            return true;
+        }
+
+        /// <summary>从元件名里取符号部分（"HD100" → "HD"）。</summary>
+        private static string ExtractElementOf(string address)
+        {
+            int i = 0;
+            while (i < address.Length && char.IsLetter(address[i]))
+            {
+                i++;
+            }
+
+            return i == 0 ? address : address[..i];
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -382,6 +505,26 @@ namespace DSH_Modbus采集工具
         /// <summary>当前驱动，用于解析地址；随设备类型切换而更新。</summary>
         public CommDriver? Driver { get; private set; }
 
+        /// <summary>变量查找器，由窗口在载入全局变量表后注入（见 <see cref="MonitorItem.SetVariableLookup"/>）。</summary>
+        private Func<string, GlobalVariable?>? _variableLookup;
+
+        /// <summary>
+        /// 注入变量查找器。
+        /// <para>
+        /// 必须在 <see cref="Load"/> **之前**调用 —— 载入时就要按变量表解析，
+        /// 否则第一轮会把变量行当成元件行而标红。
+        /// </para>
+        /// </summary>
+        public void SetVariableLookup(Func<string, GlobalVariable?>? lookup)
+        {
+            _variableLookup = lookup;
+
+            foreach (MonitorItem item in _items)
+            {
+                item.SetVariableLookup(lookup);
+            }
+        }
+
         public void SetDriver(CommDriver? driver)
         {
             Driver = driver;
@@ -398,6 +541,7 @@ namespace DSH_Modbus采集工具
             foreach (DataPoint p in DataPointStore.Load())
             {
                 var item = new MonitorItem(p);
+                item.SetVariableLookup(_variableLookup);
                 item.Resolve(Driver, out _);
                 _items.Add(item);
             }
@@ -407,6 +551,7 @@ namespace DSH_Modbus采集工具
         {
             model.Id = NextId();
             var item = new MonitorItem(model);
+            item.SetVariableLookup(_variableLookup);
             item.Resolve(Driver, out _);
             _items.Add(item);
             Save();
