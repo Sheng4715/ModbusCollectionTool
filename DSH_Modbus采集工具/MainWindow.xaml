@@ -1027,6 +1027,83 @@
             </Border>
         </DataTemplate>
 
+        <!--
+            全局变量行（P3.3）。与 MonitorItemTemplate 同几何，差别：
+            · 第 1 列是**变量名称**（C 标识符，最长 32），不是元件名；
+            · 多一列**映射地址**（可空 = 内存变量）与**注释**；
+            · 映射地址只读展示解析结果 —— 用户输入的是元件名（如 HD100），
+              绝对地址由驱动解析，不在此显示。
+        -->
+        <DataTemplate x:Key="GlobalVarItemTemplate">
+            <Border Height="30" Margin="0,0,0,2"
+                    Background="Transparent"
+                    BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1"
+                    Loaded="GlobalVarRow_Loaded">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="34"/>
+                        <ColumnDefinition Width="140"/>
+                        <ColumnDefinition Width="106"/>
+                        <ColumnDefinition Width="88"/>
+                        <ColumnDefinition Width="140"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="120"/>
+                        <ColumnDefinition Width="40"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="{Binding Id}"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                               VerticalAlignment="Center"/>
+
+                    <!-- 变量名称：C 标识符规则，失焦才提交（打字途中只标红） -->
+                    <TextBox Grid.Column="1" x:Name="VarNameBox"
+                             Style="{StaticResource MonitorInlineTextBox}"
+                             TextChanged="GlobalVarName_TextChanged"
+                             LostFocus="GlobalVarName_LostFocus"/>
+
+                    <ComboBox Grid.Column="2" x:Name="VarTypeCombo"
+                              Width="96" Margin="6,0,0,0"
+                              HorizontalAlignment="Left"
+                              Style="{StaticResource MonitorTypeCombo}"
+                              SelectionChanged="GlobalVarType_SelectionChanged"/>
+
+                    <ComboBox Grid.Column="3" x:Name="VarFormatCombo"
+                              Width="76"
+                              HorizontalAlignment="Left"
+                              Style="{StaticResource MonitorInlineComboBox}"
+                              ItemContainerStyle="{StaticResource MonitorComboItem}"
+                              ItemTemplate="{StaticResource EnumUpperTemplate}"
+                              SelectionChanged="GlobalVarFormat_SelectionChanged"/>
+
+                    <!-- 映射地址：空 = 不关联地址的内存变量 -->
+                    <TextBox Grid.Column="4" x:Name="VarAddressBox"
+                             Style="{StaticResource MonitorInlineTextBox}"
+                             Margin="0,0,6,0"
+                             LostFocus="GlobalVarAddress_LostFocus"/>
+
+                    <!-- 当前值：可编辑。关联地址时由轮询回填，不关联时纯手工 -->
+                    <TextBox Grid.Column="5" x:Name="VarValueBox"
+                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
+                             Style="{StaticResource MonitorValueTextBox}"
+                             GotKeyboardFocus="GlobalVarValue_GotFocus"
+                             LostKeyboardFocus="GlobalVarValue_LostFocus"
+                             KeyDown="GlobalVarValue_KeyDown"/>
+
+                    <!-- 注释：仅给人看，不上报、不参与读写 -->
+                    <TextBox Grid.Column="6" x:Name="VarCommentBox"
+                             Style="{StaticResource MonitorInlineTextBox}"
+                             Margin="0,0,6,0"
+                             LostFocus="GlobalVarComment_LostFocus"/>
+
+                    <Button Grid.Column="7"
+                            Content="&#xE711;"
+                            ToolTip="删除本变量"
+                            Style="{StaticResource MonitorIconButton}"
+                            Click="RemoveGlobalVar_Click"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
         <!-- 细滚动条 -->
         <Style TargetType="ScrollBar">
             <Setter Property="Background" Value="Transparent"/>
@@ -1585,33 +1662,157 @@
                         </Border>
                     </Grid>
 
-                    <!-- ================= 采集配置（P3-1 占位） =================
-                         采集导出（CSV）与触发方式尚未实现，本页先立骨架：标题 + 一张卡。
+                    <!-- ================= 采集配置 =================
+                         两个分段：采集数据（P3.1，占位）/ 全局变量（P3.3，已实现）。
+                         分段的写法照抄状态信息页（IoSegmentRadioButton + 同格叠放），
+                         保持两页的切换手感一致。
+
                          立页的意义不止占位 —— 该导航项原先没有对应面板，点进去会把
                          所有面板都隐藏（白屏），与 §10.5 里 SettingsNav 漏 x:Name 是同一类缺陷。 -->
-                    <StackPanel x:Name="AcquisitionConfigPanel" Visibility="Collapsed"
-                                d:Visibility="Collapsed">
+                    <Grid x:Name="AcquisitionConfigPanel" Visibility="Collapsed"
+                          d:Visibility="Collapsed"
+                          Height="{Binding ViewportHeight, ElementName=ContentScrollViewer}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>   <!-- 标题 -->
+                            <RowDefinition Height="*"/>      <!-- 卡片（撑满剩余） -->
+                        </Grid.RowDefinitions>
 
-                        <TextBlock Text="采集配置"
+                        <TextBlock Grid.Row="0" Text="采集配置"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Brush.Text.Primary}"
                                    Margin="0,10,0,10"/>
 
-                        <Border Background="{DynamicResource Brush.Card.Background}"
+                        <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
-                                CornerRadius="8" Padding="24,20,24,20">
-                            <StackPanel>
-                                <TextBlock Text="采集数据"
-                                           FontSize="14" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource Brush.Text.Primary}"/>
-                                <TextBlock Text="尚未实现"
-                                           FontSize="12"
-                                           Foreground="{DynamicResource Brush.Text.Muted}"
-                                           Margin="0,6,0,0"/>
-                            </StackPanel>
+                                CornerRadius="8" Padding="12">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>   <!-- 分段切换 -->
+                                    <RowDefinition Height="Auto"/>   <!-- 分隔线 -->
+                                    <RowDefinition Height="*"/>      <!-- 内容（占满剩余） -->
+                                </Grid.RowDefinitions>
+
+                                <!-- 分段切换（采集数据 / 全局变量） -->
+                                <Grid Grid.Row="0" Margin="0,0,0,8">
+                                    <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
+                                            HorizontalAlignment="Left" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal">
+                                            <RadioButton x:Name="AcquisitionDataSegment"
+                                                         Content="采集数据"
+                                                         GroupName="AcqView"
+                                                         IsChecked="True"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="AcqView_Checked"/>
+                                            <RadioButton x:Name="GlobalVarSegment"
+                                                         Content="全局变量"
+                                                         GroupName="AcqView"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="AcqView_Checked"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <Border Grid.Row="1" Height="1" Background="{DynamicResource Brush.Divider}" Margin="0,0,0,8"/>
+
+                                <Grid Grid.Row="2">
+                                    <!-- 采集数据（P3.1 占位） -->
+                                    <Grid x:Name="AcquisitionDataPanel">
+                                        <TextBlock Text="尚未实现"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource Brush.Text.Muted}"
+                                                   Margin="0,4,0,0"
+                                                   VerticalAlignment="Top"/>
+                                    </Grid>
+
+                                    <!-- 全局变量（P3.3）
+                                         表格式：表头 + 行，与自由监控同一套几何
+                                         （表头常驻、只让列表滚动、不写 MaxHeight）。 -->
+                                    <Grid x:Name="GlobalVarPanel" Visibility="Collapsed">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>   <!-- 表头（常驻） -->
+                                            <RowDefinition Height="*"/>      <!-- 列表（自身滚动）+ 空状态 -->
+                                        </Grid.RowDefinitions>
+
+                                        <Border Grid.Row="0"
+                                                Height="46"
+                                                Margin="0,0,0,2"
+                                                Background="Transparent"
+                                                BorderBrush="{DynamicResource Brush.Divider}"
+                                                BorderThickness="0,0,0,1">
+                                            <Grid>
+                                                <!-- 列定义必须与 GlobalVarItemTemplate 完全一致 -->
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                                                        <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                                                        <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
+                                                        <ColumnDefinition Width="88"/>   <!-- 显示格式 -->
+                                                        <ColumnDefinition Width="140"/>  <!-- 映射地址 -->
+                                                        <ColumnDefinition Width="*"/>    <!-- 当前值 -->
+                                                        <ColumnDefinition Width="120"/>  <!-- 注释 -->
+                                                        <ColumnDefinition Width="40"/>   <!-- 删除 -->
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="1" Text="变量名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="4" Text="映射地址" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="5" Text="当前值" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="6" Text="注释" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                </Grid>
+
+                                                <StackPanel Orientation="Horizontal"
+                                                            HorizontalAlignment="Right"
+                                                            Margin="0,0,7,0"
+                                                            VerticalAlignment="Center">
+                                                    <TextBlock x:Name="GlobalVarCountText"
+                                                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                                                               VerticalAlignment="Center"
+                                                               Margin="0,0,8,0"/>
+                                                    <Button x:Name="ClearGlobalVarsButton"
+                                                            Content="&#xE74D;"
+                                                            ToolTip="删除全部变量"
+                                                            Style="{StaticResource MonitorClearAllButton}"
+                                                            Click="ClearGlobalVars_Click"/>
+                                                    <Button x:Name="AddGlobalVarButton"
+                                                            Content="&#xE710;"
+                                                            ToolTip="新增变量"
+                                                            Margin="6,0,0,0"
+                                                            Style="{StaticResource MonitorHeaderIconButton}"
+                                                            Click="AddGlobalVar_Click"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 列表：只在这里滚动，且不写 MaxHeight -->
+                                        <ScrollViewer Grid.Row="1"
+                                                      VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollBarVisibility="Disabled">
+                                            <ItemsControl x:Name="GlobalVarItemsControl"
+                                                          HorizontalContentAlignment="Stretch"
+                                                          ItemTemplate="{StaticResource GlobalVarItemTemplate}">
+                                                <ItemsControl.ItemContainerStyle>
+                                                    <Style TargetType="ContentPresenter">
+                                                        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                                    </Style>
+                                                </ItemsControl.ItemContainerStyle>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+
+                                        <TextBlock x:Name="GlobalVarEmptyHint"
+                                                   Grid.Row="1"
+                                                   VerticalAlignment="Top"
+                                                   Text="尚未添加变量，点击右上角 + 添加"
+                                                   Visibility="Collapsed"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource Brush.Text.Muted}"
+                                                   Margin="0,10,0,6"/>
+                                    </Grid>
+                                </Grid>
+                            </Grid>
                         </Border>
-                    </StackPanel>
+                    </Grid>
 
                     <!-- 设备配置 -->
                     <StackPanel x:Name="DeviceConfigPanel"

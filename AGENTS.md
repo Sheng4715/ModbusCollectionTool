@@ -31,6 +31,9 @@ DSH_Modbus采集工具/
 ├── MainWindow.xaml             # 全部 UI（单窗口，无 UserControl 拆分）
 ├── MainWindow.xaml.cs          # 交互逻辑（见 §4 分工）
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
+├── WritePlan.cs                # 一次写入的报文参数（FC05/06/16 三选一）；两条写入路径共用
+├── GlobalVarItem.cs            # 全局变量：GlobalVariable 的界面包装 + 集合（增删改/落盘/分块读）
+├── GlobalVarWrite.cs           # 全局变量：文本 → WritePlan（编解码复用 ValueCodec）
 ├── NumberInputDialog.cs        # STRING 长度输入弹窗（选 STRING 类型时用）
 ├── XlsxIoTableReader.cs        # xlsx 点位表解析（零依赖 zip+XML）
 ├── Themes/                     # 主题（P5.1）
@@ -50,7 +53,8 @@ DSH_Modbus采集工具/
 ├── Modeling/                   # 数据类型系统（P6.4 数据模型层）
 │   ├── DataTypes.cs            # DataType / DisplayFormat 枚举 + DataTypeSpec 规格表
 │   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
-│   └── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
+│   ├── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
+│   └── GlobalVariable.cs       # 全局变量模型 + 变量名规则 + GlobalVar.json 持久化（值不落盘）
 ├── Logging/                    # 日志落盘与文案规则（不含 WPF 类型）
 │   ├── DeviceLogFileWriter.cs  # 按天追加纯文本 .log + 跨天换文件 + 失败自愈
 │   └── DisconnectReasonClassifier.cs  # 异常原文 → 简短中文（底栏与日志共用）
@@ -108,7 +112,7 @@ Window
 | `OverviewNav` 总览 | `OverviewPanel` | 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
-| `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **骨架页**（P3.1）：标题 + 「采集数据」占位卡；采集导出功能未实现 |
+| `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **两分段**：「采集数据」（P3.1 骨架，采集导出未实现）/「全局变量」（P3.3，已实现，见 §5.2） |
 | `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 日志保存（P5.2）+ 项目信息（P5.3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
@@ -224,12 +228,13 @@ Window
 | 连接状态机 | `ConnectButton_Click`（表单校验 + 按钮三态）/ `TryConnectAsync` / `Disconnect()` / `Disconnect(status,color)` / `SetInputsEnabled`；**身份与生命周期在 `Polling/ConnectionSession.cs`**（`IsConnecting` / `IsCurrent` / `MarkConnected` / `ReleaseClient` / `ForgetTarget` / 重连计数）+ `RunConnectionTasksAsync` / `IsCurrentConnection` |
 | 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect`（**循环留在窗口**，逐秒刷状态栏/锁表单是界面驱动）；目标快照 `ReconnectTarget` 与退避表 `ReconnectPolicy` 在 `Polling/` |
 | 轮询（入口在本类，实现在 `Polling/`） | `_poller.PollLoopAsync` → `Polling/ModbusPoller.cs`（`PollOnceAsync` 按地址区分块 + 2000 点切窗 / `PollFreeMonitorAsync` 自由监控，按区选 FC01/03/04） |
-| `ICollectorHost` 实现 | `PollIntervalMs` / `MonitorSet` / `CaptureSnapshot()` / `IsCurrentConnection` / `RunOnUiAsync` / `NotifyConnectionLost` / `ClassifyDisconnectReason` / `ReportCommunicationWarning`（连续异常码告警，见 §5） |
+| `ICollectorHost` 实现 | `PollIntervalMs` / `MonitorSet` / `GlobalVarSet` / `CaptureSnapshot()` / `IsCurrentConnection` / `RunOnUiAsync` / `NotifyConnectionLost` / `ClassifyDisconnectReason` / `ReportCommunicationWarning`（连续异常码告警，见 §5） |
 | 心跳编排 | `HeartbeatLoopAsync`（失败时转 `_poller.NotifyConnectionLost`） |
 | IO 点位集（实现在 `Io/`） | `RebuildIoPoints`（薄包装）→ `IoPointSet.Rebuild` / `TryCreatePoint` / `NormalizePointName` / `TryValidatePoint` |
 | 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（算术在 `IoPager`；控件写入留本类） |
 | 导入 | `ImportIoTableButton_Click` → `IoTableImporter.Read`（`MessageBox` 留本类） |
 | **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 §5.1） |
+| **全局变量（P3.3）** | `AddGlobalVar_Click` / `RemoveGlobalVar_Click` / `ClearGlobalVars_Click` / `GlobalVarName_TextChanged` / `GlobalVarName_LostFocus` / `GlobalVarAddress_LostFocus` / `GlobalVarComment_LostFocus` / `GlobalVarType_SelectionChanged` / `GlobalVarFormat_SelectionChanged` / `GlobalVarValue_*` / `CommitGlobalVarValue` / `WriteGlobalVarToDeviceAsync` / `RefreshGlobalVarView` / `AcqView_Checked`（见 §5.2） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（闸门 + 填下拉框）/ `TargetNicComboBox_SelectionChanged`；扫描与还原规则在 `Net/NicScanner.cs`。选择持久化见 §3.4 |
 | 日志 | 窗口侧只留三处**控件**动作：`AppendDeviceLog`（薄包装 → 追加 + `ScrollIntoView` + 设置页失败提示）、`ClearDeviceLogButton_Click`、`RefreshDeviceLogColors`（薄包装）；**编排与规则在 `Ui/DeviceLogPresenter.cs`**（内存集合 / 上限 200 / 落盘旁路 / **界面与文件共用时间戳** / 界面级别 → 落盘级别）；`ClassifyDisconnectReason` 仍是薄包装 |
@@ -237,7 +242,7 @@ Window
 | **主题（P5.1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged`（底栏的状态色映射在 `Ui/StatusBarPresenter.cs`）；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
 | **日志落盘（P5.2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveToggle_Changed` / `SyncLogSaveToggle` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（见 §7.1） |
 | **项目信息（P5.3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（见 §7.2） |
-| 关键字段 | `_session`（连接身份与生命周期）/ `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_logPresenter`（日志呈现器）/ `_logWriter` / `_statusBar`（底栏呈现器）（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
+| 关键字段 | `_session`（连接身份与生命周期）/ `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_globalVarActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter`（日志呈现器）/ `_logWriter` / `_statusBar`（底栏呈现器）（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_globalVarActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 8 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -291,6 +296,29 @@ Window
   - 写失败（`WriteError`）与读失败**共用琥珀色**（对用户都是"通讯侧的事"），ToolTip 文字区分读写
   - 只读区（输入寄存器 / 离散输入）**不预先拦截**，由从站回异常码 2 → 提示"该地址不可写"。**注意：当前两个驱动的地址表里都没有这两类区**，故实际走不到这条路径，代码是防御性的
 - ⏳ **未实现**：**串口（Modbus RTU）** —— 设备配置页的串口模式只隐藏以太网面板，功能未做
+
+### 5.2 全局变量（P3.3，采集配置页第二分段）
+
+采集配置页分两段：**采集数据**（P3.1 骨架）/ **全局变量**（本项）。表列：**变量名称 / 数据类型 / 显示格式 / 映射地址 / 当前值 / 注释 / 删除**。
+
+- **变量名**：C 标识符 `[A-Za-z_][A-Za-z0-9_]*`，最长 **32**，**区分大小写**，**拒绝中文**（`GlobalVariableRules.TryValidateName`）；校验与重名检查都在 `GlobalVariableSet.Add` / `Rename`
+- **类型决定地址区**（方案 C，`GlobalVariableRules.CanMapTo`）：`BOOL` → 线圈区；其余 → 寄存器区。实际可写范围由驱动 `AreasOfElement` 决定：**M/Y/S 可读写，X 只读**
+- **映射地址可空** = 内存变量：不参与轮询，值由用户手工维护
+- **显示格式须在该类型 `AllowedFormats` 内**：`BOOL` 只 `BIN`、`STRING` 只 `ASCII`，其余默认 `DEC`
+  - ⚠️ **不要写死 `Format = DisplayFormat.Dec`**：新建 `BOOL` 变量会立刻校验失败。取默认值一律用 `GlobalVariable.DefaultFormatFor(type)`，`Add()` 里还会再纠正一次
+- **持久化只存定义**（`GlobalVar.json`）：`[JsonIgnore]` 标记 `Value`，**值不落盘**，每次 `Load()` 重置为 `0`（`STRING` 空串）
+- **注释仅给人看**；**与自由监控独立维护**（各用自己的 json）
+
+**读取**（跟随可见性）：`GlobalVarItemSet.BuildReadPlan` 按 `ModbusArea` 分组 + 地址连续性分块（≤2000），`PollGlobalVarsAsync` 按区选 FC01/03/04，`ApplyBlock` 回填
+- ⚠️ **必须按区分组**：信捷 `D0` 与 `M0` **绝对地址都是 0**，只按地址归并会塞进同一次请求
+- **单块读失败不断线**（`MarkBlockFailed`）；**正在编辑时不回填**（`IsEditing`）
+- 切换竞态：`_globalVarActive` 在**每块发送前**与**回填前**各复查一次
+
+**写入**（FC05/06/16）：`GlobalVarWrite.TryBuild` → `WritePlan` → `WriteGlobalVarToDeviceAsync`，回车或失焦提交
+- **不需要本分段可见**（写入是主动操作）；**内存变量只改值不发报文**；**X 只读区预拦截**
+- 编码复用 `ValueCodec.TryEncodeRegisters`，与自由监控同一套范围校验（**校验在截断前**）
+
+**离线断言**：`.tmp/GlobalVarCheck`（**110 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` / `GlobalVarWrite.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
 
 ## 6. 心跳与连接生命周期
 
@@ -541,6 +569,8 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | IO 采集范围 | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` → `_visiblePage` 快照 + `CommDriver.FindArea` 分块（单块 ≤2000） |
 | **自由监控读取（分块规划）** | `MonitorItemSet.BuildReadPlan`（按 `ModbusArea` 分组 + 地址连续性分块）+ `MonitorItemSet.ApplyBlock`（偏移切片 + 格式化回填） |
 | **自由监控轮询入口** | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` 开头按 `_freeViewActive` 分流 → `PollFreeMonitorAsync`（按区选 FC01/FC03/FC04，单块失败不断线） |
+| **全局变量（P3.3）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化）+ `GlobalVarItem.cs`（界面包装 + 分块读）+ `GlobalVarWrite.cs`（文本 → `WritePlan`）+ 窗口 `GlobalVar*` 处理器（见 **§5.2**） |
+| **全局变量轮询入口** | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` 开头按 `_globalVarActive` 分流 → `PollGlobalVarsAsync` |
 | **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | **自由监控写入（FC05/06/16）** | `MonitorItemSet.TryBuildWrite`（文本 → `WritePlan`）+ `ValueCodec.TryEncodeRegisters` / `EncodeStringFixed`；`MainWindow.xaml.cs` 的 `CommitMonitorValueAsync` → `WriteToDeviceAsync`；报文层 `ModbusTcpClient.WriteSingleCoilAsync` / `WriteSingleRegisterAsync` / `WriteMultipleRegistersAsync` |
 | **写入的文本解析与范围校验** | `ValueCodec.TryParseIntegerLiteral`（DEC 支持 `0x`/`0b` 前缀与负号）+ `CheckIntegerRange`；**校验必须在位宽截断前**（`-32769` 截成 `0x7FFF` 会变成合法值） |

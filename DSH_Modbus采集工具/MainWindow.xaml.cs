@@ -159,6 +159,12 @@ namespace DSH_Modbus采集工具
         /// <summary>自由监控项集合（增删改 + 落盘 + 地址解析）。</summary>
         private readonly MonitorItemSet _monitorSet = new();
 
+        /// <summary>全局变量集合（P3.3）。与自由监控各自独立维护。</summary>
+        private readonly GlobalVarItemSet _globalVarSet = new();
+
+        /// <summary>是否停在采集配置页的「全局变量」分段（跨线程读，故 volatile）。</summary>
+        private volatile bool _globalVarActive;
+
         /// <summary>STRING 长度的允许范围（选 STRING 时弹框校验用）。</summary>
         private const int StringLengthMin = 1;
 
@@ -272,6 +278,12 @@ namespace DSH_Modbus采集工具
             _monitorSet.Load();
             MonitorItemsControl.ItemsSource = _monitorSet.Items;
             RefreshMonitorView();
+
+            // 全局变量（P3.3）：同样载入 + 绑定；值在 Load 里已重置为初始值
+            _globalVarSet.SetDriver(_currentDriver);
+            _globalVarSet.Load();
+            GlobalVarItemsControl.ItemsSource = _globalVarSet.Items;
+            RefreshGlobalVarView();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -1264,6 +1276,11 @@ namespace DSH_Modbus采集工具
             MonitorItemsControl?.Items.Refresh();
             RefreshMonitorView();
 
+            // 全局变量的映射地址同样按新驱动重解析
+            _globalVarSet.SetDriver(_currentDriver);
+            GlobalVarItemsControl?.Items.Refresh();
+            RefreshGlobalVarView();
+
             UpdateOverviewStatus();
         }
 
@@ -1494,6 +1511,8 @@ namespace DSH_Modbus采集工具
 
         MonitorItemSet ICollectorHost.MonitorSet => _monitorSet;
 
+        GlobalVarItemSet ICollectorHost.GlobalVarSet => _globalVarSet;
+
         /// <summary>
         /// 拍下界面可见性快照。由采集引擎在**每一拍开头**与**自由监控每块发送前**调用，
         /// 故必须便宜（只读几个字段、不分配）—— <c>VisiblePage</c> 直接交引用，
@@ -1502,6 +1521,7 @@ namespace DSH_Modbus采集工具
         PollSnapshot ICollectorHost.CaptureSnapshot() => new(
             IoPageActive: _ioPageActive,
             FreeViewActive: _freeViewActive,
+            GlobalVarActive: _globalVarActive,
             VisiblePage: _visiblePage,
             PollIntervalMs: _pollIntervalMs);
 
@@ -1662,6 +1682,530 @@ namespace DSH_Modbus采集工具
                 // 切段后本段有自己的页号与页数，重新切片绑定
                 ApplyIoPage();
             }
+        }
+
+        // ---------- 采集配置页分段（P3.1 / P3.3） ----------
+
+        /// <summary>采集配置页分段切换：采集数据 / 全局变量。</summary>
+        private void AcqView_Checked(object sender, RoutedEventArgs e)
+        {
+            if (AcquisitionDataPanel == null || GlobalVarPanel == null
+                || AcquisitionDataSegment == null)
+            {
+                return;
+            }
+
+            bool varView = GlobalVarSegment?.IsChecked == true;
+
+            // 采集跟随可见性：只有停在全局变量分段时才读关联了地址的变量
+            _globalVarActive = varView;
+
+            AcquisitionDataPanel.Visibility = varView ? Visibility.Collapsed : Visibility.Visible;
+            GlobalVarPanel.Visibility = varView ? Visibility.Visible : Visibility.Collapsed;
+
+            if (varView)
+            {
+                RefreshGlobalVarView();
+            }
+        }
+
+        // ---------- 全局变量（P3.3） ----------
+
+        /// <summary>
+        /// 全部数据类型的规格（线圈区 + 寄存器区合并，顺序同规格表）。
+        /// <para>
+        /// <c>DataTypes.AllSpecs</c> 是私有的（对外只暴露 <c>CoilTypes</c> / <c>RegisterTypes</c>），
+        /// 而变量表要在一个下拉框里同时给出两类，故在这里拼一次。
+        /// </para>
+        /// </summary>
+        private static IEnumerable<DataTypeSpec> AllTypeSpecs()
+        {
+            foreach (DataTypeSpec spec in DataTypes.CoilTypes)
+            {
+                yield return spec;
+            }
+
+            foreach (DataTypeSpec spec in DataTypes.RegisterTypes)
+            {
+                yield return spec;
+            }
+        }
+
+        /// <summary>刷新全局变量的计数、空提示与按钮可用性。</summary>
+        private void RefreshGlobalVarView()
+        {
+            if (GlobalVarItemsControl == null)
+            {
+                return;
+            }
+
+            int n = _globalVarSet.Items.Count;
+
+            // 表头不随空列表隐藏 —— 它是列说明，也是「+」的落点
+            if (GlobalVarEmptyHint != null)
+            {
+                GlobalVarEmptyHint.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            if (ClearGlobalVarsButton != null)
+            {
+                ClearGlobalVarsButton.IsEnabled = n > 0;
+            }
+
+            if (GlobalVarCountText != null)
+            {
+                GlobalVarCountText.Text = n == 0 ? string.Empty : $"共 {n} 个";
+            }
+        }
+
+        private void AddGlobalVar_Click(object sender, RoutedEventArgs e)
+        {
+            // 生成一个默认不重名的名字：var1、var2 …
+            string name = "var1";
+            for (int i = 2; _globalVarSet.Items.Any(x => x.Name == name); i++)
+            {
+                name = "var" + i;
+            }
+
+            GlobalVarItem? item = _globalVarSet.Add(name, out string error);
+            if (item == null)
+            {
+                MessageBox.Show(this, error, "新增变量失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            RefreshGlobalVarView();
+            GlobalVarItemsControl?.UpdateLayout();
+            FocusGlobalVarRow(item);
+        }
+
+        private void RemoveGlobalVar_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.DataContext is GlobalVarItem item)
+            {
+                _globalVarSet.Remove(item);
+                RefreshGlobalVarView();
+            }
+        }
+
+        private void ClearGlobalVars_Click(object sender, RoutedEventArgs e)
+        {
+            if (_globalVarSet.Items.Count == 0)
+            {
+                return;
+            }
+
+            if (MessageBox.Show(this, $"确定删除全部 {_globalVarSet.Items.Count} 个变量？",
+                    "删除全部变量", MessageBoxButton.OKCancel, MessageBoxImage.Question)
+                != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            _globalVarSet.Clear();
+            RefreshGlobalVarView();
+        }
+
+        /// <summary>行容器加载：把行对象挂到 Tag，供事件处理器取用。</summary>
+        private void GlobalVarRow_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement fe || fe.DataContext is not GlobalVarItem item)
+            {
+                return;
+            }
+
+            fe.Tag = item;
+
+            // 回填各控件初值（DataTemplate 里不能直接双向绑定全部字段：
+            // 名称 / 地址 / 注释都要走「失焦提交」而不是逐字符提交）
+            if (FindGlobalVarBox(fe, "VarNameBox") is TextBox nameBox)
+            {
+                nameBox.Text = item.Name;
+            }
+
+            if (FindGlobalVarBox(fe, "VarAddressBox") is TextBox addrBox)
+            {
+                addrBox.Text = item.Address;
+            }
+
+            if (FindGlobalVarBox(fe, "VarCommentBox") is TextBox commentBox)
+            {
+                commentBox.Text = item.Comment;
+            }
+
+            SyncGlobalVarTypeCombo(fe, item);
+            SyncGlobalVarFormatCombo(fe, item);
+        }
+
+        private static TextBox? FindGlobalVarBox(DependencyObject root, string name)
+        {
+            if (root is TextBox tb && tb.Name == name)
+            {
+                return tb;
+            }
+
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                TextBox? found = FindGlobalVarBox(System.Windows.Media.VisualTreeHelper.GetChild(root, i), name);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+
+            return null;
+        }
+
+        private static ComboBox? FindGlobalVarCombo(DependencyObject root, string name)
+        {
+            if (root is ComboBox cb && cb.Name == name)
+            {
+                return cb;
+            }
+
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                ComboBox? found = FindGlobalVarCombo(System.Windows.Media.VisualTreeHelper.GetChild(root, i), name);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+
+            return null;
+        }
+
+        private static void SyncGlobalVarTypeCombo(DependencyObject root, GlobalVarItem item)
+        {
+            if (FindGlobalVarCombo(root, "VarTypeCombo") is not ComboBox combo)
+            {
+                return;
+            }
+
+            combo.Items.Clear();
+            foreach (DataTypeSpec spec in AllTypeSpecs())
+            {
+                combo.Items.Add(spec.DisplayName);
+            }
+
+            int idx = combo.Items.IndexOf(item.Model.TypeDisplayName);
+            combo.SelectedIndex = idx >= 0 ? idx : 0;
+        }
+
+        private static void SyncGlobalVarFormatCombo(DependencyObject root, GlobalVarItem item)
+        {
+            if (FindGlobalVarCombo(root, "VarFormatCombo") is not ComboBox combo)
+            {
+                return;
+            }
+
+            combo.Items.Clear();
+            foreach (DisplayFormat f in DataTypes.Get(item.Model.Type).AllowedFormats)
+            {
+                combo.Items.Add(f);
+            }
+
+            int idx = combo.Items.IndexOf(item.Model.Format);
+            combo.SelectedIndex = idx >= 0 ? idx : 0;
+        }
+
+        private static GlobalVarItem? VarRowOf(object sender)
+        {
+            if (sender is FrameworkElement fe)
+            {
+                if (fe.DataContext is GlobalVarItem fromContext)
+                {
+                    return fromContext;
+                }
+
+                if (fe.Tag is GlobalVarItem fromTag)
+                {
+                    return fromTag;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>变量名打字中：只做即时标红，不写模型（提交在失焦）。</summary>
+        private void GlobalVarName_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
+            {
+                return;
+            }
+
+            if (!tb.IsKeyboardFocusWithin)
+            {
+                return;
+            }
+
+            item.ResolveError = GlobalVariableRules.TryValidateName(tb.Text, out string err)
+                ? string.Empty
+                : err;
+        }
+
+        /// <summary>变量名失焦：唯一提交点。非法或重名则回退到上次有效名称。</summary>
+        private void GlobalVarName_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
+            {
+                return;
+            }
+
+            string wanted = tb.Text.Trim();
+
+            if (_globalVarSet.Rename(item, wanted, out string error))
+            {
+                tb.Text = item.Name;
+                item.ResolveError = string.Empty;
+                _globalVarSet.Save();
+                return;
+            }
+
+            // 失败：回退文本，把原因留在行内（不弹窗 —— 打字错误用红字已够）
+            tb.Text = item.Name;
+            item.ResolveError = error;
+        }
+
+        /// <summary>映射地址失焦：空 = 内存变量；非空则按驱动解析。</summary>
+        private void GlobalVarAddress_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
+            {
+                return;
+            }
+
+            string wanted = tb.Text.Trim();
+            item.Address = wanted;
+            _globalVarSet.ResolveOnly(item);
+
+            if (item.ResolveError.Length > 0)
+            {
+                // 地址解析失败：保留用户输入（便于就地修改），只标红
+                item.ReadError = string.Empty;
+                item.WriteError = string.Empty;
+            }
+
+            _globalVarSet.Save();
+        }
+
+        private void GlobalVarComment_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
+            {
+                return;
+            }
+
+            item.Comment = tb.Text;
+            _globalVarSet.Save();
+        }
+
+        private void GlobalVarType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is not ComboBox combo || VarRowOf(combo) is not GlobalVarItem item)
+            {
+                return;
+            }
+
+            if (combo.SelectedItem is not string typeName)
+            {
+                return;
+            }
+
+            DataType? matched = null;
+            foreach (DataTypeSpec spec in AllTypeSpecs())
+            {
+                if (spec.DisplayName == typeName)
+                {
+                    matched = spec.Type;
+                    break;
+                }
+            }
+
+            if (matched == null || item.Model.Type == matched.Value)
+            {
+                return;
+            }
+
+            // STRING 需要用户声明长度
+            if (matched.Value == DataType.String)
+            {
+                int? len = NumberInputDialog.Ask(this, "字符串长度",
+                    "每个寄存器存 2 个字符，如 9 表示 STRING[9]", 9, 1, 255);
+
+                if (len == null)
+                {
+                    SyncGlobalVarTypeCombo(combo, item);
+                    return;
+                }
+
+                item.Model.Length = len.Value;
+            }
+
+            item.Model.Type = matched.Value;
+
+            // 格式必须随类型纠正（BOOL 只允许 BIN、STRING 只允许 ASCII）
+            DataTypeSpec newSpec = DataTypes.Get(matched.Value);
+            if (!newSpec.AllowsFormat(item.Model.Format))
+            {
+                item.Model.Format = newSpec.DefaultFormat;
+            }
+
+            // 类型变了，值也要按新类型重置（旧的文本可能无法按新类型解析）
+            item.Value = GlobalVariableRules.InitialValue(matched.Value);
+
+            _globalVarSet.ResolveOnly(item);
+            _globalVarSet.Save();
+
+            if (combo.Parent is DependencyObject parent)
+            {
+                SyncGlobalVarFormatCombo(parent, item);
+            }
+
+            RefreshGlobalVarView();
+        }
+
+        private void GlobalVarFormat_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (sender is not ComboBox combo || VarRowOf(combo) is not GlobalVarItem item)
+            {
+                return;
+            }
+
+            if (combo.SelectedItem is not DisplayFormat fmt || item.Model.Format == fmt)
+            {
+                return;
+            }
+
+            item.Model.Format = fmt;
+            _globalVarSet.ResolveOnly(item);
+            _globalVarSet.Save();
+        }
+
+        private void GlobalVarValue_GotFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (VarRowOf(sender) is GlobalVarItem item)
+            {
+                item.IsEditing = true;
+            }
+        }
+
+        private void GlobalVarValue_LostFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (sender is TextBox tb && VarRowOf(tb) is GlobalVarItem item)
+            {
+                item.IsEditing = false;
+                CommitGlobalVarValue(item, tb.Text);
+            }
+        }
+
+        private void GlobalVarValue_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter || sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            item.IsEditing = false;
+            CommitGlobalVarValue(item, tb.Text);
+        }
+
+        /// <summary>
+        /// 提交变量的当前值。
+        /// <para>关联地址 → 写入 PLC；不关联地址 → 只更新内存值（后续场景会用）。</para>
+        /// </summary>
+        private async void CommitGlobalVarValue(GlobalVarItem item, string text)
+        {
+            item.WriteError = string.Empty;
+
+            if (!item.HasAddress)
+            {
+                // 内存变量：只改值，不碰通讯
+                item.Value = text;
+                return;
+            }
+
+            if (item.IsReadOnly)
+            {
+                item.WriteError = "该地址为只读输入区，不可写";
+                return;
+            }
+
+            if (_currentDriver == null || _session.Client == null)
+            {
+                item.WriteError = "未连接";
+                return;
+            }
+
+            WritePlan plan;
+            string error;
+            if (!GlobalVarWrite.TryBuild(item.Model, text, _currentDriver, out plan, out error))
+            {
+                item.WriteError = error;
+                return;
+            }
+
+            try
+            {
+                await WriteGlobalVarToDeviceAsync(plan, _session.Client);
+                item.Value = text;
+            }
+            catch (Exception ex)
+            {
+                item.WriteError = ClassifyWriteError(ex);
+            }
+        }
+
+        /// <summary>把一条变量的写入计划发到设备（按值长度选 FC05/06/16）。</summary>
+        private static async Task WriteGlobalVarToDeviceAsync(WritePlan plan, ModbusTcpClient client)
+        {
+            if (plan.IsCoil)
+            {
+                await client.WriteSingleCoilAsync((ushort)plan.Address, plan.CoilValue);
+                return;
+            }
+
+            ushort[] registers = plan.Registers ?? Array.Empty<ushort>();
+            if (registers.Length == 1)
+            {
+                await client.WriteSingleRegisterAsync((ushort)plan.Address, registers[0]);
+            }
+            else
+            {
+                await client.WriteMultipleRegistersAsync((ushort)plan.Address, registers);
+            }
+        }
+
+        /// <summary>把焦点移到指定变量的名称框（新增后连续录入用）。</summary>
+        private void FocusGlobalVarRow(GlobalVarItem item)
+        {
+            if (GlobalVarItemsControl == null)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+            {
+                for (int i = 0; i < GlobalVarItemsControl.Items.Count; i++)
+                {
+                    if (GlobalVarItemsControl.ItemContainerGenerator.ContainerFromIndex(i)
+                            is not DependencyObject container)
+                    {
+                        continue;
+                    }
+
+                    if (container is FrameworkElement fe && fe.DataContext is GlobalVarItem rowItem
+                        && ReferenceEquals(rowItem, item))
+                    {
+                        FindGlobalVarBox(container, "VarNameBox")?.Focus();
+                        return;
+                    }
+                }
+            }));
         }
 
         // ---------- 自由监控（P4-2） ----------

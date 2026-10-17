@@ -95,6 +95,14 @@ internal sealed class ModbusPoller
     {
         PollSnapshot snap = _host.CaptureSnapshot();
 
+        // 全局变量（P3.3）属于采集配置页，与状态信息页互斥：
+        // 停在该页的「全局变量」分段时读变量，其余情况交给下面的状态信息分支。
+        if (snap.GlobalVarActive)
+        {
+            await PollGlobalVarsAsync(modbus, driver, token);
+            return;
+        }
+
         // 离开状态信息页仅停采；独立心跳继续工作，各分段保留上次采集数据。
         if (!snap.IoPageActive)
         {
@@ -283,6 +291,98 @@ internal sealed class ModbusPoller
                 }
 
                 MonitorItemSet.ApplyBlock(block, coils, regs, driver);
+            }
+        });
+    }
+
+    /// <summary>
+    /// 读「全局变量」分段里所有**关联了地址**的变量（P3.3）。
+    /// <para>
+    /// 与自由监控同一策略：按存储区分组 + 地址连续性分块，单块失败**不触发断线**，
+    /// 只把原因写到该块的变量上 —— 一个配错的地址不该拖垮整条连接。
+    /// </para>
+    /// <para>不关联地址的变量不参与读取（它们没有地址，值由用户手工维护）。</para>
+    /// </summary>
+    public async Task PollGlobalVarsAsync(ModbusTcpClient modbus, CommDriver driver, CancellationToken token)
+    {
+        List<GlobalVarReadBlock> plan = _host.GlobalVarSet.BuildReadPlan();
+        if (plan.Count == 0)
+        {
+            return;
+        }
+
+        var results = new List<(GlobalVarReadBlock Block, bool[]? Coils, ushort[]? Registers, string? Error)>();
+
+        foreach (GlobalVarReadBlock block in plan)
+        {
+            // 逐块复查可见性：用户切走分段后立即停发剩余报文
+            PollSnapshot mid = _host.CaptureSnapshot();
+            if (!mid.GlobalVarActive)
+            {
+                return;
+            }
+
+            try
+            {
+                if (block.Area is ModbusArea.Coil)
+                {
+                    bool[] coils = await modbus.ReadCoilsAsync(
+                        (ushort)block.StartAddress, (ushort)block.Count, token);
+                    results.Add((block, coils, null, null));
+                }
+                else if (block.Area == ModbusArea.DiscreteInput)
+                {
+                    bool[] inputs = await modbus.ReadDiscreteInputsAsync(
+                        (ushort)block.StartAddress, (ushort)block.Count, token);
+                    results.Add((block, inputs, null, null));
+                }
+                else if (block.Area == ModbusArea.HoldingRegister)
+                {
+                    ushort[] regs = await modbus.ReadHoldingRegistersAsync(
+                        (ushort)block.StartAddress, (ushort)block.Count, token);
+                    results.Add((block, null, regs, null));
+                }
+                else
+                {
+                    ushort[] regs = await modbus.ReadInputRegistersAsync(
+                        (ushort)block.StartAddress, (ushort)block.Count, token);
+                    results.Add((block, null, regs, null));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // 单块失败只标该块内的项，继续读下一块
+                results.Add((block, null, null, _host.ClassifyDisconnectReason(ex.Message)));
+            }
+        }
+
+        await _host.RunOnUiAsync(() =>
+        {
+            if (!_host.IsCurrentConnection(modbus, token))
+            {
+                return;
+            }
+
+            // 复查可见性：本拍可能跨越了用户的切换动作
+            PollSnapshot after = _host.CaptureSnapshot();
+            if (!after.GlobalVarActive)
+            {
+                return;
+            }
+
+            foreach (var (block, coils, regs, error) in results)
+            {
+                if (error != null)
+                {
+                    GlobalVarItemSet.MarkBlockFailed(block, error);
+                    continue;
+                }
+
+                GlobalVarItemSet.ApplyBlock(block, coils, regs, driver);
             }
         });
     }

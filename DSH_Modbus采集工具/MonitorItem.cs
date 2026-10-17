@@ -747,22 +747,4 @@ namespace DSH_Modbus采集工具
         public int Units { get; init; }
     }
 
-    /// <summary>
-    /// 一次写入的报文参数（由 <see cref="MonitorItemSet.TryBuildWrite"/> 产出）：
-    /// 线圈写 <see cref="CoilValue"/>（FC05），寄存器写 <see cref="Registers"/>（FC06 或 FC16）。
-    /// </summary>
-    public struct WritePlan
-    {
-        public ModbusArea Area { get; init; }
-
-        public int Address { get; init; }
-
-        public bool IsCoil { get; init; }
-
-        /// <summary>线圈目标值（仅 <see cref="IsCoil"/> 为 true 时有效）。</summary>
-        public bool CoilValue { get; init; }
-
-        /// <summary>寄存器值（仅 <see cref="IsCoil"/> 为 false 时有效）；长度 1 走 FC06，否则 FC16。</summary>
-        public ushort[]? Registers { get; init; }
-    }
 }

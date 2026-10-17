@@ -1,0 +1,486 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using DSH_Modbus采集工具.Drivers;
+
+namespace DSH_Modbus采集工具.Modeling
+{
+    /// <summary>
+    /// 一条「全局变量」（P3.3）。
+    /// <para>
+    /// 与 <see cref="DataPoint"/>（自由监控 / 采集）的区别只有两点：
+    /// </para>
+    /// <list type="bullet">
+    /// <item>变量有**名字**（C 标识符规则），可作为后续采集配置 / MES 上报的引用键；
+    /// <see cref="DataPoint"/> 只用元件地址标识自己。</item>
+    /// <item>变量的映射地址**可以为空** —— 此时它是一只纯内存变量，值由用户手工改写，
+    /// 不与任何 PLC 地址联动。<see cref="DataPoint"/> 必须能解析出地址。</item>
+    /// </list>
+    /// <para>
+    /// ⚠️ 值**不持久化**：按需求，每次启动所有变量的值初始化为 0 / 空串，
+    /// 只有**定义**（名称 / 类型 / 映射地址 / 注释）落盘到 <c>GlobalVar.json</c>。
+    /// </para>
+    /// </summary>
+    public sealed class GlobalVariable
+    {
+        /// <summary>变量名。C 标识符规则，最长 <see cref="GlobalVariableRules.MaxNameLength"/> 字符。</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>数据类型。决定可映射的地址区：BOOL → 线圈区，其余 → 寄存器区。</summary>
+        public DataType Type { get; set; } = DataType.Int;
+
+        /// <summary>显示格式（须在该类型的 AllowedFormats 内）</summary>
+        public DisplayFormat Format { get; set; } = DisplayFormat.Dec;
+
+        /// <summary>
+        /// 按类型取默认显示格式（<c>BOOL</c> → <c>BIN</c>、<c>STRING</c> → <c>ASCII</c>、其余 → <c>DEC</c>）。
+        /// <para>⚠️ 不要写死 <c>Dec</c>：线圈只允许 <c>BIN</c>，写死会让新建的 BOOL 变量立刻校验失败。</para>
+        /// </summary>
+        public static DisplayFormat DefaultFormatFor(DataType type) =>
+            DataTypes.Get(type).DefaultFormat;
+
+        /// <summary>仅 <c>STRING</c> 使用：用户声明的字符数</summary>
+        public int Length { get; set; }
+
+        /// <summary>
+        /// 映射地址，如 <c>HD100</c>；**空串 = 不关联地址**（纯内存变量）。
+        /// <para>⚠️ 这里存的是**元件名**，不是 Modbus 绝对地址 —— 绝对地址由驱动按当前设备类型
+        /// 重新解析，换设备类型后仍然有效。</para>
+        /// </summary>
+        public string Address { get; set; } = string.Empty;
+
+        /// <summary>注释。仅给人看，不参与读写、不上报。</summary>
+        public string Comment { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 当前值（显示格式下的文本）。**不持久化**：每次启动由
+        /// <see cref="GlobalVariableSet.ResetValues"/> 重置为「0」/ 空串。
+        /// </summary>
+        [JsonIgnore]
+        public string Value { get; set; } = "0";
+
+        /// <summary>解析后的 Modbus 绝对地址；未关联或解析失败时为 −1。**不持久化**。</summary>
+        [JsonIgnore]
+        public int ResolvedAddress { get; set; } = -1;
+
+        /// <summary>解析后的存储区。**不持久化**。</summary>
+        [JsonIgnore]
+        public ModbusArea Area { get; set; } = ModbusArea.Coil;
+
+        /// <summary>该映射区是否只读（方案 C：X 等输入元件只读）。**不持久化**。</summary>
+        [JsonIgnore]
+        public bool IsReadOnly { get; set; }
+
+        /// <summary>解析 / 校验失败原因；正常时为空。**不持久化**。</summary>
+        [JsonIgnore]
+        public string ResolveError { get; set; } = string.Empty;
+
+        /// <summary>是否关联了地址（空地址 = 内存变量）</summary>
+        [JsonIgnore]
+        public bool HasAddress => !string.IsNullOrWhiteSpace(Address);
+
+        /// <summary>本项占用的寄存器（或线圈）个数</summary>
+        [JsonIgnore]
+        public int RawCount => Type == DataType.Bool
+            ? 1
+            : DataTypes.Get(Type).RegistersForLength(Length);
+
+        /// <summary>类型显示名，如 <c>DINT</c> / <c>STRING[9]</c></summary>
+        [JsonIgnore]
+        public string TypeDisplayName => Type == DataType.String
+            ? $"STRING[{Length}]"
+            : DataTypes.Get(Type).DisplayName;
+    }
+
+    /// <summary>变量名与初始值的规则（纯函数，可独立断言）。</summary>
+    public static class GlobalVariableRules
+    {
+        /// <summary>变量名最大长度（需求：限制 32 个字符）。</summary>
+        public const int MaxNameLength = 32;
+
+        /// <summary>
+        /// 校验变量名：**C 语言标识符规则** —— 首字符为字母或下划线，
+        /// 其后为字母 / 数字 / 下划线；最长 32 字符。
+        /// <para>
+        /// 中文、空格、减号、点号一律拒绝。这样变量名才能被后续的采集配置、
+        /// MES 上报当作字段名直接使用，不必再做转义。
+        /// </para>
+        /// </summary>
+        public static bool TryValidateName(string? name, out string error)
+        {
+            error = string.Empty;
+            name ??= string.Empty;
+
+            if (name.Length == 0)
+            {
+                error = "变量名称不能为空";
+                return false;
+            }
+
+            if (name.Length > MaxNameLength)
+            {
+                error = $"变量名称最多 {MaxNameLength} 个字符（当前 {name.Length}）";
+                return false;
+            }
+
+            char first = name[0];
+            if (!(first == '_' || IsAsciiLetter(first)))
+            {
+                error = "变量名称必须以字母或下划线开头";
+                return false;
+            }
+
+            for (int i = 1; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (!(c == '_' || IsAsciiLetter(c) || (c >= '0' && c <= '9')))
+                {
+                    error = "变量名称只能包含字母、数字和下划线";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsAsciiLetter(char c) =>
+            (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+
+        /// <summary>
+        /// 该类型的变量允许映射到哪些元件（方案 C）。
+        /// <para>
+        /// <c>BOOL</c> → 线圈区元件（X / Y / M / S / SM / HM …）；
+        /// 其余 → 寄存器区元件（D / SD / HD / HSD / SFD / R / B …）。
+        /// </para>
+        /// <para>⚠️ 是否**只读**由元件决定（X 只读），不在这里判断。</para>
+        /// </summary>
+        public static bool CanMapTo(DataType type, ModbusArea area)
+        {
+            bool coilOnly = DataTypes.Get(type).CoilOnly;
+            return coilOnly
+                ? area is ModbusArea.Coil or ModbusArea.DiscreteInput
+                : area is ModbusArea.HoldingRegister or ModbusArea.InputRegister;
+        }
+
+        /// <summary>
+        /// 该变量的初始值（需求：每次启动初始化为 0）。
+        /// <para>按显示格式给出：<c>BOOL</c> → <c>0</c>；<c>STRING</c> → 空串；其余 → <c>0</c>。</para>
+        /// </summary>
+        public static string InitialValue(DataType type) =>
+            type == DataType.String ? string.Empty : "0";
+    }
+
+    /// <summary>
+    /// 全局变量集合的持久化与校验（<c>GlobalVar.json</c>，与 <c>data-points.json</c> 同模式）。
+    /// <para>⚠️ 只存**定义**，不存值。</para>
+    /// </summary>
+    public static class GlobalVariableStore
+    {
+        private const string FileName = "GlobalVar.json";
+
+        private static readonly JsonSerializerOptions Options = new()
+        {
+            WriteIndented = true,
+            // 与 data-points.json 一致：枚举写成名字，避免枚举顺序变化后静默错位
+            Converters = { new JsonStringEnumConverter() },
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        };
+
+        public static string FilePath => Path.Combine(AppContext.BaseDirectory, FileName);
+
+        public static List<GlobalVariable> Load()
+        {
+            try
+            {
+                string path = FilePath;
+                if (!File.Exists(path))
+                {
+                    return new List<GlobalVariable>();
+                }
+
+                string json = File.ReadAllText(path);
+                var list = JsonSerializer.Deserialize<List<GlobalVariable>>(json, Options);
+                return list ?? new List<GlobalVariable>();
+            }
+            catch
+            {
+                // 与 DataPointStore.Load 一致：读失败不阻断启动，视为空集合
+                return new List<GlobalVariable>();
+            }
+        }
+
+        public static bool Save(IEnumerable<GlobalVariable> variables)
+        {
+            try
+            {
+                string json = JsonSerializer.Serialize(variables, Options);
+                File.WriteAllText(FilePath, json);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 用驱动解析一条变量的映射地址。空地址视为合法（内存变量），直接返回 true。
+        /// </summary>
+        /// <param name="v">要解析的变量，成功时回填 ResolvedAddress / Area / IsReadOnly</param>
+        /// <param name="driver">当前设备类型的驱动</param>
+        /// <param name="error">失败原因</param>
+        public static bool TryResolve(GlobalVariable v, CommDriver driver, out string error)
+        {
+            error = string.Empty;
+
+            if (v == null || driver == null)
+            {
+                error = "参数为空";
+                return false;
+            }
+
+            v.ResolvedAddress = -1;
+            v.ResolveError = string.Empty;
+            v.IsReadOnly = false;
+
+            // 不关联地址 = 合法的内存变量，无需解析
+            if (!v.HasAddress)
+            {
+                return true;
+            }
+
+            DataTypeSpec spec = DataTypes.Get(v.Type);
+            if (!spec.AllowsFormat(v.Format))
+            {
+                error = $"{spec.DisplayName} 不支持所选显示格式";
+                v.ResolveError = error;
+                return false;
+            }
+
+            if (spec.HasVariableLength && v.Length <= 0)
+            {
+                error = "STRING 长度必须大于 0";
+                v.ResolveError = error;
+                return false;
+            }
+
+            if (!CommDriver.TrySplitName(v.Address, out string element, out string index, out string splitError))
+            {
+                error = splitError;
+                v.ResolveError = error;
+                return false;
+            }
+
+            // 方案 C：类型决定可映射的地址区
+            IReadOnlyList<ModbusArea> candidates = driver.AreasOfElement(element);
+            if (candidates.Count == 0)
+            {
+                error = $"元件 {element} 不在当前设备类型的地址表内";
+                v.ResolveError = error;
+                return false;
+            }
+
+            ModbusArea? matched = null;
+            foreach (ModbusArea area in candidates)
+            {
+                if (GlobalVariableRules.CanMapTo(v.Type, area))
+                {
+                    matched = area;
+                    break;
+                }
+            }
+
+            if (matched == null)
+            {
+                error = spec.CoilOnly
+                    ? $"{spec.DisplayName} 只能映射线圈区元件"
+                    : $"{spec.DisplayName} 只能映射寄存器区元件";
+                v.ResolveError = error;
+                return false;
+            }
+
+            if (!driver.TryResolve(v.Address, matched.Value, out int address, out string resolveError))
+            {
+                error = resolveError;
+                v.ResolveError = error;
+                return false;
+            }
+
+            v.ResolvedAddress = address;
+            v.Area = matched.Value;
+            v.IsReadOnly = IsReadOnlyElement(driver, element, matched.Value);
+            return true;
+        }
+
+        /// <summary>
+        /// 该元件区是否只读（方案 C）。
+        /// <para>
+        /// 判据：同一元件若存在**线圈区**定义 → 它是输出/内部继电器，可读写；
+        /// 若只落在离散输入区 → 只读。信捷的 X 在本驱动里登记为 Coil，
+        /// 但按业务语义它是**输入点**，故额外按元件名判定。
+        /// </para>
+        /// </summary>
+        private static bool IsReadOnlyElement(CommDriver driver, string element, ModbusArea area)
+        {
+            // 离散输入区天然只读
+            if (area is ModbusArea.DiscreteInput or ModbusArea.InputRegister)
+            {
+                return true;
+            }
+
+            // 信捷 / 汇川的输入点元件：X（汇川另有 X 输入）
+            // 输出 / 内部继电器 Y、M、S、SM、HM 均可写
+            return string.Equals(element, "X", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// 运行时变量集合：持有全部变量、维护当前值、负责增删改与落盘。
+    /// <para>⚠️ 本类**不碰 WPF**，与 <c>MonitorItemSet</c> 同一层次。</para>
+    /// </summary>
+    public sealed class GlobalVariableSet
+    {
+        private readonly List<GlobalVariable> _items = new();
+
+        /// <summary>全部变量（按添加顺序）</summary>
+        public IReadOnlyList<GlobalVariable> Items => _items;
+
+        /// <summary>当前设备驱动；为空时不解析地址</summary>
+        public CommDriver? Driver { get; private set; }
+
+        public void SetDriver(CommDriver? driver)
+        {
+            Driver = driver;
+            ReResolveAll();
+        }
+
+        /// <summary>
+        /// 载入定义并把**所有值重置为初始值**（需求：每次启动默认初始化）。
+        /// </summary>
+        public void Load()
+        {
+            _items.Clear();
+            foreach (GlobalVariable v in GlobalVariableStore.Load())
+            {
+                v.Value = GlobalVariableRules.InitialValue(v.Type);
+                _items.Add(v);
+            }
+
+            ReResolveAll();
+        }
+
+        /// <summary>把所有变量的值重置为初始值（0 / 空串）。</summary>
+        public void ResetValues()
+        {
+            foreach (GlobalVariable v in _items)
+            {
+                v.Value = GlobalVariableRules.InitialValue(v.Type);
+            }
+        }
+
+        /// <summary>新增一条变量；名称非法或重名时返回 null。</summary>
+        public GlobalVariable? Add(GlobalVariable v, out string error)
+        {
+            error = string.Empty;
+
+            if (!GlobalVariableRules.TryValidateName(v.Name, out error))
+            {
+                return null;
+            }
+
+            if (IndexOfName(v.Name) >= 0)
+            {
+                error = $"变量名称 {v.Name} 已存在";
+                return null;
+            }
+
+            // 格式必须在该类型的允许集内：调用方可能没设（默认 Dec），
+            // 而 BOOL / STRING 都不接受 Dec，故在这里按类型纠正一次。
+            DataTypeSpec spec = DataTypes.Get(v.Type);
+            if (!spec.AllowsFormat(v.Format))
+            {
+                v.Format = spec.DefaultFormat;
+            }
+
+            v.Value = GlobalVariableRules.InitialValue(v.Type);
+            _items.Add(v);
+            ResolveOnly(v);
+            return v;
+        }
+
+        public void Remove(GlobalVariable v)
+        {
+            _items.Remove(v);
+        }
+
+        public void Clear()
+        {
+            _items.Clear();
+        }
+
+        /// <summary>改名（含重名与合法性检查）</summary>
+        public bool Rename(GlobalVariable v, string newName, out string error)
+        {
+            error = string.Empty;
+            newName ??= string.Empty;
+
+            if (string.Equals(v.Name, newName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (!GlobalVariableRules.TryValidateName(newName, out error))
+            {
+                return false;
+            }
+
+            int existing = IndexOfName(newName);
+            if (existing >= 0 && !ReferenceEquals(_items[existing], v))
+            {
+                error = $"变量名称 {newName} 已存在";
+                return false;
+            }
+
+            v.Name = newName;
+            return true;
+        }
+
+        /// <summary>按名称查找（大小写敏感 —— C 标识符语义）</summary>
+        public GlobalVariable? FindByName(string name) =>
+            _items.FirstOrDefault(v => string.Equals(v.Name, name, StringComparison.Ordinal));
+
+        private int IndexOfName(string name) =>
+            _items.FindIndex(v => string.Equals(v.Name, name, StringComparison.Ordinal));
+
+        /// <summary>重新解析一条变量的地址（改动类型 / 地址后调用）</summary>
+        public void ResolveOnly(GlobalVariable v)
+        {
+            if (Driver == null)
+            {
+                return;
+            }
+
+            GlobalVariableStore.TryResolve(v, Driver, out _);
+        }
+
+        /// <summary>重新解析全部（换设备类型后调用）</summary>
+        public void ReResolveAll()
+        {
+            if (Driver == null)
+            {
+                return;
+            }
+
+            foreach (GlobalVariable v in _items)
+            {
+                GlobalVariableStore.TryResolve(v, Driver, out _);
+            }
+        }
+
+        /// <summary>落盘（只写定义，不含值）</summary>
+        public bool Save() => GlobalVariableStore.Save(_items);
+    }
+}
