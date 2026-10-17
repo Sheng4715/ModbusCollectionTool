@@ -1905,6 +1905,48 @@ namespace DSH_Modbus采集工具
             combo.SelectedItem = known ? item.Model.Format : formats[0];
         }
 
+        /// <summary>
+        /// 从行内某个控件往上找该行的模板根（<c>GlobalVarRow_Loaded</c> 把行对象挂在它的 Tag 上）。
+        /// <para>
+        /// 用于「改了本行某一格，要顺带改同一行另一格」的场景 —— 如切换数据类型时清空映射地址。
+        /// </para>
+        /// </summary>
+        private static FrameworkElement? FindGlobalVarRowRoot(DependencyObject from)
+        {
+            DependencyObject? node = from;
+            while (node != null)
+            {
+                if (node is FrameworkElement fe && fe.Tag is GlobalVarItem)
+                {
+                    return fe;
+                }
+
+                node = System.Windows.Media.VisualTreeHelper.GetParent(node);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 切换数据类型后清空该行的映射地址（模型与控件一起清）。
+        /// <para>
+        /// 地址框不是双向绑定（失焦才提交），所以改 <c>Model.Address</c> 不会自动刷控件，
+        /// 必须顺着触发控件往上找到本行模板根，再显式把文本清空。
+        /// </para>
+        /// </summary>
+        /// <param name="from">触发切换的控件（用来定位所在行）</param>
+        /// <param name="item">该行对应的变量</param>
+        private static void ClearGlobalVarAddress(DependencyObject from, GlobalVarItem item)
+        {
+            item.Address = string.Empty;
+
+            if (FindGlobalVarRowRoot(from) is FrameworkElement root
+                && FindGlobalVarBox(root, "VarAddressBox") is TextBox addrBox)
+            {
+                addrBox.Text = string.Empty;
+            }
+        }
+
         private static GlobalVarItem? VarRowOf(object sender)
         {
             if (sender is FrameworkElement fe)
@@ -2053,6 +2095,10 @@ namespace DSH_Modbus采集工具
 
             item.Model.Type = matched;
             item.RaiseTypeChanged();
+
+            // 换类型即清空映射地址：旧地址是按旧类型的存储区挑的，
+            // 新类型未必还能落在同一个区（BOOL 走线圈、其余走寄存器），留着只会变成一条必然失败的配置
+            ClearGlobalVarAddress(combo, item);
 
             // 格式必须随类型纠正（BOOL 只允许 BIN、STRING 只允许 ASCII）——
             // 本页不显示格式列，但模型仍要合法，否则读取/后续导出会拿到非法组合
