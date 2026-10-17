@@ -47,7 +47,7 @@ DSH_Modbus采集工具/
 │   ├── IoPointSet.cs           # 注释表读写 + 名称归一化 / 地址换算 / 分组排序 / 导入校验
 │   ├── IoPager.cs              # 分页纯计算（页数 / 夹取 / 切片 / 翻页 / 页号文本）
 │   └── IoTableImporter.cs      # xlsx → 注释表 + 失败明细
-├── Modeling/                   # 数据类型系统（P3-3 数据模型层）
+├── Modeling/                   # 数据类型系统（P6-4 数据模型层）
 │   ├── DataTypes.cs            # DataType / DisplayFormat 枚举 + DataTypeSpec 规格表
 │   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
 │   └── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
@@ -77,7 +77,7 @@ DSH_Modbus采集工具/
 > ⚠️ `MonitorItem.cs` 是「`DataPoint` 的界面包装」、碰 WPF 属正常，但它在**根目录**而不在 `Ui/`
 > —— 判断一个文件该不该碰 WPF 看**所在目录**，不要以为「根目录都不碰」。
 
-> `ModelingCheck/`（仓库根，**不属于本工程**）是 P3-3 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
+> `ModelingCheck/`（仓库根，**不属于本工程**）是 P6-4 的独立验证工程：用真机实测数据对编解码做断言，不参与主程序构建。
 > `LoggingCheck/`（同上）是 P5-2 的独立验证工程：链接 `DeviceLogFileWriter.cs` 与 `DisconnectReasonClassifier.cs` 源码，断言逐字符行格式 / 跨天换文件 / 续写 / 容错 / 断开原因归类，**44 项**，不参与主程序构建。
 
 > `.tmp/` 下另有一批**一次性**验证工程（**未提交**，随用随弃）。**断言型**（自带 `Check()`，直接 `dotnet run` 即出结论）：
@@ -212,7 +212,7 @@ Window
 ## 4. 代码分工（MainWindow.xaml.cs）
 
 > `MainWindow.xaml.cs` 仍是本工程最大的单文件（两千行量级；P5 重构抽出两块后，又因
-> P4-2 读取/写入与 P5 设置页陆续加回，规模回到重构前）。采集编排已抽到 `Polling/`、
+> P2-2 读取/写入与 P5 设置页陆续加回，规模回到重构前）。采集编排已抽到 `Polling/`、
 > IO 点位集/分页/导入已抽到 `Io/`，主题在 `Themes/`；其余（连接生命周期 / 心跳 / 导航 /
 > 自由监控 / 日志）仍在本文件。**自由监控刻意未抽** —— 它有 12 处直接碰控件，见 `Design.md` §8-1。
 >
@@ -260,7 +260,7 @@ Window
 - 换主题后靠 `RaiseStateBrushChanged()` 触发绑定重算（`StateBrush` 无 setter）
 - XAML 侧不用改：`IoItemTemplate` 的灯仍绑 `Background="{Binding StateBrush}"`
 
-### 5.1 自由监控（P4-2，第三分段）
+### 5.1 自由监控（P2-2，第三分段）
 
 状态信息页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**。
 
@@ -303,7 +303,7 @@ Window
 - `StopPolling` 只取消并置 null，**释放交给任务自身 `finally`**（确认自己仍是当前连接后）；`OnClosed` 统一取消连接尝试、停任务并释放
 - **连接的身份与生命周期状态**（当前客户端 / 是否连着 / 期望目标 / 在途取消源 / 重连计数）在 `Polling/ConnectionSession.cs`，**async 编排留在窗口** —— 等待循环里逐秒刷状态栏、锁表单、改按钮文案全是界面驱动的东西。两种「断开」语义也在那里落了地：`ForgetTarget()` = 用户主动断开（目标清掉 → 不重连），只 `ReleaseClient()` = 异常断开（目标留着 → 才能重连）
 
-### 6.1 自动重连（P1-1）
+### 6.1 自动重连（P6-3）
 
 | 项 | 行为 |
 |---|---|
