@@ -167,6 +167,24 @@ namespace DSH_Modbus采集工具.Modeling
         }
 
         /// <summary>
+        /// 换数据类型后，原映射地址是否**必然作废**（决定界面要不要清空地址框）。
+        /// <para>
+        /// 判据只看**存储区**：<c>BOOL</c> 走线圈、其余走寄存器。
+        /// </para>
+        /// <list type="bullet">
+        /// <item><c>INT → REAL</c>（同在寄存器区）→ <c>false</c>，地址仍然有效，保留；</item>
+        /// <item><c>BOOL → INT</c>（线圈 ↔ 寄存器）→ <c>true</c>，地址必然作废，必须清。</item>
+        /// </list>
+        /// <para>
+        /// ⚠️ 不要退化成「只要换类型就清」：同区换类型时地址完全可用，
+        /// 清掉只是让用户重打一遍。也不要退化成「不清」：跨区换类型留下的地址
+        /// 必然校验失败（<see cref="AddressErrorKind.TypeMismatch"/>），等于留一条坏配置。
+        /// </para>
+        /// </summary>
+        public static bool AddressInvalidatedBy(DataType oldType, DataType newType) =>
+            DataTypes.Get(oldType).CoilOnly != DataTypes.Get(newType).CoilOnly;
+
+        /// <summary>
         /// 该变量的初始值（需求：每次启动初始化为 0）。
         /// <para>按显示格式给出：<c>BOOL</c> → <c>0</c>；<c>STRING</c> → 空串；其余 → <c>0</c>。</para>
         /// </summary>

@@ -2093,12 +2093,17 @@ namespace DSH_Modbus采集工具
                 item.Model.Length = len.Value;
             }
 
+            DataType oldType = item.Model.Type;
             item.Model.Type = matched;
             item.RaiseTypeChanged();
 
-            // 换类型即清空映射地址：旧地址是按旧类型的存储区挑的，
-            // 新类型未必还能落在同一个区（BOOL 走线圈、其余走寄存器），留着只会变成一条必然失败的配置
-            ClearGlobalVarAddress(combo, item);
+            // 只在**存储区真的变了**时才清空映射地址：
+            // BOOL 走线圈、其余走寄存器，跨区换类型后旧地址必然校验失败；
+            // 而 INT → REAL 这类同区换类型地址完全可用，清掉只是让用户重打一遍
+            if (GlobalVariableRules.AddressInvalidatedBy(oldType, matched))
+            {
+                ClearGlobalVarAddress(combo, item);
+            }
 
             // 格式必须随类型纠正（BOOL 只允许 BIN、STRING 只允许 ASCII）——
             // 本页不显示格式列，但模型仍要合法，否则读取/后续导出会拿到非法组合

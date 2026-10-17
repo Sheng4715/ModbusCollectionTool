@@ -307,8 +307,9 @@ Window
 - **变量名**：C 标识符 `[A-Za-z_][A-Za-z0-9_]*`，最长 **32**，**区分大小写**，**拒绝中文**（`GlobalVariableRules.TryValidateName`）；校验与重名检查都在 `GlobalVariableSet.Add` / `Rename`
 - **类型决定地址区**（方案 C，`GlobalVariableRules.CanMapTo`）：`BOOL` → 线圈区；其余 → 寄存器区。实际可写范围由驱动 `AreasOfElement` 决定：**M/Y/S 可读写，X 只读**
 - **映射地址可空** = 内存变量：不参与轮询，值由用户手工维护
-- **切换数据类型即清空映射地址**（用户定稿）：旧地址是按旧类型的存储区挑的，新类型未必还落在同一个区
-  （`BOOL` 走线圈、其余走寄存器），留着只会变成一条**必然失败**的配置
+- **切换数据类型时，仅当存储区变化才清空映射地址**（`GlobalVariableRules.AddressInvalidatedBy`）：
+  - `BOOL ↔ 其余类型`（线圈 ↔ 寄存器）→ **清空**，旧地址必然校验失败（`TypeMismatch`）
+  - `INT → REAL` 这类**同区**换类型 → **保留**，地址完全可用，清掉只是让用户重打一遍
   - 模型与**控件文本**必须一起清：地址框不是双向绑定（失焦才提交），只改 `Model.Address` 界面还留着旧字
   - 清空发生在「类型已确认」之后 —— 切到 `STRING` 时若用户取消长度输入框，**不清地址**（类型根本没变）
 - **显示格式不在界面出现**，但模型仍要合法（`BOOL` 只 `BIN`、`STRING` 只 `ASCII`）：类型变更时按 `DataTypes.Get(type).DefaultFormat` 自动纠正
@@ -330,7 +331,7 @@ Window
 - 闭合态由 `MonitorTypeCombo` 模板直接读数据上下文的 `GlobalVarItem.TypeDisplayName`，缺这个属性同样显示空白
 - 选中处理器要接 `DataTypeSpec`，不是 `string`
 
-**离线断言**：`.tmp/GlobalVarCheck`（**126 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
+**离线断言**：`.tmp/GlobalVarCheck`（**139 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
 
 ## 6. 心跳与连接生命周期
 
