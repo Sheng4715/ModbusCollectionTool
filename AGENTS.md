@@ -404,8 +404,24 @@ Window
 - ⚠️ **不要给它加排序 / 搜索 / 编辑**：清单是对外约定，改动等于改协议 ——
   先改 `Brief.md` P3.5，再改代码与断言
 
-**离线断言**：`.tmp/SystemVarCheck`（**52 项**，未提交），改 `SystemVariable.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\svc-temp"`。
-断言覆盖：16 项规模 / 序号 1..16 / 名称唯一且符合 `GlobalVariableRules` / 逐字名称表 / 类型与显示名 / 注释非空。
+**取值**（`Modeling/SystemVariableValues.cs`，纯函数 `Capture(now, uptime)`）：
+
+- **两个时间源是故意分开的**：`sys_DateTime_*` 用墙上时间（`DateTime.Now`，用户改系统时间它就该跟着变）；
+  `sys_RunTime_*` 与 `sys_Pulse*` 用**单调时长**（`Stopwatch`，系统校时不能让运行时长跳变、脉冲抖一下）
+- `BOOL` 显示 `"1"` / `"0"`（与界面里 BOOL 的 `BIN` 一致），不写 `True` / `False`
+- 脉冲：`Pulse100ms` 50ms 翻转、`Pulse1s` 500ms、`Pulse2s` 1000ms；**启动瞬间为 ON**（`ms / 半周期` 偶数即 ON）
+- 星期 **1~7**（周一=1、周日=7），不是 .NET 原生的 0~6 —— `IsoWeekday` 负责换
+- 运行时长起点 = **程序启动**；秒/分/时各自取模（0~59 / 0~59 / 0~23），**日累加不取模**
+- 负数 `uptime` 按 0 处理
+- ⚠️ **取值按 `SystemVariableKind` 分派，不是按变量名**：名字改过一次（`sys_true` → `sys_True`），
+  行为不该跟着名字变；按名字写 `switch` 的话每次改名都得同步改一处看不见的取值逻辑
+- ⚠️ `switch` **不写 `default`**，并用 `#pragma warning disable CS8524` 只压「未命名枚举值」那条噪声告警 ——
+  **CS8509 必须留着**：新增一个 `Kind` 却忘了加分支时，它才是那个哨兵
+
+**离线断言**：`.tmp/SystemVarCheck`（**106 项**，未提交），改 `SystemVariable.cs` / `SystemVariableValues.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\svc-temp"`。
+断言覆盖：16 项规模 / 序号 1..16 / 名称唯一且符合 `GlobalVariableRules` / 逐字名称表 / 类型与显示名 / 注释非空 /
+常量 / 三种脉冲的 0·49·50·99·100ms 相位 / 星期 1~7 连续七天 / 零点与年末边界 / 秒分时日的进位 /
+负数时长 / 脉冲与运行时长不受墙上时间影响 / 键集合与清单一致 / Kind 无重复且覆盖全部枚举值。
 
 ## 6. 心跳与连接生命周期
 

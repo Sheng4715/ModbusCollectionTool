@@ -3,6 +3,65 @@ using System.Collections.Generic;
 namespace DSH_Modbus采集工具.Modeling
 {
     /// <summary>
+    /// 系统变量的「行为身份」。
+    /// <para>
+    /// ⚠️ 取值必须按 <b>Kind</b> 分派，**不能按变量名**：名字是对外约定，改过不止一次
+    /// （`sys_true` → `sys_True`），而行为不该跟着名字变 —— 按名字写 `switch` 的话，
+    /// 每次改名都要同步改一处看不见的取值逻辑，改漏了就是「名字还在、值突然变成 0」。
+    /// </para>
+    /// </summary>
+    public enum SystemVariableKind
+    {
+        /// <summary>常量，值恒为 1</summary>
+        ConstTrue = 0,
+
+        /// <summary>常量，值恒为 0</summary>
+        ConstFalse = 1,
+
+        /// <summary>100ms 周期时钟（50ms ON / 50ms OFF）</summary>
+        Pulse100ms = 2,
+
+        /// <summary>1s 周期时钟（0.5s ON / 0.5s OFF）</summary>
+        Pulse1s = 3,
+
+        /// <summary>2s 周期时钟（1s ON / 1s OFF）</summary>
+        Pulse2s = 4,
+
+        /// <summary>系统时钟：秒</summary>
+        DateTimeSecond = 5,
+
+        /// <summary>系统时钟：分</summary>
+        DateTimeMinute = 6,
+
+        /// <summary>系统时钟：时</summary>
+        DateTimeHour = 7,
+
+        /// <summary>系统时钟：星期（1~7，周一=1、周日=7）</summary>
+        DateTimeWeek = 8,
+
+        /// <summary>系统时钟：日</summary>
+        DateTimeDay = 9,
+
+        /// <summary>系统时钟：月</summary>
+        DateTimeMonth = 10,
+
+        /// <summary>系统时钟：年</summary>
+        DateTimeYear = 11,
+
+        /// <summary>运行时长：秒（0~59）</summary>
+        RunTimeSecond = 12,
+
+        /// <summary>运行时长：分（0~59）</summary>
+        RunTimeMinute = 13,
+
+        /// <summary>运行时长：时（0~23）</summary>
+        RunTimeHour = 14,
+
+        /// <summary>运行时长：日（累加，不取模）</summary>
+        RunTimeDay = 15,
+    }
+
+    /// <summary>
     /// 一条「系统变量」（P3.5）。
     /// <para>
     /// 与 <see cref="GlobalVariable"/> 的区别有三处：
@@ -23,7 +82,13 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>序号，1 起，与清单顺序一致。</summary>
         public int Id { get; init; }
 
-        /// <summary>变量名（C 标识符规则；固定 <c>sys_</c> 前缀）。</summary>
+        /// <summary>
+        /// 行为身份 —— 取值逻辑按它分派（见 <see cref="SystemVariableValues"/>）。
+        /// <para>与 <see cref="Name"/> 分开，是为了让**改名不影响行为**。</para>
+        /// </summary>
+        public SystemVariableKind Kind { get; init; }
+
+        /// <summary>变量名（C 标识符规则；固定 <c>sys_</c> 前缀）。这是对外约定，改它等于改协议。</summary>
         public string Name { get; init; } = string.Empty;
 
         /// <summary>数据类型。目前只用到 <c>BOOL</c>（时钟类）与 <c>INT</c>（时间类）。</summary>
@@ -50,27 +115,28 @@ namespace DSH_Modbus采集工具.Modeling
         /// </summary>
         public static IReadOnlyList<SystemVariable> All { get; } = new[]
         {
-            Item(1, "sys_True", DataType.Bool, "始终为true"),
-            Item(2, "sys_False", DataType.Bool, "始终为false"),
-            Item(3, "sys_Pulse100ms", DataType.Bool, "100ms周期时钟：50ms ON，50ms OFF"),
-            Item(4, "sys_Pulse1s", DataType.Bool, "1s周期时钟：0.5s ON，0.5s OFF"),
-            Item(5, "sys_Pulse2s", DataType.Bool, "2s周期时钟：1s ON，1s OFF"),
+            Item(1, SystemVariableKind.ConstTrue, "sys_True", DataType.Bool, "始终为true"),
+            Item(2, SystemVariableKind.ConstFalse, "sys_False", DataType.Bool, "始终为false"),
+            Item(3, SystemVariableKind.Pulse100ms, "sys_Pulse100ms", DataType.Bool, "100ms周期时钟：50ms ON，50ms OFF"),
+            Item(4, SystemVariableKind.Pulse1s, "sys_Pulse1s", DataType.Bool, "1s周期时钟：0.5s ON，0.5s OFF"),
+            Item(5, SystemVariableKind.Pulse2s, "sys_Pulse2s", DataType.Bool, "2s周期时钟：1s ON，1s OFF"),
 
-            Item(6, "sys_DateTime_Second", DataType.Int, "系统当前时钟：秒"),
-            Item(7, "sys_DateTime_Minute", DataType.Int, "系统当前时钟：分"),
-            Item(8, "sys_DateTime_Hour", DataType.Int, "系统当前时钟：时"),
-            Item(9, "sys_DateTime_Week", DataType.Int, "系统当前时钟：星期"),
-            Item(10, "sys_DateTime_Day", DataType.Int, "系统当前时钟：日"),
-            Item(11, "sys_DateTime_Month", DataType.Int, "系统当前时钟：月"),
-            Item(12, "sys_DateTime_Year", DataType.Int, "系统当前时钟：年"),
+            Item(6, SystemVariableKind.DateTimeSecond, "sys_DateTime_Second", DataType.Int, "系统当前时钟：秒"),
+            Item(7, SystemVariableKind.DateTimeMinute, "sys_DateTime_Minute", DataType.Int, "系统当前时钟：分"),
+            Item(8, SystemVariableKind.DateTimeHour, "sys_DateTime_Hour", DataType.Int, "系统当前时钟：时"),
+            Item(9, SystemVariableKind.DateTimeWeek, "sys_DateTime_Week", DataType.Int, "系统当前时钟：星期（1~7）"),
+            Item(10, SystemVariableKind.DateTimeDay, "sys_DateTime_Day", DataType.Int, "系统当前时钟：日"),
+            Item(11, SystemVariableKind.DateTimeMonth, "sys_DateTime_Month", DataType.Int, "系统当前时钟：月"),
+            Item(12, SystemVariableKind.DateTimeYear, "sys_DateTime_Year", DataType.Int, "系统当前时钟：年"),
 
-            Item(13, "sys_RunTime_Second", DataType.Int, "系统已运行时间：秒（0~59）"),
-            Item(14, "sys_RunTime_Minute", DataType.Int, "系统已运行时间：分（0~59）"),
-            Item(15, "sys_RunTime_Hour", DataType.Int, "系统已运行时间：时（0~23）"),
-            Item(16, "sys_RunTime_Day", DataType.Int, "系统已运行时间：日"),
+            Item(13, SystemVariableKind.RunTimeSecond, "sys_RunTime_Second", DataType.Int, "系统已运行时间：秒（0~59）"),
+            Item(14, SystemVariableKind.RunTimeMinute, "sys_RunTime_Minute", DataType.Int, "系统已运行时间：分（0~59）"),
+            Item(15, SystemVariableKind.RunTimeHour, "sys_RunTime_Hour", DataType.Int, "系统已运行时间：时（0~23）"),
+            Item(16, SystemVariableKind.RunTimeDay, "sys_RunTime_Day", DataType.Int, "系统已运行时间：日"),
         };
 
-        private static SystemVariable Item(int id, string name, DataType type, string comment) =>
-            new SystemVariable { Id = id, Name = name, Type = type, Comment = comment };
+        private static SystemVariable Item(
+            int id, SystemVariableKind kind, string name, DataType type, string comment) =>
+            new SystemVariable { Id = id, Kind = kind, Name = name, Type = type, Comment = comment };
     }
 }
