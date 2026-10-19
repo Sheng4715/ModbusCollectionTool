@@ -142,11 +142,11 @@
 
    | 序号 | 变量名称 | 数据类型 | 注释 |
    |---|---|---|---|
-   | 1 | sys_true | BOOL | 始终为 true |
-   | 2 | sys_false | BOOL | 始终为 false |
-   | 3 | sys_pulse100ms | BOOL | 100ms 周期时钟：50ms ON，50ms OFF |
-   | 4 | sys_pulse1s | BOOL | 1s 周期时钟：0.5s ON，0.5s OFF |
-   | 5 | sys_pulse2s | BOOL | 2s 周期时钟：1s ON，1s OFF |
+   | 1 | sys_True | BOOL | 始终为 true |
+   | 2 | sys_False | BOOL | 始终为 false |
+   | 3 | sys_Pulse100ms | BOOL | 100ms 周期时钟：50ms ON，50ms OFF |
+   | 4 | sys_Pulse1s | BOOL | 1s 周期时钟：0.5s ON，0.5s OFF |
+   | 5 | sys_Pulse2s | BOOL | 2s 周期时钟：1s ON，1s OFF |
    | 6 | sys_DateTime_Second | INT | 系统当前时钟：秒 |
    | 7 | sys_DateTime_Minute | INT | 系统当前时钟：分 |
    | 8 | sys_DateTime_Hour | INT | 系统当前时钟：时 |

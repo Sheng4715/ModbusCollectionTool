@@ -393,7 +393,7 @@ Window
 表列：**序号 / 变量名称 / 数据类型 / 注释** —— 比全局变量少了**映射地址**与**删除**两列。
 
 - 清单在 `Modeling/SystemVariable.cs` 的 `SystemVariable.All`：**逐项写死、不落盘、不可增删改**
-- 前 5 项 `BOOL`（`sys_true` / `sys_false` / 三个周期时钟），后 11 项 `INT`（7 个系统时钟 + 4 个运行时长）
+- 前 5 项 `BOOL`（`sys_True` / `sys_False` / 三个周期时钟），后 11 项 `INT`（7 个系统时钟 + 4 个运行时长）
 - **每格都是 `TextBlock`**：没有输入框、没有下拉框，连焦点都拿不到 ——
   只读性由**控件类型**表达，不靠 `IsReadOnly`（后者仍能选中、能弹输入法）
 - 数据类型显示名走 `DataTypes.Get(Type).DisplayName`（`BOOL` / `INT`），**不另写字面量**

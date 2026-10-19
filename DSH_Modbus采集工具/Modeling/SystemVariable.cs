@@ -50,11 +50,11 @@ namespace DSH_Modbus采集工具.Modeling
         /// </summary>
         public static IReadOnlyList<SystemVariable> All { get; } = new[]
         {
-            Item(1, "sys_true", DataType.Bool, "始终为true"),
-            Item(2, "sys_false", DataType.Bool, "始终为false"),
-            Item(3, "sys_pulse100ms", DataType.Bool, "100ms周期时钟：50ms ON，50ms OFF"),
-            Item(4, "sys_pulse1s", DataType.Bool, "1s周期时钟：0.5s ON，0.5s OFF"),
-            Item(5, "sys_pulse2s", DataType.Bool, "2s周期时钟：1s ON，1s OFF"),
+            Item(1, "sys_True", DataType.Bool, "始终为true"),
+            Item(2, "sys_False", DataType.Bool, "始终为false"),
+            Item(3, "sys_Pulse100ms", DataType.Bool, "100ms周期时钟：50ms ON，50ms OFF"),
+            Item(4, "sys_Pulse1s", DataType.Bool, "1s周期时钟：0.5s ON，0.5s OFF"),
+            Item(5, "sys_Pulse2s", DataType.Bool, "2s周期时钟：1s ON，1s OFF"),
 
             Item(6, "sys_DateTime_Second", DataType.Int, "系统当前时钟：秒"),
             Item(7, "sys_DateTime_Minute", DataType.Int, "系统当前时钟：分"),
