@@ -54,6 +54,12 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private Func<string, GlobalVariable?>? _variableLookup;
 
+        /// <summary>
+        /// 本行是「内存变量」：变量存在但**没有映射地址**，故不参与 Modbus 读写，
+        /// 值由用户在「当前值」格里直接维护（见 <see cref="TrySetMemoryValue"/>）。
+        /// </summary>
+        private bool _isMemoryVariable;
+
         public MonitorItem(DataPoint model)
         {
             Model = model ?? throw new ArgumentNullException(nameof(model));
@@ -149,6 +155,24 @@ namespace DSH_Modbus采集工具
 
         /// <summary>本项是否监控的是全局变量（而非直接的元件地址）。</summary>
         public bool IsVariable => Model.IsVariable;
+
+        /// <summary>
+        /// 本项是**内存变量**（变量存在但没有映射地址）：不轮询、不写报文，
+        /// 「当前值」格可直接编辑，值写进变量本身。
+        /// </summary>
+        public bool IsMemoryVariable => _isMemoryVariable;
+
+        /// <summary>切换内存变量标记并通知界面（无变化时静默）。</summary>
+        private void SetMemoryVariable(bool value)
+        {
+            if (_isMemoryVariable == value)
+            {
+                return;
+            }
+
+            _isMemoryVariable = value;
+            OnPropertyChanged(nameof(IsMemoryVariable));
+        }
 
         /// <summary>
         /// 变量行：类型下拉框必须**置灰** —— 类型由变量定义决定，
@@ -378,6 +402,9 @@ namespace DSH_Modbus采集工具
             OnPropertyChanged(nameof(FormatDisplayName));
             OnPropertyChanged(nameof(RawCount));
 
+            // 每次解析先假定不是内存变量；只有下面那个分支会重新置 true
+            SetMemoryVariable(false);
+
             if (driver == null)
             {
                 ResolveError = "未选择设备类型";
@@ -423,13 +450,35 @@ namespace DSH_Modbus采集工具
                 return false;
             }
 
-            // 变量没有映射地址 = 内存变量，不参与轮询
+            // 变量没有映射地址 = **内存变量**：合法，但不参与 Modbus 读写。
+            // 它的「当前值」由用户在监控行里直接维护（见 TrySetMemoryValue），
+            // 所以这里不是错误 —— 标红会让一条能用的行看起来是配错了。
             if (!variable.HasAddress)
             {
-                error = $"全局变量 {variable.Name} 未关联映射地址，无法采集";
+                Model.Type = variable.Type;
+                Model.Format = variable.Format;
+                Model.Length = variable.Length;
+                Model.Element = string.Empty;
+                Model.Index = string.Empty;
+                Model.Address = -1;
+                Model.Area = variable.Area;
+
+                OnPropertyChanged(nameof(TypeDisplayName));
+                OnPropertyChanged(nameof(FormatDisplayName));
+                OnPropertyChanged(nameof(RawCount));
+
                 Address = -1;
-                ResolveError = error;
-                return false;
+                ResolveError = null;
+                SetMemoryVariable(true);
+
+                // 正在输入时不要用变量里存的旧值冲掉用户手上的内容
+                if (!IsEditing)
+                {
+                    CurrentValue = variable.Value;
+                }
+
+                error = string.Empty;
+                return true;
             }
 
             if (variable.ResolvedAddress < 0)
@@ -458,6 +507,66 @@ namespace DSH_Modbus采集工具
             Address = variable.ResolvedAddress;
             ResolveError = null;
             error = string.Empty;
+            return true;
+        }
+
+        /// <summary>
+        /// 提交内存变量的「当前值」：校验文本后写进**变量本身**（<see cref="GlobalVariable.Value"/>）。
+        /// <para>
+        /// 内存变量没有映射地址，没有寄存器可写 —— 值只存在内存里，
+        /// 所以这里**不产生任何报文**，也不需要连接 PLC。
+        /// 写进变量而不是只写本行，是为了让监控同一变量的多行保持一致，
+        /// 且重新解析时能把值取回来。
+        /// </para>
+        /// <para>
+        /// 校验规则与 Modbus 写入完全一致（BOOL 只认 0/1，其余按类型与显示格式解析），
+        /// 免得同一个值在这里能填、接到地址后却写不进去。
+        /// </para>
+        /// </summary>
+        /// <param name="driver">提供字节顺序；未选设备时用默认顺序（只影响编码，不影响是否合法）。</param>
+        public bool TrySetMemoryValue(string? text, CommDriver? driver, out string error)
+        {
+            error = string.Empty;
+
+            if (!_isMemoryVariable)
+            {
+                error = "本行不是内存变量";
+                return false;
+            }
+
+            GlobalVariable? variable = _variableLookup?.Invoke(Model.VariableName);
+            if (variable == null)
+            {
+                error = $"全局变量 {Model.VariableName} 不存在";
+                return false;
+            }
+
+            string value = (text ?? string.Empty).Trim();
+            DataTypeSpec spec = DataTypes.Get(variable.Type);
+
+            if (spec.CoilOnly)
+            {
+                if (value != "0" && value != "1")
+                {
+                    error = "线圈只能写 0 或 1";
+                    return false;
+                }
+            }
+            else if (!ValueCodec.TryEncodeRegisters(
+                         variable.Type,
+                         variable.Format,
+                         value,
+                         variable.Length,
+                         driver?.Int32ByteOrder ?? ByteOrder32.Order1234,
+                         driver?.StringByteOrder ?? StringByteOrder.Order12,
+                         out _,
+                         out error))
+            {
+                return false;
+            }
+
+            variable.Value = value;
+            CurrentValue = value;
             return true;
         }
 
@@ -759,7 +868,11 @@ namespace DSH_Modbus采集工具
         {
             foreach (MonitorItem item in _items)
             {
-                item.ReadError = reason;
+                // 内存变量根本不在读取计划里，给它标"读失败"是误报
+                if (!item.IsMemoryVariable)
+                {
+                    item.ReadError = reason;
+                }
             }
         }
 
@@ -783,6 +896,13 @@ namespace DSH_Modbus采集工具
             if (item.HasError)
             {
                 error = item.ResolveError ?? "该项配置有误";
+                return false;
+            }
+
+            // 内存变量没有地址，谈不上报文；它的值走 TrySetMemoryValue
+            if (item.IsMemoryVariable)
+            {
+                error = "内存变量不通过 Modbus 写入";
                 return false;
             }
 

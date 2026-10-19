@@ -2843,19 +2843,39 @@ namespace DSH_Modbus采集工具
             ModbusTcpClient? modbus = _session.Client;
             CommDriver? driver = _currentDriver;
 
-            // 按需求：建立连接后即可写入，不要求自由监控分段可见。
-            if (!_session.IsConnected || modbus == null || driver == null)
-            {
-                item.WriteError = "未连接，无法写入";
-                return;
-            }
-
             string text = box.Text;
 
             // 回车与失焦是两条路径，会先后各触发一次提交（回车后焦点转移会连带引得失焦）。
             // 同一次编辑只写一次：值与上次提交的相同就跳过。
             if (_lastCommittedValue.TryGetValue(box, out string? last) && last == text)
             {
+                return;
+            }
+
+            // 内存变量：没有映射地址，没有寄存器可写，**也不需要连接** ——
+            // 值直接存进变量本身，一个报文都不发。
+            // 放在连接检查之前，否则没连 PLC 时连内存变量都改不了。
+            if (item.IsMemoryVariable)
+            {
+                if (!item.TrySetMemoryValue(text, driver, out string memoryError))
+                {
+                    item.WriteError = memoryError;
+                    item.IsEditing = true;
+                    _lastCommittedValue[box] = text; // 同一份非法内容不重复报告
+                    return;
+                }
+
+                _lastCommittedValue[box] = text;
+                item.WriteError = null;
+                item.ReadError = null;
+                item.IsEditing = false;
+                return;
+            }
+
+            // 按需求：建立连接后即可写入，不要求自由监控分段可见。
+            if (!_session.IsConnected || modbus == null || driver == null)
+            {
+                item.WriteError = "未连接，无法写入";
                 return;
             }
 

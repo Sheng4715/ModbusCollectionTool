@@ -306,7 +306,15 @@ Window
   类型由变量表决定，在监控行里改它等于绕过变量表另立一份定义
 - 变量行的类型 / 长度 / 映射地址**每次解析都从变量表现取**（`MonitorItem.ResolveVariable`），
   变量改了类型，监控行自动跟着变，不留过期副本
-- 变量**没有映射地址**（内存变量）→ 监控行标红「未关联映射地址，无法采集」，不参与轮询
+- 变量**没有映射地址**＝**内存变量**：**可以**放进自由监控，且是**合法行**（不标红）。
+  - 它不参与 Modbus 读写：`ReadableItems` 只取 `Address >= 0 && !HasError`，内存变量地址恒为 -1，天然被排除；
+    `MarkAllReadFailed` 也要跳过它，否则断线时会给一条根本不读的行标琥珀色
+  - **「当前值」格可直接改**（`MonitorItem.TrySetMemoryValue`）：值写进 `GlobalVariable.Value`，
+    **一个报文都不发、也不需要连接** —— 故提交逻辑放在 `CommitMonitorValueAsync` 的连接检查**之前**
+  - 校验规则与 Modbus 写入完全一致（BOOL 只认 0/1，其余走 `ValueCodec.TryEncodeRegisters`），
+    免得同一个值在这里能填、接到地址后却写不进去
+  - `MonitorItemSet.TryBuildWrite` 对内存变量直接返回失败（"内存变量不通过 Modbus 写入"），防止被误当成可写地址
+  - 值写进**变量**而不是只写本行：监控同一变量的多行保持一致，重新解析时也能取回来
 - 变量**改名 / 删除**后，引用它的监控行会标红「变量不存在」——
   窗口在变量的改名 / 改类型 / 改地址 / 删除 / 清空后统一调 `RefreshMonitorRowsAfterVariableChange`
 - ⚠️ 变量名与元件名是两个命名空间（`DataPoint.VariableName` vs `Element`+`Index`），
@@ -330,7 +338,8 @@ Window
   - 弹窗后回退到上次有效名称 —— 模型与磁盘里都不留非法变量名
   - ⚠️ 曾经的打字中行内标红（`GlobalVarName_TextChanged`）已按需求移除
 - **类型决定地址区**（方案 C，`GlobalVariableRules.CanMapTo`）：`BOOL` → 线圈区；其余 → 寄存器区。实际可写范围由驱动 `AreasOfElement` 决定：**M/Y/S 可读写，X 只读**
-- **映射地址可空** = 内存变量：不参与轮询，值由用户手工维护
+- **映射地址可空** = 内存变量：不参与轮询，值由用户手工维护 ——
+  放进自由监控后，直接在监控行的「当前值」格里改（见 §5.1）
 - **切换数据类型时，仅当存储区变化才清空映射地址**（`GlobalVariableRules.AddressInvalidatedBy`）：
   - `BOOL ↔ 其余类型`（线圈 ↔ 寄存器）→ **清空**，旧地址必然校验失败（`TypeMismatch`）
   - `INT → REAL` 这类**同区**换类型 → **保留**，地址完全可用，清掉只是让用户重打一遍
@@ -362,7 +371,7 @@ Window
 - 选中处理器要接 `DataTypeSpec`，不是 `string`
 
 **离线断言**：`.tmp/GlobalVarCheck`（**158 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` / `DataPoint.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
-变量行另有一个 WPF 断言工程 `.tmp/MonitorVarCheck`（**42 项**，未提交）：`MonitorItem.cs` 用了 `System.Windows.Media.Brush`，故它必须 `UseWPF`；跑前先 `$env:TEMP = "$PWD\.tmp\mv-temp"`。
+变量行另有一个 WPF 断言工程 `.tmp/MonitorVarCheck`（**63 项**，未提交；含内存变量可改值、不入读取计划、断线不误标）：`MonitorItem.cs` 用了 `System.Windows.Media.Brush`，故它必须 `UseWPF`；跑前先 `$env:TEMP = "$PWD\.tmp\mv-temp"`。
 
 ## 6. 心跳与连接生命周期
 
