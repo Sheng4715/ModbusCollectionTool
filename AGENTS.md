@@ -111,7 +111,7 @@ Window
 | `OverviewNav` 总览 | `OverviewPanel` | 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
-| `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **两分段**：「采集数据」（P3.1 骨架，采集导出未实现）/「全局变量」（P3.3，已实现，见 §5.2） |
+| `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1 骨架，采集导出未实现）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5，只读清单，见 §5.3） |
 | `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 日志保存（P5.2）+ 项目信息（P5.3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
@@ -240,6 +240,7 @@ Window
 | 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（算术在 `IoPager`；控件写入留本类） |
 | 导入 | `ImportIoTableButton_Click` → `IoTableImporter.Read`（`MessageBox` 留本类） |
 | **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 §5.1） |
+| **系统变量（P3.5）** | 清单写死在 `Modeling/SystemVariable.cs`；窗口侧只有 `AcqView_Checked` 切面板 + 构造期一次绑定，**没有任何编辑处理器**（见 §5.3） |
 | **全局变量（P3.3）** | `AddGlobalVar_Click` / `RemoveGlobalVar_Click` / `ClearGlobalVars_Click` / `GlobalVarName_TextChanged` / `GlobalVarName_LostFocus` / `GlobalVarAddress_LostFocus` / `GlobalVarComment_LostFocus` / `GlobalVarType_SelectionChanged` / `RefreshGlobalVarView` / `FocusGlobalVarRow` / `AcqView_Checked`（见 §5.2；**只管理定义，不读不写**） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（闸门 + 填下拉框）/ `TargetNicComboBox_SelectionChanged`；扫描与还原规则在 `Net/NicScanner.cs`。选择持久化见 §3.4 |
@@ -333,7 +334,7 @@ Window
 
 ### 5.2 全局变量（P3.3，采集配置页第二分段）
 
-采集配置页分两段：**采集数据**（P3.1 骨架）/ **全局变量**（本项）。
+采集配置页分三段：**采集数据**（P3.1 骨架）/ **全局变量**（本项）/ **系统变量**（P3.5，见 §5.3）。
 表列：**序号 / 变量名称 / 数据类型 / 映射地址 / 注释 / 删除**。
 
 ⚠️ **本页只管理变量定义** —— 不显示当前值、不轮询、不写入。变量的读/写属后续采集与 MES 阶段；
@@ -385,6 +386,26 @@ Window
 
 **离线断言**：`.tmp/GlobalVarCheck`（**164 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` / `DataPoint.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
 变量行另有一个 WPF 断言工程 `.tmp/MonitorVarCheck`（**63 项**，未提交；含内存变量可改值、不入读取计划、断线不误标）：`MonitorItem.cs` 用了 `System.Windows.Media.Brush`，故它必须 `UseWPF`；跑前先 `$env:TEMP = "$PWD\.tmp\mv-temp"`。
+
+### 5.3 系统变量（P3.5，采集配置页第三分段）
+
+摆出一份**写死、只读**的预定义变量清单（16 项）。
+表列：**序号 / 变量名称 / 数据类型 / 注释** —— 比全局变量少了**映射地址**与**删除**两列。
+
+- 清单在 `Modeling/SystemVariable.cs` 的 `SystemVariable.All`：**逐项写死、不落盘、不可增删改**
+- 前 5 项 `BOOL`（`sys_true` / `sys_false` / 三个周期时钟），后 11 项 `INT`（7 个系统时钟 + 4 个运行时长）
+- **每格都是 `TextBlock`**：没有输入框、没有下拉框，连焦点都拿不到 ——
+  只读性由**控件类型**表达，不靠 `IsReadOnly`（后者仍能选中、能弹输入法）
+- 数据类型显示名走 `DataTypes.Get(Type).DisplayName`（`BOOL` / `INT`），**不另写字面量**
+- 表头右侧只有「共 16 个」计数，**没有** ＋ / 删除全部按钮
+- 列宽 34 / 140 / 106 / `*`，行高 30，与全局变量逐值一致；
+  ⚠️ 表头与 `SystemVarItemTemplate` 的 `ColumnDefinition` **必须同步改**，否则表头与内容错位
+- `sys_DateTime_*` 是 `DateTime`（不是 ~~`DataTime`~~，需求文档原稿的笔误，已定案更正）
+- ⚠️ **不要给它加排序 / 搜索 / 编辑**：清单是对外约定，改动等于改协议 ——
+  先改 `Brief.md` P3.5，再改代码与断言
+
+**离线断言**：`.tmp/SystemVarCheck`（**52 项**，未提交），改 `SystemVariable.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\svc-temp"`。
+断言覆盖：16 项规模 / 序号 1..16 / 名称唯一且符合 `GlobalVariableRules` / 逐字名称表 / 类型与显示名 / 注释非空。
 
 ## 6. 心跳与连接生命周期
 
@@ -649,6 +670,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | IO 采集范围 | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` → `_visiblePage` 快照 + `CommDriver.FindArea` 分块（单块 ≤2000） |
 | **自由监控读取（分块规划）** | `MonitorItemSet.BuildReadPlan`（按 `ModbusArea` 分组 + 地址连续性分块）+ `MonitorItemSet.ApplyBlock`（偏移切片 + 格式化回填） |
 | **自由监控轮询入口** | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` 开头按 `_freeViewActive` 分流 → `PollFreeMonitorAsync`（按区选 FC01/FC03/FC04，单块失败不断线） |
+| **系统变量（P3.5，写死只读）** | `Modeling/SystemVariable.cs`（16 项清单）+ 窗口 `AcqView_Checked`（见 **§5.3**；无编辑入口） |
 | **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化）+ `GlobalVarItem.cs`（界面包装）+ 窗口 `GlobalVar*` 处理器（见 **§5.2**；不读不写） |
 | **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | **自由监控写入（FC05/06/16）** | `MonitorItemSet.TryBuildWrite`（文本 → `WritePlan`）+ `ValueCodec.TryEncodeRegisters` / `EncodeStringFixed`；`MainWindow.xaml.cs` 的 `CommitMonitorValueAsync` → `WriteToDeviceAsync`；报文层 `ModbusTcpClient.WriteSingleCoilAsync` / `WriteSingleRegisterAsync` / `WriteMultipleRegistersAsync` |

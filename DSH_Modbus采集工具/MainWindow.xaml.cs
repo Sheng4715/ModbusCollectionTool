@@ -308,6 +308,11 @@ namespace DSH_Modbus采集工具
             _monitorSet.Load();
             MonitorItemsControl.ItemsSource = _monitorSet.Items;
             RefreshMonitorView();
+
+            // 系统变量（P3.5）：清单写死在 Modeling/SystemVariable.cs —— 没有加载、
+            // 没有保存、也没有增删，绑定一次就完事（与两个可编辑表格的区别正在于此）
+            SystemVarItemsControl.ItemsSource = SystemVariable.All;
+            SystemVarCountText.Text = $"共 {SystemVariable.All.Count} 个";
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -1821,21 +1826,25 @@ namespace DSH_Modbus采集工具
 
         // ---------- 采集配置页分段（P3.1 / P3.3） ----------
 
-        /// <summary>采集配置页分段切换：采集数据 / 全局变量。</summary>
+        /// <summary>采集配置页分段切换：采集数据 / 全局变量 / 系统变量。</summary>
         private void AcqView_Checked(object sender, RoutedEventArgs e)
         {
-            if (AcquisitionDataPanel == null || GlobalVarPanel == null
+            if (AcquisitionDataPanel == null || GlobalVarPanel == null || SystemVarPanel == null
                 || AcquisitionDataSegment == null)
             {
                 return;
             }
 
             bool varView = GlobalVarSegment?.IsChecked == true;
+            bool sysView = SystemVarSegment?.IsChecked == true;
 
-            // 本页只管理变量定义，不采集值（值/格式的读写属后续阶段）
-
-            AcquisitionDataPanel.Visibility = varView ? Visibility.Collapsed : Visibility.Visible;
+            // 本页只管理变量定义，不采集值（值/格式的读写属后续阶段）；
+            // 系统变量连定义都不能改 —— 它是写死的清单，这里只负责摆出来。
+            AcquisitionDataPanel.Visibility = varView || sysView
+                ? Visibility.Collapsed
+                : Visibility.Visible;
             GlobalVarPanel.Visibility = varView ? Visibility.Visible : Visibility.Collapsed;
+            SystemVarPanel.Visibility = sysView ? Visibility.Visible : Visibility.Collapsed;
 
             if (varView)
             {

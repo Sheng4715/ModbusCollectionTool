@@ -1087,6 +1087,46 @@
             </Border>
         </DataTemplate>
 
+        <!-- 系统变量行（P3.5）。与 GlobalVarItemTemplate 同几何，差别：
+             · 去掉**映射地址**列与**删除**列；
+             · 每格都是 TextBlock —— 清单写死且只读，没有任何输入框 / 下拉框，
+               连焦点都拿不到，用户一眼就知道这里不能改；
+             · 数据类型也走 TextBlock，与相邻全局变量里的下拉框**底色不同**，
+               这个视觉差异本身就在说「这列不可选」。 -->
+        <DataTemplate x:Key="SystemVarItemTemplate">
+            <Border Height="30" Margin="0,0,0,2"
+                    Background="Transparent"
+                    BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
+                <Grid>
+                    <!-- 列定义必须与 SystemVarPanel 的表头完全一致 -->
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                        <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                        <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
+                        <ColumnDefinition Width="*"/>    <!-- 注释 -->
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="{Binding Id}"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                               VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Column="1" Text="{Binding Name}"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                               VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Column="2" Text="{Binding TypeName}"
+                               Margin="6,0,0,0"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                               VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Column="3" Text="{Binding Comment}"
+                               Margin="0,0,6,0"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                               VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
         <!-- 细滚动条 -->
         <Style TargetType="ScrollBar">
             <Setter Property="Background" Value="Transparent"/>
@@ -1692,6 +1732,11 @@
                                                          GroupName="AcqView"
                                                          Style="{StaticResource IoSegmentRadioButton}"
                                                          Checked="AcqView_Checked"/>
+                                            <RadioButton x:Name="SystemVarSegment"
+                                                         Content="系统变量"
+                                                         GroupName="AcqView"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="AcqView_Checked"/>
                                         </StackPanel>
                                     </Border>
                                 </Grid>
@@ -1787,6 +1832,61 @@
                                                    FontSize="12"
                                                    Foreground="{DynamicResource Brush.Text.Muted}"
                                                    Margin="0,10,0,6"/>
+                                    </Grid>
+
+                                    <!-- 系统变量（P3.5）
+                                         内容写死、全只读：只有表头 + 16 行文本，没有 + / 删除按钮。
+                                         表格式与全局变量同为「表头常驻、只让列表滚动」，故不写 MaxHeight。 -->
+                                    <Grid x:Name="SystemVarPanel" Visibility="Collapsed">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>   <!-- 表头（常驻） -->
+                                            <RowDefinition Height="*"/>      <!-- 列表（自身滚动） -->
+                                        </Grid.RowDefinitions>
+
+                                        <Border Grid.Row="0"
+                                                Height="46"
+                                                Margin="0,0,0,2"
+                                                Background="Transparent"
+                                                BorderBrush="{DynamicResource Brush.Divider}"
+                                                BorderThickness="0,0,0,1">
+                                            <Grid>
+                                                <!-- 列定义必须与 SystemVarItemTemplate 完全一致 -->
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                                                        <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                                                        <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
+                                                        <ColumnDefinition Width="*"/>    <!-- 注释 -->
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="1" Text="变量名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="3" Text="注释" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                </Grid>
+
+                                                <!-- 只有计数：清单写死，既不能增也不能删 -->
+                                                <TextBlock x:Name="SystemVarCountText"
+                                                           FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                                                           HorizontalAlignment="Right"
+                                                           Margin="0,0,7,0"
+                                                           VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 列表：只在这里滚动，且不写 MaxHeight -->
+                                        <ScrollViewer Grid.Row="1"
+                                                      VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollBarVisibility="Disabled">
+                                            <ItemsControl x:Name="SystemVarItemsControl"
+                                                          HorizontalContentAlignment="Stretch"
+                                                          ItemTemplate="{StaticResource SystemVarItemTemplate}">
+                                                <ItemsControl.ItemContainerStyle>
+                                                    <Style TargetType="ContentPresenter">
+                                                        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                                    </Style>
+                                                </ItemsControl.ItemContainerStyle>
+                                            </ItemsControl>
+                                        </ScrollViewer>
                                     </Grid>
                                 </Grid>
                             </Grid>
