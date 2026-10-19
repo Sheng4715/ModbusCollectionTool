@@ -132,6 +132,40 @@ namespace DSH_Modbus采集工具.Themes
             Save(_settings);
         }
 
+        // ==== 目标 IP / 端口（P?：连接参数持久化） ====
+
+        /// <summary>上次使用的目标 IP；空串表示没保存过，界面用默认值。</summary>
+        public static string TargetIp => _settings.TargetIp;
+
+        /// <summary>记住目标 IP 并落盘。传空串表示清除（回落到界面默认值）。</summary>
+        public static void SetTargetIp(string? ip)
+        {
+            _settings.TargetIp = (ip ?? string.Empty).Trim();
+            Save(_settings);
+        }
+
+        /// <summary>上次使用的端口号；0 表示没保存过，界面用默认值 502。</summary>
+        public static int TargetPort => _settings.TargetPort;
+
+        /// <summary>记住端口号并落盘。传 0 表示清除（回落到界面默认值）。</summary>
+        public static void SetTargetPort(int port)
+        {
+            _settings.TargetPort = port is >= 1 and <= 65535 ? port : 0;
+            Save(_settings);
+        }
+
+        // ==== 自动连接 ====
+
+        /// <summary>启动后是否自动连接 PLC（默认 true）。</summary>
+        public static bool AutoConnectPlc => _settings.AutoConnectPlc;
+
+        /// <summary>记住「自动连接 PLC」开关并落盘。</summary>
+        public static void SetAutoConnectPlc(bool enabled)
+        {
+            _settings.AutoConnectPlc = enabled;
+            Save(_settings);
+        }
+
         /// <summary>
         /// 显式选了默认目录时，存空串而非绝对路径（见 <see cref="SetMode"/>）。
         /// 由 <see cref="Save"/> 统一调用，**不放在各个 Setter 里**。
@@ -274,6 +308,27 @@ namespace DSH_Modbus采集工具.Themes
             /// </para>
             /// </summary>
             public string TargetNic { get; set; } = string.Empty;
+
+            /// <summary>
+            /// 上次使用的目标 IP。空串表示「没保存过」，沿用界面上的默认值
+            /// （<c>IpTextBox</c> 的 <c>Text="192.168.1.100"</c>）。
+            ///
+            /// <para>
+            /// 存空串而不是把默认值也写进文件：与 <see cref="LogDirectory"/> 同理，
+            /// 升级后的旧 json 没有这个字段 → 反序列化得空串 → 界面上仍是默认 IP，
+            /// 与升级前的行为完全一致，无需迁移。
+            /// </para>
+            /// </summary>
+            public string TargetIp { get; set; } = string.Empty;
+
+            /// <summary>上次使用的端口号。0 表示「没保存过」，沿用界面默认 502。</summary>
+            public int TargetPort { get; set; }
+
+            /// <summary>
+            /// 程序启动后是否自动连接 PLC。用户定稿：**默认打开**。
+            /// <para>属于「自动连接」这一组设置，后续同组还会加别的开关（见设置页卡片）。</para>
+            /// </summary>
+            public bool AutoConnectPlc { get; set; } = true;
         }
 
         private static AppSettings Load()

@@ -1904,7 +1904,8 @@
                                                  Width="200"
                                                  Style="{StaticResource FormTextBox}"
                                                  Text="192.168.1.100"
-                                                 TextChanged="ConfigInput_TextChanged"/>
+                                                 TextChanged="ConfigInput_TextChanged"
+                                                 LostFocus="ConfigInput_LostFocus"/>
                                         <Button x:Name="ConnectButton"
                                                 Content="连接"
                                                 Width="60"
@@ -1923,7 +1924,8 @@
                                                  Width="200"
                                                  Style="{StaticResource FormTextBox}"
                                                  Text="502"
-                                                 TextChanged="ConfigInput_TextChanged"/>
+                                                 TextChanged="ConfigInput_TextChanged"
+                                                 LostFocus="ConfigInput_LostFocus"/>
                                     </StackPanel>
 
                                 </StackPanel>
@@ -2093,6 +2095,46 @@
                                     </StackPanel>
                                 </Border>
                             </Grid>
+                        </Border>
+
+                        <!-- 自动连接：一张卡装一组开关，后续同组还会加（如 MES 连接）。
+                             卡片标题就是这一组的名字，子项各自一行、右侧一个开关 ——
+                             与「日志保存」卡同款两列，眼睛一次扫完。 -->
+                        <Border Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="自动连接"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"/>
+                                <TextBlock Text="设置程序启动后自动连接"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource Brush.Text.Muted}"
+                                           Margin="0,4,0,0"/>
+
+                                <!-- 子项：PLC 连接（默认打开） -->
+                                <Grid Margin="0,16,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0"
+                                               Text="PLC连接"
+                                               FontSize="14"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"
+                                               VerticalAlignment="Center"/>
+
+                                    <CheckBox x:Name="AutoConnectPlcToggle"
+                                              Grid.Column="1"
+                                              Style="{StaticResource ToggleSwitch}"
+                                              Content="开"
+                                              Margin="16,0,0,0"
+                                              VerticalAlignment="Center"
+                                              Checked="AutoConnectPlcToggle_Changed"
+                                              Unchecked="AutoConnectPlcToggle_Changed"/>
+                                </Grid>
+                            </StackPanel>
                         </Border>
 
                         <!-- 日志保存（P5-2） -->

@@ -19,7 +19,7 @@ dotnet run --project DSH_Modbus采集工具
 - 用户习惯：**构建成功后自动启动应用**；改动完成后及时提交（中文提交信息）
 - **版本号与构建日期在 `DSH_Modbus采集工具.csproj`**：`<VersionPrefix>` 手改（提版本时改这一处），
   `VersionSuffix` 由构建配置决定（Debug 自动带 `-debug`）；`<WriteBuildDate>` 目标每次编译现取
-  系统时间写入 `obj/.../BuildInfo.g.cs`。详见 §7.2
+  系统时间写入 `obj/.../BuildInfo.g.cs`。详见 §7.3
 
 ## 2. 目录结构
 
@@ -154,7 +154,14 @@ Window
 - **状态信息**：见 §5 IO 监控 / §5.1 自由监控。
 - **设备配置**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 §8.1）。连接中锁定表单（`SetInputsEnabled`）。串口模式仅隐藏以太网面板，**功能未实现**。
 
-**目标网卡的选择会被记住**（`app-settings.json` → `TargetNic`），下次启动仍选同一块：
+**连接参数会被记住**（`app-settings.json`）：`TargetNic` / `TargetIp` / `TargetPort`，下次启动回填。
+
+- IP / 端口**失焦才落盘**（`ConfigInput_LostFocus`）：这两个框还挂着 `TextChanged`（只用于刷新底栏概览），逐字符写盘会把 `192.168.1.` 这种半截内容存进 json
+- 端口非法（空 / 非数字 / 越界）时**保留上次的有效值**，不拿垃圾覆盖
+- 存**空串 / 0** 表示「没保存过」→ 界面保持 XAML 默认值（`192.168.1.100` / `502`）。旧 json 缺字段即为此态，无需迁移
+- 点「连接」前焦点会先离开输入框，故 `LostFocus` 一定先于 `Click` 跑，不会出现「改了 IP 直接点连接却没记住」
+
+**目标网卡**（`TargetNic`）的细节：
 
 - 存的是**网卡名**（如 `WLAN`），不是下拉框显示文本 `WLAN(192.168.1.15)` —— 文本里嵌着 IP，而同一块网卡换个网络 IP 就变（笔记本的 WLAN 在家 `192.168.1.x`、在公司 `10.0.0.x`），按文本匹配**恰好在最需要它的场景下失效**
 - 还原优先级：**本次扫描前的选择 → 上次运行记住的 → 第 0 项**
@@ -240,7 +247,7 @@ Window
 | 底栏 | `SetStatus` / `UpdateOverviewStatus` / `BuildConnectionDetail`（窗口侧薄包装）→ `Ui/StatusBarPresenter.cs`（规则本体）；`UpdateMaximizedInset` → `Ui/MaximizedInset.cs` |
 | **主题（P5.1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged`（底栏的状态色映射在 `Ui/StatusBarPresenter.cs`）；设置页 `SettingsPanel` + `SettingsNav`（见 §9.2） |
 | **日志落盘（P5.2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveToggle_Changed` / `SyncLogSaveToggle` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（见 §7.1） |
-| **项目信息（P5.3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（见 §7.2） |
+| **项目信息（P5.3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（见 §7.3） |
 | 关键字段 | `_session`（连接身份与生命周期）/ `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter`（日志呈现器）/ `_logWriter` / `_statusBar`（底栏呈现器）（**哪些是 `volatile` 以上表 §3.1 为准**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` 共 7 个） |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
@@ -464,7 +471,21 @@ Window
 - 独立验证工程 `DeviceLogCheck`（`.tmp/`，**23 项**断言）覆盖 `DeviceLogPresenter` 的内存上限裁剪 / 级别映射 / **共用时间戳** / 清空 / 换主题重建；改动日志编排后跑它（**未提交**，随用随弃，手法同 `PollerCheck`：链接源码 + 打桩 WPF 类型）
 - ⚠️ **在 DSH 下跑它时先改 TEMP**：`%TEMP%` 上挂着沙箱 ACE，子进程（`dotnet run`）建目录会被拒（`UnauthorizedAccessException`），而 pwsh 自己建得出来，故报错看着莫名其妙。先 `$env:TEMP = "$PWD\.tmp\lc-temp"` 再跑
 
-### 7.2 项目信息（P5.3）
+### 7.2 自动连接（设置页第二张卡）
+
+一张卡装一组开关，标题「自动连接」，副标题「设置程序启动后自动连接」。
+目前只有一个子项 **PLC连接**（`AutoConnectPlcToggle`，`ToggleSwitch`，**默认打开**）；后续同组还会加（如 MES 连接），
+新子项照抄下面的 `Grid` 两列结构即可。
+
+- 字段：`app-settings.json` → `AutoConnectPlc`（`bool`，缺字段按默认 `true`）
+- 开关文案在 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` 里由代码切 —— 与日志保存开关同一个坑：模板触发器里的 `Setter` 赢不过局部 `Content`
+- **启动时机**：`Window_Loaded` 末尾用 `Dispatcher.InvokeAsync(TryAutoConnect, DispatcherPriority.ApplicationIdle)` ——
+  先让首帧画出来，再发起连接（连接是异步的，失败原因要能落到界面上）
+- `TryAutoConnect` 的跳过条件：开关关 / 窗口已关 / 已连接或正在连 / **不是以太网模式**（串口未实现）/ IP 为空
+- **失败不重试**：与手动连接一致，首次连接失败交还控制权给用户
+- ⚠️ **不写设备日志**（需求）：自动连接是后台行为，成功由 `TryConnectAsync` 记「已连接」、失败记「连接失败」，不必再加一条
+
+### 7.3 项目信息（P5.3）
 
 设置页第三张卡，显示 **名称 / 版本 / 构建日期 / 运行环境**。全是常量，在 `Window_Loaded` 里 `RefreshProjectInfo()` 填一次。
 
@@ -610,7 +631,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | **加输入框 / 下拉框 / 按钮（新增控件必读）** | 套用现成样式，别手写外观 —— 见 **§9.1 控件风格约定** |
 | **改任何颜色（必读）** | 用主题键，**不要写字面量** —— 见 **§9.2 主题与配色** |
 | **加/改主题、深色适配、跟随系统** | `Themes/`（`Light.xaml` / `Dark.xaml` 同键）+ `Themes/ThemeManager.cs`；C# 侧画刷见 §9.2 |
-| **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；项目信息 `RefreshProjectInfo`（见 §7.2） |
+| **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；自动连接 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` / `TryAutoConnect`（见 §7.2）；项目信息 `RefreshProjectInfo`（见 §7.3） |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |

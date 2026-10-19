@@ -451,6 +451,14 @@ namespace DSH_Modbus采集工具
             SyncLogSaveToggle();
             ApplyLogDirectory(ThemeManager.LogDirectory);
 
+            // 连接参数与「自动连接」开关同理：启动时已从 app-settings.json 载入，这里只回填
+            ApplyConnectionSettings();
+            SyncAutoConnectToggle();
+
+            // 自动连接排到窗口真正显示之后：连接是异步的，失败原因要能落到界面上。
+            // 用 ApplicationIdle 而不是 Loaded 里直接调，是为了先让首帧画出来。
+            Dispatcher.InvokeAsync(TryAutoConnect, DispatcherPriority.ApplicationIdle);
+
             // P5-3：项目信息全是常量，填一次即可（不需要进页面时刷新）
             RefreshProjectInfo();
 
@@ -615,6 +623,112 @@ namespace DSH_Modbus采集工具
             bool enabled = ThemeManager.LogSaveEnabled;
             LogSaveToggle.IsChecked = enabled;
             LogSaveToggle.Content = enabled ? "开" : "关";
+        }
+
+        // ---------- 设置：自动连接（PLC 连接开关） ----------
+
+        private void SyncAutoConnectToggle()
+        {
+            bool enabled = ThemeManager.AutoConnectPlc;
+            AutoConnectPlcToggle.IsChecked = enabled;
+            AutoConnectPlcToggle.Content = enabled ? "开" : "关";
+        }
+
+        private void AutoConnectPlcToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            bool enabled = AutoConnectPlcToggle.IsChecked == true;
+
+            // 与 LogSaveToggle 同理：状态文案必须在这里改，
+            // ControlTemplate 触发器里的 Setter 是模板优先级，赢不过控件上的局部值
+            AutoConnectPlcToggle.Content = enabled ? "开" : "关";
+
+            ThemeManager.SetAutoConnectPlc(enabled);
+        }
+
+        /// <summary>
+        /// 按「自动连接」设置尝试连一次 PLC。
+        /// <para>
+        /// 只在**以太网**模式下自动连：串口（Modbus RTU）还没实现，连了也只会失败。
+        /// 失败**不重试** —— 与手动连接一致，首次连接失败交还控制权给用户。
+        /// </para>
+        /// </summary>
+        private void TryAutoConnect()
+        {
+            if (!ThemeManager.AutoConnectPlc || _windowClosed)
+            {
+                return;
+            }
+
+            if (_session.IsConnected || _session.IsConnecting)
+            {
+                return;
+            }
+
+            if (ConnectionTypeComboBox?.SelectedIndex != 0)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(IpTextBox?.Text))
+            {
+                return;
+            }
+
+            // 不写设备日志（需求）：自动连接是后台行为，静默进行即可；
+            // 成功会由 TryConnectAsync 记「已连接」，失败会记「连接失败」，不必再加一条。
+            ConnectButton_Click(ConnectButton, new RoutedEventArgs());
+        }
+
+        // ---------- 连接参数持久化（IP / 端口） ----------
+
+        /// <summary>
+        /// 把持久化的连接参数回填到界面。
+        /// <para>
+        /// 没保存过的项（空串 / 0）**保持 XAML 里的默认值** ——
+        /// 这样升级用户的旧 json 里没有这些字段时，行为与升级前完全一致。
+        /// </para>
+        /// </summary>
+        private void ApplyConnectionSettings()
+        {
+            if (IpTextBox != null && ThemeManager.TargetIp.Length > 0)
+            {
+                IpTextBox.Text = ThemeManager.TargetIp;
+            }
+
+            if (PortTextBox != null && ThemeManager.TargetPort > 0)
+            {
+                PortTextBox.Text = ThemeManager.TargetPort.ToString();
+            }
+        }
+
+        /// <summary>
+        /// IP / 端口失焦落盘。
+        /// <para>
+        /// **不能在 TextChanged 里写**：那是逐字符触发，用户打到 "192.168.1." 这半截时
+        /// 就被存进 json 了。与变量表的映射地址同一套「失焦提交」规则。
+        /// </para>
+        /// </summary>
+        private void ConfigInput_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox box)
+            {
+                return;
+            }
+
+            if (ReferenceEquals(box, IpTextBox))
+            {
+                ThemeManager.SetTargetIp(box.Text);
+                return;
+            }
+
+            if (ReferenceEquals(box, PortTextBox))
+            {
+                // 端口非法（空 / 非数字 / 越界）时**保留上次的有效值**，不拿垃圾覆盖它
+                if (int.TryParse(box.Text.Trim(), out int port) && port is >= 1 and <= 65535)
+                {
+                    ThemeManager.SetTargetPort(port);
+                }
+            }
         }
 
         /// <summary>
