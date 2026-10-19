@@ -218,8 +218,9 @@ namespace DSH_Modbus采集工具.Modeling
                     return;
 
                 case AddressErrorKind.InvalidElement:
+                    // 与另两处名称弹窗同一排版：正文最前面是**用户刚输入的内容**（外加双引号）
                     title = "软元件无效";
-                    body = $"{input}不是有效软元件";
+                    body = input.Length == 0 ? "不是有效软元件" : $"“{input}”不是有效软元件";
                     return;
 
                 default:
@@ -348,6 +349,11 @@ namespace DSH_Modbus采集工具.Modeling
                 v.ResolveError = error;
                 return false;
             }
+
+            // 元件符号统一大写，与自由监控的名称框（MonitorItem.SetName）一致：
+            // y27 与 Y27 是同一个元件。归一后写回 Address，界面与 json 都存规范形式。
+            element = element.ToUpperInvariant();
+            v.Address = element + index;
 
             // 方案 C：类型决定可映射的地址区
             IReadOnlyList<ModbusArea> candidates = driver.AreasOfElement(element);

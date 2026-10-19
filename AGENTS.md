@@ -356,7 +356,13 @@ Window
 - **注释仅给人看**；**与自由监控独立维护**（各用自己的 json）
 - **映射地址失焦即校验，失败弹框**（用户定稿）：
   - 软元件与数据类型不符 → 标题「数据类型不符」，正文「软元件与当前数据类型不符合。」
-  - 软元件无效（符号不存在 / 编号越界 / 超出地址范围 / 拆不出元件+编号）→ 标题「软元件无效」，正文「{输入内容}不是有效软元件」
+  - 软元件无效（符号不存在 / 编号越界 / 超出地址范围 / 拆不出元件+编号）→ 标题「软元件无效」，正文「“{输入内容}”不是有效软元件」
+    （与自由监控 / 变量名两处弹窗同一排版；输入为空时不加引号）
+  - **元件符号大小写不敏感**：`y27` 与 `Y27` 是同一个元件。`TryResolve` 拆出符号后统一
+    `ToUpperInvariant()` 并**写回 `v.Address`**，界面（失焦后回填）与 json 都存规范大写形式 ——
+    与自由监控名称框（`MonitorItem.SetName` 里也做 `ToUpperInvariant`）保持一致
+    - ⚠️ 归一发生在 `TryResolve` 内，故**所有**解析入口（新建 / 加载 json / 失焦校验）都受益；
+      加载到手工改小写的 json 也能正常解析，下次保存时自动转正
   - 其余（显示格式、STRING 长度、未选设备类型）→ 标题「映射地址无法解析」，正文转达原因
   - 文案本体在 `GlobalVariableRules.DescribeAddressError`（**纯函数**，离线断言直接核对这两句）；
     分类由 `AddressErrorKind`（`None` / `TypeMismatch` / `InvalidElement` / `Configuration`）表达
@@ -370,7 +376,7 @@ Window
 - 闭合态由 `MonitorTypeCombo` 模板直接读数据上下文的 `GlobalVarItem.TypeDisplayName`，缺这个属性同样显示空白
 - 选中处理器要接 `DataTypeSpec`，不是 `string`
 
-**离线断言**：`.tmp/GlobalVarCheck`（**158 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` / `DataPoint.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
+**离线断言**：`.tmp/GlobalVarCheck`（**164 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` / `DataPoint.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
 变量行另有一个 WPF 断言工程 `.tmp/MonitorVarCheck`（**63 项**，未提交；含内存变量可改值、不入读取计划、断线不误标）：`MonitorItem.cs` 用了 `System.Windows.Media.Brush`，故它必须 `UseWPF`；跑前先 `$env:TEMP = "$PWD\.tmp\mv-temp"`。
 
 ## 6. 心跳与连接生命周期

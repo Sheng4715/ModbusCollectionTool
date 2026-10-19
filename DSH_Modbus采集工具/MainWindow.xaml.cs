@@ -2120,7 +2120,14 @@ namespace DSH_Modbus采集工具
 
             if (kind != AddressErrorKind.None)
             {
+                // 失败时保留用户原样输入，方便就地改
                 ShowGlobalVarAddressError(item, wanted, kind);
+            }
+            else if (tb.Text != item.Address)
+            {
+                // 解析成功时元件符号已归一大写（y27 → Y27），把规范形式回填到框里，
+                // 与自由监控的名称框一致；不这么做，界面留着 y27、json 里却是 Y27
+                tb.Text = item.Address;
             }
 
             _globalVarSet.Save();
