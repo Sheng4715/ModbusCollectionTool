@@ -975,12 +975,12 @@
                                VerticalAlignment="Center"/>
 
                     <!-- 元件名称：符号与编号合并输入（方案 2），如 HD100 / X17；
-                         解析失败时本行标红；**失焦时**才提交并开始采集，
-                         名称不在驱动范围内会弹窗说明原因 -->
+                          也可填已定义的全局变量名。**打字途中不校验**（需求）：
+                          失焦或回车时才检查，不合法直接弹窗「不是有效软元件或变量」 -->
                     <TextBox x:Name="NameBox"
                              Grid.Column="1"
                              Style="{StaticResource MonitorInlineTextBox}"
-                             TextChanged="MonitorName_TextChanged"
+                             KeyDown="MonitorName_KeyDown"
                              LostFocus="MonitorName_LostFocus"/>
 
                     <!--
@@ -1053,10 +1053,11 @@
                                FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
                                VerticalAlignment="Center"/>
 
-                    <!-- 变量名称：C 标识符规则，失焦才提交（打字途中只标红） -->
+                    <!-- 变量名称：C 标识符规则。**打字途中不校验**（需求）：
+                         失焦或回车时才检查，不合法弹窗「变量名称不合法」+ 具体规则 -->
                     <TextBox Grid.Column="1" x:Name="VarNameBox"
                              Style="{StaticResource MonitorInlineTextBox}"
-                             TextChanged="GlobalVarName_TextChanged"
+                             KeyDown="GlobalVarName_KeyDown"
                              LostFocus="GlobalVarName_LostFocus"/>
 
                     <ComboBox Grid.Column="2" x:Name="VarTypeCombo"

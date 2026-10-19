@@ -1996,24 +1996,6 @@ namespace DSH_Modbus采集工具
             return null;
         }
 
-        /// <summary>变量名打字中：只做即时标红，不写模型（提交在失焦）。</summary>
-        private void GlobalVarName_TextChanged(object sender, TextChangedEventArgs e)
-        {
-            if (sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
-            {
-                return;
-            }
-
-            if (!tb.IsKeyboardFocusWithin)
-            {
-                return;
-            }
-
-            item.ResolveError = GlobalVariableRules.TryValidateName(tb.Text, out string err)
-                ? string.Empty
-                : err;
-        }
-
         /// <summary>
         /// 变量定义变了（改名 / 改类型 / 改地址 / 删除）之后，让自由监控里引用变量的行重新解析。
         /// <para>
@@ -2057,10 +2039,17 @@ namespace DSH_Modbus采集工具
             // 类型与地址都是解析时从变量表现取的临时值，本来就不进 json
         }
 
-        /// <summary>变量名失焦：唯一提交点。非法或重名则回退到上次有效名称。</summary>
-        private void GlobalVarName_LostFocus(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 变量名失焦（回车同效）：**唯一提交点**。
+        /// <para>
+        /// 打字途中**不校验**（需求）：一次打完再检查。不合法直接弹窗
+        /// 「变量名称不合法」+ 具体规则，随后回退到上次有效名称 ——
+        /// 模型与磁盘里都不留非法变量名。
+        /// </para>
+        /// </summary>
+        private void CommitGlobalVarName(TextBox tb)
         {
-            if (sender is not TextBox tb || VarRowOf(tb) is not GlobalVarItem item)
+            if (VarRowOf(tb) is not GlobalVarItem item)
             {
                 return;
             }
@@ -2070,7 +2059,6 @@ namespace DSH_Modbus采集工具
             if (_globalVarSet.Rename(item, wanted, out string error))
             {
                 tb.Text = item.Name;
-                item.ResolveError = string.Empty;
                 _globalVarSet.Save();
 
                 // 改名会让引用旧名字的监控行失效，必须重解析一遍
@@ -2078,9 +2066,35 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 失败：回退文本，把原因留在行内（不弹窗 —— 打字错误用红字已够）
+            // 失败：先回退文本，再把规则说清楚（标题点出性质，正文是具体规则）
             tb.Text = item.Name;
-            item.ResolveError = error;
+            MessageBox.Show(
+                this,
+                error,
+                "变量名称不合法",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+
+        /// <summary>变量名框失焦：交给唯一的提交点。</summary>
+        private void GlobalVarName_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is TextBox tb)
+            {
+                CommitGlobalVarName(tb);
+            }
+        }
+
+        /// <summary>变量名框按回车：等同失焦，立刻校验。</summary>
+        private void GlobalVarName_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter || sender is not TextBox tb)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            CommitGlobalVarName(tb);
         }
 
         /// <summary>
@@ -2409,72 +2423,26 @@ namespace DSH_Modbus采集工具
             return null;
         }
 
-        /// <summary>输入既不是变量名也不是合法元件名时，给出拆分器的原因（用于行内标红）。</summary>
-        private static string DescribeNameError(string? text) =>
-            CommDriver.TrySplitName(text, out _, out _, out string error) ? string.Empty : error;
-
         /// <summary>
-        /// 元件名称（方案 2 的合并输入框）改动：拆成「符号 + 编号」写回模型，再统一重解析 + 落盘。
+        /// 元件名称输入框**失焦**（回车同效）：**这是唯一提交点** —— 归一文本、重解析、落盘。
         /// <para>
-        /// 拆分失败（如打字途中的 <c>"HD"</c>）只标红、<b>不动模型</b>，等
-        /// <see cref="MonitorName_LostFocus"/> 把输入框恢复成上次有效名称。
+        /// 打字途中**不校验**（需求）：用户不必在输入 <c>D</c>、<c>D1</c> 时被红字打断，
+        /// 一次打完再检查。检查时机是失焦或回车。
+        /// </para>
+        /// <para>
+        /// 三种结果：
+        /// ① 合法且能解析 → 提交、落盘，下一拍轮询开始采集；
+        /// ② 名称不合法（拆不出元件 / 元件不在该驱动 / 编号越界）→
+        /// <b>弹窗「不是有效软元件或变量」</b>，且**不提交**（保持上次有效值）；
+        /// ③ 是合法变量但不能采集（没有映射地址 / 地址无效）→ 弹窗说明具体原因。
+        /// </para>
+        /// <para>
+        /// 不合法的配置**绝不落盘**：否则下次启动会带着一个永远读不到的项。
         /// </para>
         /// </summary>
-        /// <summary>
-        /// 元件名称输入框**打字中**：只做即时视觉反馈，**不提交、不采集**。
-        /// <para>
-        /// 采集与落盘一律等到<b>失焦</b>（<see cref="MonitorName_LostFocus"/>）——
-        /// 否则用户输入 <c>D100</c> 的过程中，<c>D</c>、<c>D1</c>、<c>D10</c> 都会各自
-        /// 成为一次"有效配置"并参与采集，既发无谓报文、又让列表内容闪烁。
-        /// </para>
-        /// <para>
-        /// 这里仍要读一次 <see cref="MonitorItem.SetName"/> 是为了**实时标红** ——
-        /// 输入明显非法（如 <c>D 100</c>）时立刻给反馈，不必等到失焦。
-        /// 但失败只标红，绝不写模型（打字途中的 <c>HD</c> 不能落盘）。
-        /// </para>
-        /// </summary>
-        private void MonitorName_TextChanged(object sender, TextChangedEventArgs e)
+        private void CommitMonitorName(TextBox tb)
         {
-            if (sender is not TextBox tb || RowOf(tb) is not MonitorItem item)
-            {
-                return;
-            }
-
-            // 程序回填（行初始化、失焦后归一）不参与校验，否则会误标红
-            if (!tb.IsKeyboardFocusWithin)
-            {
-                return;
-            }
-
-            // 只用「能否解析」做即时标红，**不写模型** ——
-            // 写了模型就等于提交了一半：下一拍轮询会拿这个半成品去采集，
-            // 而磁盘上还是旧值（内存/磁盘不一致）。
-            // 提交（含越界校验、落盘）统一在失焦时做。
-            //
-            // 变量名也在这里认：输入到一半（如 "MyVa"）既不是合法变量名也不是合法元件名，
-            // 标红是对的；一旦打全成已定义的变量名，红字立刻消失。
-            string typed = tb.Text.Trim();
-            bool ok = _globalVarSet.FindByName(typed) != null
-                || CommDriver.TrySplitName(tb.Text, out _, out _, out _);
-            item.SetPreviewError(ok ? null : $"配置有误：{DescribeNameError(tb.Text)}");
-        }
-
-        /// <summary>
-        /// 元件名称输入框失焦：**这是唯一提交点** —— 归一文本、重解析、落盘，
-        /// 之后该行才参与采集（见 <see cref="MonitorName_TextChanged"/>）。
-        /// <para>
-        /// 三种结果：① 归一成功且落在驱动范围内 → 提交并开始采集；
-        /// ② 归一成功但**编号越界 / 元件不在该驱动** → <b>弹窗提示</b>，且**不提交**（保持上次有效值）；
-        /// ③ 拆分失败（如 <c>D 100</c>）→ 回退文本到上次有效名称，不弹窗（打字错误，行内红字已够）。
-        /// </para>
-        /// <para>
-        /// 越界之所以要弹窗：行内 ToolTip 与红字容易被忽略，而"我以为配上了、
-        /// 实际一直在读别的地址"是会产生错误判断的静默失效。
-        /// </para>
-        /// </summary>
-        private void MonitorName_LostFocus(object sender, RoutedEventArgs e)
-        {
-            if (sender is not TextBox tb || RowOf(tb) is not MonitorItem item)
+            if (RowOf(tb) is not MonitorItem item)
             {
                 return;
             }
@@ -2484,11 +2452,11 @@ namespace DSH_Modbus采集工具
 
             if (!item.SetName(typed, out _))
             {
-                // ③ 拆分失败（如 "D 100"）：回退到上次有效名称。
-                // 不弹窗 —— 这是打字错误，行内红字 + ToolTip 已足够，弹窗会打断连续录入。
+                // ②-1 拆不出「元件 + 编号」，且不是已定义的变量名
                 tb.Text = previous;
                 item.SetName(previous, out _);
-                _monitorSet.ResolveOnly(item);   // 清掉错误态，不动落盘
+                _monitorSet.ResolveOnly(item);
+                ShowInvalidMonitorName();
                 return;
             }
 
@@ -2499,12 +2467,11 @@ namespace DSH_Modbus采集工具
                 tb.Text = canonical;
             }
 
-            // 名称归一后与落盘值一致、且当前没有预览错误 → 真的什么都没变，不必提交。
+            // 名称归一后与落盘值一致、且当前没有错误态 → 真的什么都没变，不必提交。
             // 注意判据用 previous（SetName 之前的值）而不是"模型当前值"，
             // 否则一旦模型被别处改过就会误判"没变化"而漏掉落盘。
             if (canonical == previous && !item.HasError)
             {
-                item.SetPreviewError(null);
                 return;
             }
 
@@ -2514,6 +2481,7 @@ namespace DSH_Modbus采集工具
                 item.Resolve(_currentDriver!, out string varError);
                 if (item.HasError)
                 {
+                    // ③ 变量本身合法，只是**不能用于采集**
                     MessageBox.Show(
                         this,
                         $"变量「{canonical}」不可用于监控：\n\n{varError}",
@@ -2532,6 +2500,7 @@ namespace DSH_Modbus采集工具
                 {
                     ApplyVariableRowState(varRow, item);
                 }
+
                 return;
             }
 
@@ -2541,28 +2510,55 @@ namespace DSH_Modbus采集工具
                 SyncMonitorTypeWithElement(row, item);
             }
 
-            // ② 名称合法但**不在驱动范围内**（编号越界 / 该驱动无此元件）→ 弹窗且**不提交**。
-            // 先只解析不落盘：越界的配置不该进 data-points.json，
-            // 否则下次启动会带着一个永远读不到的项。
-            item.Resolve(_currentDriver!, out string resolveError);
+            // ②-2 语法成立、但软元件本身无效（符号不在驱动 / 编号越界 / 八进制非法）
+            item.Resolve(_currentDriver!, out _);
             if (item.HasError)
             {
-                MessageBox.Show(
-                    this,
-                    $"元件名称「{canonical}」不可用：\n\n{resolveError}\n\n请检查编号范围",
-                    "元件名称无效",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-
-                // 回退到上次有效名称并重解析，界面上不留一个坏配置
                 tb.Text = previous;
                 item.SetName(previous, out _);
                 _monitorSet.ResolveOnly(item);
+                ShowInvalidMonitorName();
                 return;
             }
 
             // ① 提交：落盘，下一拍轮询即开始采集该地址
             _monitorSet.AfterChange(item);
+        }
+
+        /// <summary>名称无效的统一提示（需求定稿文案）。</summary>
+        private void ShowInvalidMonitorName()
+            => MessageBox.Show(
+                this,
+                "不是有效软元件或变量",
+                "输入无效",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+
+        /// <summary>元件名称框失焦：交给唯一的提交点。</summary>
+        private void MonitorName_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is TextBox tb)
+            {
+                CommitMonitorName(tb);
+            }
+        }
+
+        /// <summary>
+        /// 元件名称框按回车：等同失焦，立刻校验。
+        /// <para>
+        /// 回车不会自己移走焦点，故直接调提交逻辑；之后真正的 LostFocus 再来一次时，
+        /// 名称已归一且无错误，会在"没变化"处提前返回，不会重复落盘。
+        /// </para>
+        /// </summary>
+        private void MonitorName_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter || sender is not TextBox tb)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            CommitMonitorName(tb);
         }
 
         /// <summary>

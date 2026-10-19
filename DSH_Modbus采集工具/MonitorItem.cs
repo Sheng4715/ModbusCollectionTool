@@ -319,16 +319,6 @@ namespace DSH_Modbus采集工具
         public bool HasError => !string.IsNullOrEmpty(_resolveError);
 
         /// <summary>
-        /// 打字途中的**纯视觉**错误态：只改标红与提示，<b>不碰模型、不碰地址</b>。
-        /// <para>
-        /// 存在的理由是「内存/磁盘不一致」—— 若打字时就 <see cref="SetName"/> 写模型，
-        /// 下一拍轮询会拿这个半成品名称去采集，而磁盘上仍是旧值。
-        /// 传 null 清除。
-        /// </para>
-        /// </summary>
-        public void SetPreviewError(string? error) => ResolveError = error;
-
-        /// <summary>
         /// 整行的悬停提示：**恒为空**。
         /// <para>
         /// 监控表格是常驻界面，鼠标划过是高频动作，悬停弹提示纯属干扰。

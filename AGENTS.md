@@ -274,8 +274,11 @@ Window
 - **数据类型由元件反推**（方案 1 是反过来的）：`SyncMonitorTypeWithElement` 按 `CommDriver.AreasOfElement` 判断该符号属于线圈还是寄存器 → 线圈只给 `BOOL`，寄存器给 6 种；改元件导致类型不符时自动纠正
   - ⚠️ `AreasOfElement` **只看符号、不看编号**，故编号越界时仍能给出正确的类型候选与错误文案
 - **输入校验**：`TrySplitName` 从严（编号必须 ASCII 数字，拒 `"D 100"` / `"D-1"` / 全角数字）
-- **提交时机＝失焦**（不是打字时）：`MonitorName_TextChanged` **只做视觉标红**（`SetPreviewError`），**绝不写模型** —— 打字途中若 `SetName` 就落盘，下一拍轮询会拿半成品名称去采集，而磁盘上仍是旧值（内存/磁盘不一致，实测表现为从站读 `800` 而 json 还是 `100`）
-  - `MonitorName_LostFocus` 是**唯一提交点**：拆分失败→静默回退到上次有效名称（不弹窗）；成功则解析，**若越界弹 `MessageBox`**（标题「元件名称无效」，正文含名称、原因与「请检查编号范围或重新选择设备类型。」），确认后同样回退且**不污染 json**
+- **校验与提交时机＝失焦或回车**（不是打字时）：输入框**打字途中完全不校验**（需求）—— 一次打完再检查。打字途中若 `SetName` 就落盘，下一拍轮询会拿半成品名称去采集，而磁盘上仍是旧值（内存/磁盘不一致，实测表现为从站读 `800` 而 json 还是 `100`）
+  - `CommitMonitorName` 是**唯一提交点**：`MonitorName_LostFocus` 与 `MonitorName_KeyDown` 的 Enter 都转调它。回车**不移走焦点**，故直接跑提交逻辑；随后真正的 LostFocus 会在"没变化"处提前返回，不会重复落盘
+  - **名称不合法 → 弹窗「不是有效软元件或变量」**（标题「输入无效」），覆盖三种情况：拆不出「元件+编号」、元件不在该驱动、编号越界或八进制非法（如 `X9`）。确认后回退到上次有效名称，**不污染 json**
+  - 例外：**是合法变量但不能采集**（内存变量 / 映射地址无效）→ 弹窗「变量无法采集」并给出具体原因 —— 名称本身合法，不该报"不是有效软元件或变量"
+  - ⚠️ 曾经的打字中标红（`MonitorName_TextChanged` + `MonitorItem.SetPreviewError`）已按需求**整体移除**，不要再加回来
 - **悬停提示已全部移除**：整行 `ToolTipText`、`NameBox` 的 `NameToolTip`、`ValueToolTip` **三者恒为 `null`** —— 监控表格是常驻界面，鼠标划过是高频动作，悬停弹提示纯属干扰。错误改由**颜色**表达（见下），越界改由**弹窗**表达。属性保留是为了将若要恢复只改一处、不动 XAML
 - **「当前值」初值为空字符串**（不是 `—`）：输入框里放破折号既不是有效值、还得先删掉才能输，而「空」本身已表达"还没读到"
 - 持久化 `data-points.json`（`DataPointStore`），增删改即时落盘；`_monitorSet`（`MonitorItemSet`）负责增删改与 `AfterChange` 重解析
@@ -322,6 +325,10 @@ Window
 `GlobalVariable.Value` 仍是内存字段（不落盘），但界面上没有编辑入口。
 
 - **变量名**：C 标识符 `[A-Za-z_][A-Za-z0-9_]*`，最长 **32**，**区分大小写**，**拒绝中文**（`GlobalVariableRules.TryValidateName`）；校验与重名检查都在 `GlobalVariableSet.Add` / `Rename`
+  - **打字途中不校验**（与自由监控同一节奏）：`CommitGlobalVarName` 是唯一提交点，失焦或回车触发
+  - 不合法**弹窗**：标题「变量名称不合法」，正文直接是 `TryValidateName` / `Rename` 给出的**具体规则**（「必须以字母或下划线开头」等）；重名同样走这条，正文为「变量名称 X 已存在」
+  - 弹窗后回退到上次有效名称 —— 模型与磁盘里都不留非法变量名
+  - ⚠️ 曾经的打字中行内标红（`GlobalVarName_TextChanged`）已按需求移除
 - **类型决定地址区**（方案 C，`GlobalVariableRules.CanMapTo`）：`BOOL` → 线圈区；其余 → 寄存器区。实际可写范围由驱动 `AreasOfElement` 决定：**M/Y/S 可读写，X 只读**
 - **映射地址可空** = 内存变量：不参与轮询，值由用户手工维护
 - **切换数据类型时，仅当存储区变化才清空映射地址**（`GlobalVariableRules.AddressInvalidatedBy`）：
