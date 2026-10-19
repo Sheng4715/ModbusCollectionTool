@@ -2066,11 +2066,13 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 失败：先回退文本，再把规则说清楚（标题点出性质，正文是具体规则）
+            // 失败：先回退文本，再把规则说清楚。
+            // 正文最前面是**用户刚输入的内容**（需求），一眼就能看出被拒的是哪一段；
+            // 标题点出性质，正文后接具体规则。
             tb.Text = item.Name;
             MessageBox.Show(
                 this,
-                error,
+                $"{wanted}{error}",
                 "变量名称不合法",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -2456,7 +2458,7 @@ namespace DSH_Modbus采集工具
                 tb.Text = previous;
                 item.SetName(previous, out _);
                 _monitorSet.ResolveOnly(item);
-                ShowInvalidMonitorName();
+                ShowInvalidMonitorName(typed);
                 return;
             }
 
@@ -2517,7 +2519,7 @@ namespace DSH_Modbus采集工具
                 tb.Text = previous;
                 item.SetName(previous, out _);
                 _monitorSet.ResolveOnly(item);
-                ShowInvalidMonitorName();
+                ShowInvalidMonitorName(typed);
                 return;
             }
 
@@ -2525,11 +2527,14 @@ namespace DSH_Modbus采集工具
             _monitorSet.AfterChange(item);
         }
 
-        /// <summary>名称无效的统一提示（需求定稿文案）。</summary>
-        private void ShowInvalidMonitorName()
+        /// <summary>
+        /// 名称无效的统一提示（需求定稿文案）。
+        /// <para>正文最前面是**用户刚输入的内容**，后接定稿文案。</para>
+        /// </summary>
+        private void ShowInvalidMonitorName(string? input)
             => MessageBox.Show(
                 this,
-                "不是有效软元件或变量",
+                $"{input?.Trim()}不是有效软元件或变量",
                 "输入无效",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
