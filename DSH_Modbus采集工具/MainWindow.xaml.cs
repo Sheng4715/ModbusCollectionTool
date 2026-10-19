@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -162,6 +163,41 @@ namespace DSH_Modbus采集工具
         /// <summary>全局变量集合（P3.3）。与自由监控各自独立维护。</summary>
         private readonly GlobalVarItemSet _globalVarSet = new();
 
+        /// <summary>
+        /// 系统变量的**运行时长起点**（单调时钟，P2.3）。
+        /// <para>
+        /// 用 <see cref="Stopwatch"/> 而不是 `DateTime.Now - 启动时刻`：系统校时会把后者
+        /// 瞬间挪几个小时甚至倒退，`sys_RunTime_*` 跟着乱跳、脉冲还会抖一下。
+        /// </para>
+        /// </summary>
+        private readonly Stopwatch _runClock = Stopwatch.StartNew();
+
+        /// <summary>
+        /// 系统变量监控表的刷新节拍。
+        /// <para>
+        /// 取 <b>50ms</b> 而不是 100ms：`sys_Pulse100ms` 的半周期正好是 50ms，
+        /// 若每 100ms 采一次，采样点永远是「50ms 的整数倍中步长 2」那一列 ——
+        /// 相位固定，读出来恒为同一个值，看上去就是**卡住不闪**。
+        /// 50ms 一拍刚好每半周期采到一次，值才会真的翻转。
+        /// </para>
+        /// <para>
+        /// ⚠️ 优先级必须是 <b>Background</b>：用 `DispatcherPriority.Render` 时，
+        /// 每拍都会牵动一次渲染调度，实测 7.6% 单核；改成 Background 后同样的刷新频率只有 1%。
+        /// 这个页面只是「看一眼」，没理由去抢渲染优先级。
+        /// </para>
+        /// </summary>
+        private readonly DispatcherTimer _sysVarTimer = new(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+        };
+
+        /// <summary>系统变量监控表的行（与 <c>SystemVariable.All</c> 一一对应，构造后不再变）。</summary>
+        private readonly List<SystemVarRow> _sysVarRows =
+            SystemVariable.All.Select(v => new SystemVarRow(v)).ToList();
+
+        /// <summary>是否停在状态信息页的「系统变量」分段（决定定时器启停）。</summary>
+        private bool _sysViewActive;
+
         /// <summary>是否停在采集配置页的「全局变量」分段（跨线程读，故 volatile）。</summary>
 
         /// <summary>STRING 长度的允许范围（选 STRING 时弹框校验用）。</summary>
@@ -313,6 +349,12 @@ namespace DSH_Modbus采集工具
             // 没有保存、也没有增删，绑定一次就完事（与两个可编辑表格的区别正在于此）
             SystemVarItemsControl.ItemsSource = SystemVariable.All;
             SystemVarCountText.Text = $"共 {SystemVariable.All.Count} 个";
+
+            // 系统变量监控（P2.3）：同一份清单，行对象多一个「当前值」；
+            // 定时器先不启动 —— 由「分段可见 + 页面可见」两个条件共同决定（见 SyncSystemVarTimer）
+            SystemVarMonitorItemsControl.ItemsSource = _sysVarRows;
+            SystemVarMonitorCountText.Text = $"共 {_sysVarRows.Count} 个";
+            _sysVarTimer.Tick += (_, _) => RefreshSystemVarValues();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -476,6 +518,7 @@ namespace DSH_Modbus采集工具
         {
             // 采集跟随页面可见性：离开状态信息页即停采（零报文，灯保留上次数据）
             _ioPageActive = ReferenceEquals(sender, StatusInfoNav);
+            SyncSystemVarTimer();
 
             if (OverviewPanel != null)
             {
@@ -1744,6 +1787,7 @@ namespace DSH_Modbus采集工具
         protected override void OnClosed(EventArgs e)
         {
             _windowClosed = true;
+            _sysVarTimer.Stop();
             Themes.ThemeManager.ThemeChanged -= OnThemeChanged;
             CancelReconnect();
             Disconnect();
@@ -1776,18 +1820,23 @@ namespace DSH_Modbus采集工具
             bool xView = XViewSegment.IsChecked == true;
             bool yView = YViewSegment.IsChecked == true;
             bool freeView = FreeViewSegment?.IsChecked == true;
+            bool sysView = SysVarViewSegment?.IsChecked == true;
 
             // 采集跟随可见分段：未显示区不读，保留上次数据
             _yViewActive = yView;
             _freeViewActive = freeView;
+            _sysViewActive = sysView;
 
             IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
             YIoColumnsGrid.Visibility = yView ? Visibility.Visible : Visibility.Collapsed;
 
-            // X/Y 共用的滚动容器：自由监控下整层隐藏，免得空容器与自由监控面板叠在同一格
+            // X/Y 共用的滚动容器：另外两个分段下整层隐藏，
+            // 免得空容器与面板叠在同一格
             if (IoScrollViewer != null)
             {
-                IoScrollViewer.Visibility = freeView ? Visibility.Collapsed : Visibility.Visible;
+                IoScrollViewer.Visibility = freeView || sysView
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
             }
 
             if (FreeMonitorPanel != null)
@@ -1795,32 +1844,96 @@ namespace DSH_Modbus采集工具
                 FreeMonitorPanel.Visibility = freeView ? Visibility.Visible : Visibility.Collapsed;
             }
 
-            // 导入 IO 表按钮只在 X/Y 分段下有意义（自由监控有自己的「新增监控项」）
-            if (ImportIoTableButton != null)
+            if (SystemVarMonitorPanel != null)
             {
-                ImportIoTableButton.Visibility = freeView ? Visibility.Collapsed : Visibility.Visible;
+                SystemVarMonitorPanel.Visibility = sysView ? Visibility.Visible : Visibility.Collapsed;
             }
 
-            // IO 分页控件在自由监控下无意义
-            if (IoPagerPanel != null && freeView)
+            // 导入 IO 表按钮只在 X/Y 分段下有意义（另外两个分段各有自己的内容）
+            if (ImportIoTableButton != null)
+            {
+                ImportIoTableButton.Visibility = freeView || sysView
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+            }
+
+            // IO 分页控件在另外两个分段下无意义
+            if (IoPagerPanel != null && (freeView || sysView))
             {
                 IoPagerPanel.Visibility = Visibility.Collapsed;
             }
 
-            // 空提示只属于 X/Y（自由监控有自己的空提示）
-            if (IoEmptyHint != null && freeView)
+            // 空提示只属于 X/Y（另外两个分段各有自己的内容）
+            if (IoEmptyHint != null && (freeView || sysView))
             {
                 IoEmptyHint.Visibility = Visibility.Collapsed;
             }
+
+            // 系统变量定时器跟随分段启停
+            SyncSystemVarTimer();
 
             if (freeView)
             {
                 RefreshMonitorView();
             }
+            else if (sysView)
+            {
+                RefreshSystemVarValues();
+            }
             else
             {
                 // 切段后本段有自己的页号与页数，重新切片绑定
                 ApplyIoPage();
+            }
+        }
+
+        // ---------- 系统变量监控（P2.3） ----------
+
+        /// <summary>
+        /// 把当前时刻的系统变量值推给界面。
+        /// <para>
+        /// 只写「变了的值」—— <see cref="SystemVarRow.Value"/> 的 setter 会挡掉同值赋值，
+        /// 故 100ms 一拍、16 行也不会产生无谓的绑定通知。
+        /// </para>
+        /// </summary>
+        private void RefreshSystemVarValues()
+        {
+            IReadOnlyDictionary<string, string> values =
+                SystemVariableValues.Capture(DateTime.Now, _runClock.Elapsed);
+
+            foreach (SystemVarRow row in _sysVarRows)
+            {
+                if (values.TryGetValue(row.Name, out string? value) && value != null)
+                {
+                    row.Value = value;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 系统变量定时器启停：**本分段可见 且 状态信息页可见** 才跑。
+        /// <para>
+        /// 与 X/Y、自由监控「采集跟随可见分段」同一套规矩 ——
+        /// 用户在看别的页面时，没有理由每 100ms 算一遍 16 个变量。
+        /// </para>
+        /// </summary>
+        private void SyncSystemVarTimer()
+        {
+            bool shouldRun = _sysViewActive && _ioPageActive && !_windowClosed;
+
+            if (shouldRun == _sysVarTimer.IsEnabled)
+            {
+                return;
+            }
+
+            if (shouldRun)
+            {
+                RefreshSystemVarValues();
+                _sysVarTimer.Start();
+            }
+            else
+            {
+                _sysVarTimer.Stop();
             }
         }
 
@@ -2582,6 +2695,21 @@ namespace DSH_Modbus采集工具
 
             string previous = item.Name;
             string typed = tb.Text;
+
+            // 系统变量（P2.3）：不在全局变量表里，不拦的话它会一路掉到元件解析，
+            // 报成「不是有效软元件或变量」—— 原因不对，用户会去改元件名。
+            // 这里单独说清「不能用」，而不是「不存在」。
+            if (SystemVariable.Find(typed.Trim()) != null)
+            {
+                tb.Text = previous;
+                MessageBox.Show(
+                    this,
+                    $"“{typed.Trim()}”是系统变量，不能在自由监控中使用。",
+                    "系统变量",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
 
             if (!item.SetName(typed, out _))
             {

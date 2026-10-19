@@ -109,7 +109,7 @@ Window
 | 导航项 | 面板 | 说明 |
 |---|---|---|
 | `OverviewNav` 总览 | `OverviewPanel` | 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
-| `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**三分段**：输入 X / 输出 Y / 自由监控）+ 分页 |
+| `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1 骨架，采集导出未实现）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5，只读清单，见 §5.3） |
 | `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 日志保存（P5.2）+ 项目信息（P5.3） |
@@ -274,7 +274,8 @@ Window
 
 ### 5.1 自由监控（P2.2，第三分段）
 
-状态信息页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**。
+状态信息页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**
+（第四分段「系统变量」见 §5.4）。
 
 - **界面采用 Brief「方案 2」**：元件符号与编号**合并为一个输入框**（`NameBox`，如 `HD100`），不再是「符号下拉 + 编号框」
   - 取舍见 `Design.md` §7.1；存储仍是 `DataPoint.Element` + `Index` 两个字段（旧 `data-points.json` 无损）
@@ -422,6 +423,32 @@ Window
 断言覆盖：16 项规模 / 序号 1..16 / 名称唯一且符合 `GlobalVariableRules` / 逐字名称表 / 类型与显示名 / 注释非空 /
 常量 / 三种脉冲的 0·49·50·99·100ms 相位 / 星期 1~7 连续七天 / 零点与年末边界 / 秒分时日的进位 /
 负数时长 / 脉冲与运行时长不受墙上时间影响 / 键集合与清单一致 / Kind 无重复且覆盖全部枚举值。
+
+### 5.4 系统变量监控（P2.3，状态信息页第四分段）
+
+状态信息页第四分段（`SysVarViewSegment`），把 `SystemVariable.All` 那 16 项**连值一起**摆出来：
+**序号 / 变量名称 / 数据类型 / 当前值 / 注释**。与 P3.5 的定义表相比只多一列「当前值」，其余几何完全一致。
+
+- 行对象 `SystemVarRow`（`SystemVarRow.cs`）：纯展示 —— 只有 `Value` 会变，名称/类型/注释钉在清单上
+- 值来自 `SystemVariableValues.Capture(DateTime.Now, _runClock.Elapsed)`（见 §5.3）
+- **定时器 50ms、`DispatcherPriority.Background`**，只在「本分段可见 **且** 状态信息页可见」时跑（`SyncSystemVarTimer`）
+  - ⚠️ **为什么是 50ms 而不是 100ms**：`sys_Pulse100ms` 的半周期就是 50ms，每 100ms 采一次，
+    采样点永远落在「50ms 的整数倍、步长 2」那一列 —— 相位固定，读出来恒为同一个值，看上去**卡住不闪**。
+    50ms 一拍刚好每半周期采到一次
+  - ⚠️ **为什么必须是 Background 优先级**：用 `DispatcherPriority.Render` 时每拍都会牵动渲染调度
+    （实测同一刷新频率下 7.6% → 1% 单核）。这只是个「看一眼」的页面，不该抢渲染优先级
+  - 同值赋值由 `SystemVarRow.Value` 的 setter 挡掉，不产生绑定通知
+- `_runClock` 是 `Stopwatch`，**不是** `DateTime.Now - 启动时刻`：系统校时会让后者跳变
+- 表头右侧只有「共 16 个」计数，**没有** ＋ / 删除按钮（清单写死）
+- **自由监控不许添加系统变量**（P2.3 需求）：
+  - 界面入口在 `CommitMonitorName`：输入框失焦/回车时先查 `SystemVariable.Find`，
+    命中就回退并弹「系统变量」标题的窗（正文 `“sys_True”是系统变量，不能在自由监控中使用。`）
+  - 为什么必须单独拦：系统变量不在全局变量表里，不拦会一路掉到元件解析，
+    报成「不是有效软元件或变量」—— **原因不对**，用户会去改元件名
+  - 手工改过的 `data-points.json` 里若留着系统变量名，`ResolveVariable` 也给了同一句错误文案
+  - `SystemVariable.Find` **区分大小写**（与变量名规则一致）：`sys_true` 不命中 `sys_True`
+
+**离线断言**：`.tmp/SystemVarCheck`（**118 项**）覆盖取值语义与 `SystemVarRow` 的通知行为（同值不通知、整表推送后与 `Capture` 一致）。
 
 ## 6. 心跳与连接生命周期
 
@@ -687,6 +714,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | **自由监控读取（分块规划）** | `MonitorItemSet.BuildReadPlan`（按 `ModbusArea` 分组 + 地址连续性分块）+ `MonitorItemSet.ApplyBlock`（偏移切片 + 格式化回填） |
 | **自由监控轮询入口** | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` 开头按 `_freeViewActive` 分流 → `PollFreeMonitorAsync`（按区选 FC01/FC03/FC04，单块失败不断线） |
 | **系统变量（P3.5，写死只读）** | `Modeling/SystemVariable.cs`（16 项清单）+ 窗口 `AcqView_Checked`（见 **§5.3**；无编辑入口） |
+| **系统变量监控（P2.3，第四分段）** | `SystemVarRow.cs` + `SystemVariableValues.cs` + 窗口 `RefreshSystemVarValues` / `SyncSystemVarTimer` / `IoView_Checked`（见 **§5.4**） |
 | **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化）+ `GlobalVarItem.cs`（界面包装）+ 窗口 `GlobalVar*` 处理器（见 **§5.2**；不读不写） |
 | **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | **自由监控写入（FC05/06/16）** | `MonitorItemSet.TryBuildWrite`（文本 → `WritePlan`）+ `ValueCodec.TryEncodeRegisters` / `EncodeStringFixed`；`MainWindow.xaml.cs` 的 `CommitMonitorValueAsync` → `WriteToDeviceAsync`；报文层 `ModbusTcpClient.WriteSingleCoilAsync` / `WriteSingleRegisterAsync` / `WriteMultipleRegistersAsync` |

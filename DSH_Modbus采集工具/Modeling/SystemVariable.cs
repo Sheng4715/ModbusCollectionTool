@@ -135,6 +135,32 @@ namespace DSH_Modbus采集工具.Modeling
             Item(16, SystemVariableKind.RunTimeDay, "sys_RunTime_Day", DataType.Int, "系统已运行时间：日"),
         };
 
+        /// <summary>
+        /// 按名字查系统变量（**区分大小写**，与变量名规则一致）。
+        /// <para>
+        /// 用于「自由监控里不许添加系统变量」这条限制（P2.3）：
+        /// 系统变量不在全局变量表里，不拦的话它会一路掉到元件解析，
+        /// 报成「不是有效软元件或变量」—— 原因不对，用户会去改元件名。
+        /// </para>
+        /// </summary>
+        public static SystemVariable? Find(string? name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return null;
+            }
+
+            foreach (SystemVariable v in All)
+            {
+                if (string.Equals(v.Name, name, System.StringComparison.Ordinal))
+                {
+                    return v;
+                }
+            }
+
+            return null;
+        }
+
         private static SystemVariable Item(
             int id, SystemVariableKind kind, string name, DataType type, string comment) =>
             new SystemVariable { Id = id, Kind = kind, Name = name, Type = type, Comment = comment };

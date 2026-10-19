@@ -1127,6 +1127,48 @@
             </Border>
         </DataTemplate>
 
+        <!-- 系统变量监控行（P2.3）。与 SystemVarItemTemplate 同几何，多一列**当前值**：
+             · 全部只读 —— 系统变量由程序计算，用户改不了；
+             · 当前值每 100ms 由定时器推一次（跟随本分段可见性启停）。 -->
+        <DataTemplate x:Key="SystemVarMonitorItemTemplate">
+            <Border Height="30" Margin="0,0,0,2"
+                    Background="Transparent"
+                    BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
+                <Grid>
+                    <!-- 列定义必须与 SystemVarMonitorPanel 的表头完全一致 -->
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                        <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                        <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
+                        <ColumnDefinition Width="110"/>  <!-- 当前值 -->
+                        <ColumnDefinition Width="*"/>    <!-- 注释 -->
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="{Binding Id}"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                               VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Column="1" Text="{Binding Name}"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                               VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Column="2" Text="{Binding TypeName}"
+                               Margin="6,0,0,0"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                               VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Column="3" Text="{Binding Value}"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                               VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Column="4" Text="{Binding Comment}"
+                               Margin="0,0,6,0"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                               VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
         <!-- 细滚动条 -->
         <Style TargetType="ScrollBar">
             <Setter Property="Background" Value="Transparent"/>
@@ -1430,6 +1472,11 @@
                                                          GroupName="IoView"
                                                          Style="{StaticResource IoSegmentRadioButton}"
                                                          Checked="IoView_Checked"/>
+                                            <RadioButton x:Name="SysVarViewSegment"
+                                                         Content="系统变量"
+                                                         GroupName="IoView"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="IoView_Checked"/>
                                         </StackPanel>
                                     </Border>
                                 </Grid>
@@ -1641,6 +1688,63 @@
                                                FontSize="12"
                                                Foreground="{DynamicResource Brush.Text.Muted}"
                                                Margin="0,10,0,6"/>
+                                </Grid>
+
+                                <!-- ================= 系统变量监控（P2.3，默认隐藏） =================
+                                     清单写死、全部只读，只多一列「当前值」——
+                                     值由 100ms 定时器推，跟随本分段可见性启停（见 MainWindow.xaml.cs）。
+                                     表格式与自由监控同为「表头常驻、只让列表滚动」，故不写 MaxHeight。 -->
+                                <Grid x:Name="SystemVarMonitorPanel" Visibility="Collapsed">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>   <!-- 表头（常驻） -->
+                                        <RowDefinition Height="*"/>      <!-- 列表（自身滚动） -->
+                                    </Grid.RowDefinitions>
+
+                                    <Border Grid.Row="0"
+                                            Height="46"
+                                            Margin="0,0,0,2"
+                                            Background="Transparent"
+                                            BorderBrush="{DynamicResource Brush.Divider}"
+                                            BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <!-- 列定义必须与 SystemVarMonitorItemTemplate 完全一致 -->
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                                                    <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                                                    <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
+                                                    <ColumnDefinition Width="110"/>  <!-- 当前值 -->
+                                                    <ColumnDefinition Width="*"/>    <!-- 注释 -->
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="1" Text="变量名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="3" Text="当前值" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="4" Text="注释" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                            </Grid>
+
+                                            <!-- 只有计数：清单写死，既不能增也不能删 -->
+                                            <TextBlock x:Name="SystemVarMonitorCountText"
+                                                       FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                                                       HorizontalAlignment="Right"
+                                                       Margin="0,0,7,0"
+                                                       VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </Border>
+
+                                    <ScrollViewer Grid.Row="1"
+                                                  VerticalScrollBarVisibility="Auto"
+                                                  HorizontalScrollBarVisibility="Disabled">
+                                        <ItemsControl x:Name="SystemVarMonitorItemsControl"
+                                                      HorizontalContentAlignment="Stretch"
+                                                      ItemTemplate="{StaticResource SystemVarMonitorItemTemplate}">
+                                            <ItemsControl.ItemContainerStyle>
+                                                <Style TargetType="ContentPresenter">
+                                                    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                                </Style>
+                                            </ItemsControl.ItemContainerStyle>
+                                        </ItemsControl>
+                                    </ScrollViewer>
                                 </Grid>
                                 </Grid>
 

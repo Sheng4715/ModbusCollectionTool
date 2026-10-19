@@ -444,7 +444,11 @@ namespace DSH_Modbus采集工具
             GlobalVariable? variable = _variableLookup?.Invoke(Model.VariableName);
             if (variable == null)
             {
-                error = $"全局变量 {Model.VariableName} 不存在";
+                // 手工改过的 data-points.json 里可能留着系统变量名（界面已拦，见 CommitMonitorName），
+                // 报「不存在」会把人往错方向引 —— 它存在，只是不能在这里用。
+                error = SystemVariable.Find(Model.VariableName) != null
+                    ? $"系统变量 {Model.VariableName} 不能在自由监控中使用"
+                    : $"全局变量 {Model.VariableName} 不存在";
                 Address = -1;
                 ResolveError = error;
                 return false;
