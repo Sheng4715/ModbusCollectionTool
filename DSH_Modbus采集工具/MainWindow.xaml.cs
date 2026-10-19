@@ -2067,12 +2067,13 @@ namespace DSH_Modbus采集工具
             }
 
             // 失败：先回退文本，再把规则说清楚。
-            // 正文最前面是**用户刚输入的内容**（需求），一眼就能看出被拒的是哪一段；
-            // 标题点出性质，正文后接具体规则。
+            // 正文最前面是**用户刚输入的内容**（外加双引号，需求），一眼看出被拒的是哪一段；
+            // 标题点出性质，正文后接具体规则。输入为空时不加引号。
             tb.Text = item.Name;
+            string input = wanted.Length == 0 ? string.Empty : $"“{wanted}”";
             MessageBox.Show(
                 this,
-                $"{wanted}{error}",
+                $"{input}{error}",
                 "变量名称不合法",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -2529,15 +2530,23 @@ namespace DSH_Modbus采集工具
 
         /// <summary>
         /// 名称无效的统一提示（需求定稿文案）。
-        /// <para>正文最前面是**用户刚输入的内容**，后接定稿文案。</para>
+        /// <para>
+        /// 正文最前面是**用户刚输入的内容**（外加双引号），后接定稿文案。
+        /// 输入为空时不加引号 —— 空的 <c>“”</c> 只是噪音。
+        /// </para>
         /// </summary>
         private void ShowInvalidMonitorName(string? input)
-            => MessageBox.Show(
+        {
+            string text = (input ?? string.Empty).Trim();
+            string prefix = text.Length == 0 ? string.Empty : $"“{text}”";
+
+            MessageBox.Show(
                 this,
-                $"{input?.Trim()}不是有效软元件或变量",
+                $"{prefix}不是有效软元件或变量",
                 "输入无效",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+        }
 
         /// <summary>元件名称框失焦：交给唯一的提交点。</summary>
         private void MonitorName_LostFocus(object sender, RoutedEventArgs e)
