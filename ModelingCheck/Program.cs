@@ -292,8 +292,17 @@ ushort[] Encode(DataType t, string text, ByteOrderSettings o)
 Check("信捷出厂默认 DINT 字序", ByteOrderSettings.FromDriver(xinje).Int32, ByteOrder32.Order3412);
 Check("信捷出厂默认 REAL 字序", ByteOrderSettings.FromDriver(xinje).Float, ByteOrder32.Order3412);
 Check("未选驱动时整数回落到 1234", ByteOrderSettings.Default.Int32, ByteOrder32.Order1234);
-Check("切换驱动 = 重新取默认（不是继承上一份）",
-    ByteOrderSettings.FromDriver(DriverRegistry.GetByKey("inovance_easy")).Int32, ByteOrder32.Order1234);
+
+// 两个品牌的默认值都来自真机实测（信捷 §10.3/§10.4、汇川 §10.16）：
+// 整数与浮点两品牌相同（3412），**字符串相反**（信捷 12、汇川 21）。
+// 这组断言同时证明「切换驱动 = 重新取该驱动的默认，不是继承上一份」。
+CommDriver inovance = DriverRegistry.GetByKey("inovance_easy")!;
+Check("信捷默认字符串 = 12", ByteOrderSettings.FromDriver(xinje).String, StringByteOrder.Order12);
+Check("汇川默认字符串 = 21（与信捷相反）", ByteOrderSettings.FromDriver(inovance).String, StringByteOrder.Order21);
+Check("汇川默认整数 = 3412", ByteOrderSettings.FromDriver(inovance).Int32, ByteOrder32.Order3412);
+Check("汇川默认浮点 = 3412", ByteOrderSettings.FromDriver(inovance).Float, ByteOrder32.Order3412);
+Check("切换驱动后整份 settings 跟着换（不是继承上一份）",
+    ByteOrderSettings.FromDriver(inovance) == ByteOrderSettings.FromDriver(xinje), false);
 
 Console.WriteLine();
 Console.WriteLine("============================================================");

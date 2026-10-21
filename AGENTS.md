@@ -671,14 +671,17 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 `CommDriver` 上有三个**品牌约定**属性，设备配置页各对应一个下拉框：
 
-| 属性 | 枚举 | 信捷 XD 实测值 |
-|---|---|---|
-| `Int32ByteOrder` | `ByteOrder32`（`1234`/`2143`/`3412`/`4321`） | `Order3412` |
-| `FloatByteOrder` | 同上 | `Order3412` |
-| `StringByteOrder` | `StringByteOrder`（`12`/`21`） | `Order12` |
+| 属性 | 枚举 | 信捷 XD 实测值 | 汇川 Easy 实测值 |
+|---|---|---|---|
+| `Int32ByteOrder` | `ByteOrder32`（`1234`/`2143`/`3412`/`4321`） | `Order3412` | `Order3412` |
+| `FloatByteOrder` | 同上 | `Order3412` | `Order3412` |
+| `StringByteOrder` | `StringByteOrder`（`12`/`21`） | `Order12` | **`Order21`** |
 
 - 记号含义见 `CommDriver.cs` 的枚举注释：把 4 个字节**按重要性**编号 1=MSB…4=LSB，名称即字节流里的排列顺序
-- **信捷的值是真机定案**（`Design.md` §10.3 / §10.4）；**汇川未实测**，暂用大端 `1234` 并已在代码注释标红
+- **两品牌的值都是真机定案**：信捷见 `Design.md` §10.3 / §10.4，汇川见 §10.16（2026-10-21，`192.168.1.10:502`）
+- ⚠️ **两品牌唯一差异是字符串**：信捷 `12`（第 1 个字符在高字节）、汇川 `21`（低字节）。
+  照抄对方的值会把 `ABCD` 显示成 `BADC`。整数与浮点两品牌相同（`3412`）
+- 新增品牌时**不要照抄任何一家的值**：先用 `.tmp/OrderProbe` 探针实测（见下）
 - ⚠️ 字符串**不涉及「字序」**：它只是字节序列，没有字的权重之分，别把 `3412` 套到 `STRING` 上
 
 **三套各自独立，且真的会被读**（P4.3，2026-10-21 接线）：
@@ -693,7 +696,19 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 - 所有改动路径都走窗口的 `ApplyByteOrders`（写 `_byteOrders` + `_monitorSet.SetByteOrders`）——
   **不要只改下拉框**，那样界面与数据会各说各话
 - 轮询回填取 `_host.MonitorSet.ByteOrders` 那份快照（`ApplyBlock` 的入参）：后台线程不能读窗口字段
-- 验证：`ModelingCheck` 新增 §11 共 10 项（改浮点不影响整数、改整数不影响浮点、编码侧同样各走各的）
+- 验证：`ModelingCheck` §11 共 14 项（改浮点不影响整数、改整数不影响浮点、编码侧同样各走各的；
+  另含两品牌出厂默认的对照 —— 信捷字符串 `12`、汇川 `21`，这条同时证明「切驱动 = 重取默认」）。全部 **100 项**通过
+
+**测字序的现成工具**：`.tmp/OrderProbe`（一次性，未提交；链接 `ValueCodec` 源码，**只发 FC03 不写**）：
+
+```powershell
+OrderProbe <ip> <port> <unitId> <localIp|-> <addr:count> [addr:count ...]
+# 例：OrderProbe 192.168.1.10 502 1 192.168.1.80 800:4 810:2
+```
+
+它打印原始十六进制 + 按 4 种字序 / 2 种字符串序各解一遍，一次读取即可判定（不用试错）。
+测试值建议：`DINT=305419896`（`0x12345678`，4 个字节互不相同）、`REAL=123.45`、
+`STRING[4]='ABCD'`；32 位与浮点**必须分开测**（两套字序独立，见上）。
 
 ## 9. 代码约定
 
