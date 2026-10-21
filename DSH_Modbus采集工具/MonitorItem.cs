@@ -295,6 +295,12 @@ namespace DSH_Modbus采集工具
         /// ⚠️ **不清 <see cref="WriteError"/>**：写失败的原因（如「该地址不可写」）
         /// 与读是否成功无关，清掉会让用户还没看到就消失。它只在下次成功写入时清除。
         /// </para>
+        /// <para>
+        /// 变量行还要**同时写回变量本身**（<see cref="GlobalVariable.Value"/>）：
+        /// 同一份值在 <see cref="CurrentValue"/> 与变量里各存一份，只更新前者的话，
+        /// 状态机表达式读到的就是旧值 —— 而且**只在「自由监控可见、状态机不可见」时**露出来，
+        /// 因为那种组合下只有本行在刷新。同步之后「变量只有一份值」才成立，不再依赖哪个页面可见。
+        /// </para>
         /// </summary>
         /// <returns>真正写入了返回 true；因正在编辑而跳过返回 false。</returns>
         public bool ApplyReadValue(string text)
@@ -305,6 +311,12 @@ namespace DSH_Modbus采集工具
             }
 
             CurrentValue = text;
+
+            if (Model.IsVariable && _variableLookup?.Invoke(Model.VariableName) is { } variable)
+            {
+                variable.Value = text;
+            }
+
             return true;
         }
 
