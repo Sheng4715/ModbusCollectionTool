@@ -376,6 +376,7 @@ namespace DSH_Modbus采集工具
             _machineSet.Load(ExpressionNameExists);
             _machineSet.RecompileAll(ExpressionNameExists);
             MachineStateViewControl.Bind(_machineSet.Items);
+            MachineStateViewControl.StateDoubleClicked += MachineStateView_StateDoubleClicked;
             _machineTimer.Tick += (_, _) => RefreshMachineStates();
 
             // 系统变量监控（P2.3）：同一份清单，行对象多一个「当前值」；
@@ -1970,6 +1971,34 @@ namespace DSH_Modbus采集工具
             {
                 MachineStateViewControl.ApplyVisualState(item);
             }
+        }
+
+        /// <summary>
+        /// 双击状态框：弹编辑窗。确定后写回模型并落盘。
+        /// <para>表达式在弹窗里已经校验并回退过了，这里拿到的都是合法值。</para>
+        /// </summary>
+        private void MachineStateView_StateDoubleClicked(object? sender, MachineStateItem item)
+        {
+            Ui.MachineStateEditDialog? dialog =
+                Ui.MachineStateEditDialog.Ask(this, item, ExpressionNameExists);
+
+            if (dialog != null)
+            {
+                item.Text = dialog.StateText;
+                item.FontStyle = dialog.FontStyleValue;
+                item.FontSize = dialog.FontSizeValue;
+                item.Color = dialog.ColorHex;
+
+                // 走集合的唯一入口：编译 + 变量存在性校验 + 清掉旧的错误态
+                _machineSet.TrySetExpression(item, dialog.ExpressionText, ExpressionNameExists, out _);
+                _machineSet.Save();
+
+                MachineStateViewControl.ApplyVisualState(item);
+                RefreshMachineStates();
+            }
+
+            // 编辑期间定时器可能停过（弹窗是模态的，但页面仍可见），这里顺手校一次
+            SyncMachineTimer();
         }
 
         /// <summary>总览页分段切换（PLC状态机 / 生产数据）。</summary>

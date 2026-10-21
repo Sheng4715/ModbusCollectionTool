@@ -294,10 +294,23 @@ namespace DSH_Modbus采集工具.Ui
 
             public void Apply(MachineStateItem item)
             {
+                // 文字与字体每次都比对赋值：编辑弹窗改完它们，此时真假与颜色都可能没变，
+                // 若一并被下面的早退挡掉，画布上就还是旧文字（WPF 同值赋值是空操作，不贵）。
+                _text.Text = item.Text;
+                _text.FontSize = item.FontSize;
+                _text.FontWeight = item.FontStyle is MachineStateFontStyle.Bold
+                    or MachineStateFontStyle.BoldItalic
+                    ? FontWeights.SemiBold
+                    : FontWeights.Normal;
+                _text.FontStyle = item.FontStyle is MachineStateFontStyle.Italic
+                    or MachineStateFontStyle.BoldItalic
+                    ? FontStyles.Italic
+                    : FontStyles.Normal;
+
                 bool active = item.IsActive;
                 bool colorChanged = !string.Equals(_colorKey, item.Color, StringComparison.Ordinal);
 
-                // 50ms 一拍，绝大多数时候什么都没变 —— 早退掉，别碰依赖属性
+                // 50ms 一拍，绝大多数时候真假和颜色都没变 —— 早退掉，别碰画笔
                 if (_lastActive == active && !colorChanged)
                 {
                     return;
@@ -328,16 +341,6 @@ namespace DSH_Modbus采集工具.Ui
                         TextBlock.ForegroundProperty, "Brush.MachineState.Inactive.Text");
                 }
 
-                _text.Text = item.Text;
-                _text.FontSize = item.FontSize;
-                _text.FontWeight = item.FontStyle is MachineStateFontStyle.Bold
-                    or MachineStateFontStyle.BoldItalic
-                    ? FontWeights.SemiBold
-                    : FontWeights.Normal;
-                _text.FontStyle = item.FontStyle is MachineStateFontStyle.Italic
-                    or MachineStateFontStyle.BoldItalic
-                    ? FontStyles.Italic
-                    : FontStyles.Normal;
             }
 
             /// <summary>点亮时框内的字用深色 —— 用户挑的填充色基本都是浅色。</summary>
