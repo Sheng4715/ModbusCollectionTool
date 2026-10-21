@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -42,6 +43,7 @@ namespace DSH_Modbus采集工具.Ui
         };
 
         private readonly Func<string, bool> _nameExists;
+        private readonly Func<IReadOnlyList<CompletionCandidate>>? _completions;
         private readonly TextBox _textBox;
         private readonly ComboBox _styleCombo;
         private readonly ComboBox _sizeCombo;
@@ -54,9 +56,12 @@ namespace DSH_Modbus采集工具.Ui
         private string _lastValidExpression;
 
         private MachineStateEditDialog(
-            MachineStateItem item, Func<string, bool> nameExists)
+            MachineStateItem item,
+            Func<string, bool> nameExists,
+            Func<IReadOnlyList<CompletionCandidate>>? completions)
         {
             _nameExists = nameExists;
+            _completions = completions;
             _colorHex = MachineStateItem.NormalizeColor(item.Color);
             _lastValidExpression = item.Expression;
 
@@ -141,6 +146,13 @@ namespace DSH_Modbus采集工具.Ui
             AddLabel(root, "表达式", row);
             _expressionBox = MakeTextBox(item.Expression);
             _expressionBox.LostFocus += ExpressionBox_LostFocus;
+
+            // 表达式框：变量名补全（P7.1）。候选口径与 ExpressionNameExists 一致 ——
+            // 校验认什么，联想就该给什么，否则会出现「联想得出来、一确定就报不存在」。
+            if (_completions != null)
+            {
+                CompletionPopup.Attach(_expressionBox, _completions);
+            }
             Place(root, _expressionBox, row++, new Thickness(0, 0, 0, 12));
 
             var buttons = new StackPanel
@@ -189,9 +201,12 @@ namespace DSH_Modbus采集工具.Ui
         /// <para>表达式在**关窗之前**就已经校验并通过，调用方拿到的值可以直接落盘。</para>
         /// </summary>
         public static MachineStateEditDialog? Ask(
-            Window owner, MachineStateItem item, Func<string, bool> nameExists)
+            Window owner,
+            MachineStateItem item,
+            Func<string, bool> nameExists,
+            Func<IReadOnlyList<CompletionCandidate>>? completions = null)
         {
-            var dlg = new MachineStateEditDialog(item, nameExists);
+            var dlg = new MachineStateEditDialog(item, nameExists, completions);
 
             Window? effectiveOwner = owner ?? Application.Current?.MainWindow;
             if (effectiveOwner != null && !ReferenceEquals(effectiveOwner, dlg) && effectiveOwner.IsLoaded)

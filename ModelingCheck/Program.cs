@@ -307,6 +307,93 @@ Check("汇川默认浮点 = 3412", ByteOrderSettings.FromDriver(inovance).Float,
 Check("切换驱动后整份 settings 跟着换（不是继承上一份）",
     ByteOrderSettings.FromDriver(inovance) == ByteOrderSettings.FromDriver(xinje), false);
 
+
+// ============================================================
+// 12. 变量名补全的纯逻辑（P7.1）
+//
+// 只测「算出哪些候选」：怎么画在 Ui/CompletionPopup.cs，那里只能靠 UIA 端到端。
+// 分开测的前提是 CompletionSource 不引用 WPF —— 这条一旦破坏，本节就编译不过，
+// 等于顺手守住分层。
+// ============================================================
+
+Console.WriteLine();
+Console.WriteLine("=== 12. 变量名补全：取词与筛选（P7.1）===");
+
+// ---- 取词：光标左侧那一段标识符 ----
+Check("整串就是词", CompletionSource.TryGetWord("sys_", 4, out int s1, out string w1) ? $"{s1}|{w1}" : "false", "0|sys_");
+Check("光标在词中间只取左边", CompletionSource.TryGetWord("sys_Pulse1s", 4, out int s2, out string w2) ? $"{s2}|{w2}" : "false", "0|sys_");
+Check("运算符后的词", CompletionSource.TryGetWord("a && b", 6, out int s3, out string w3) ? $"{s3}|{w3}" : "false", "5|b");
+Check("左括号后的词", CompletionSource.TryGetWord("!(sys_", 6, out int s4, out string w4) ? $"{s4}|{w4}" : "false", "2|sys_");
+Check("下划线开头也算词", CompletionSource.TryGetWord("_x", 2, out int s5, out string w5) ? $"{s5}|{w5}" : "false", "0|_x");
+
+// 下面三种不该弹补全 —— 返回 false
+Check("光标在空格后：没有词", CompletionSource.TryGetWord("a ", 2, out _, out _), false);
+Check("光标在最前", CompletionSource.TryGetWord("abc", 0, out _, out _), false);
+Check("数字字面量不是变量名", CompletionSource.TryGetWord("123", 3, out _, out _), false);
+Check("运算符后没有词", CompletionSource.TryGetWord("a==", 3, out _, out _), false);
+Check("空文本", CompletionSource.TryGetWord("", 0, out _, out _), false);
+Check("null 文本", CompletionSource.TryGetWord(null, 0, out _, out _), false);
+
+// 越界光标不该抛异常（拖选、程序置 CaretIndex 都可能越界）
+Check("光标越界被夹住", CompletionSource.TryGetWord("abc", 99, out _, out string w6) ? w6 : "false", "abc");
+Check("负光标被夹住", CompletionSource.TryGetWord("abc", -5, out _, out _), false);
+
+// ---- 候选表：系统变量 + 全局变量 ----
+// ⚠️ 变量名只允许 ASCII 标识符（GlobalVariableRules.TryValidateName 会拒绝中文），
+// 所以补全的候选也一定是 ASCII —— 测试数据跟着用合法名，免得断言描述的是一种存不进来的东西。
+var globalA = new GlobalVariable { Name = "StartButton", Type = DataType.Bool, Comment = "启动信号" };
+var globalB = new GlobalVariable { Name = "sys_Custom", Type = DataType.Int };
+var globals = new[] { globalA, globalB };
+
+List<CompletionCandidate> expressionCandidates = CompletionSource.ForExpression(globals);
+Check("表达式候选含全部系统变量", expressionCandidates.Count(c => c.Kind == "系统变量"), SystemVariable.All.Count);
+Check("表达式候选含全局变量", expressionCandidates.Count(c => c.Kind == "全局变量"), 2);
+Check("表达式候选里能找到 sys_Pulse1s", expressionCandidates.Any(c => c.Text == "sys_Pulse1s"), true);
+Check("表达式候选里能找到用户变量", expressionCandidates.Any(c => c.Text == "StartButton"), true);
+Check("用户变量带注释时说明里有注释", expressionCandidates.First(c => c.Text == "StartButton").Detail.Contains("启动信号"), true);
+Check("用户变量无注释时说明里只有类型", expressionCandidates.First(c => c.Text == "sys_Custom").Detail.Contains("·"), false);
+
+// 自由监控只认全局变量：系统变量不映射 PLC 地址，写进监控行读不出东西
+List<CompletionCandidate> monitorCandidates = CompletionSource.ForMonitorName(globals);
+Check("监控候选不含系统变量", monitorCandidates.Count(c => c.Kind == "系统变量"), 0);
+Check("监控候选 = 全局变量数", monitorCandidates.Count, 2);
+
+Check("变量表为空时表达式仍有系统变量", CompletionSource.ForExpression(null).Count, SystemVariable.All.Count);
+Check("变量表为空时监控候选为空", CompletionSource.ForMonitorName(null).Count, 0);
+
+// ---- 筛选：前缀优先、子串其次 ----
+List<CompletionCandidate> sys = CompletionSource.Filter(expressionCandidates, "sys_");
+Check("前缀命中排在第一条", sys[0].Text.StartsWith("sys_", StringComparison.OrdinalIgnoreCase), true);
+Check("用户变量（无 sys_ 前缀）被排除", sys.Any(c => c.Text == "StartButton"), false);
+Check("sys_Custom 也在候选里", sys.Any(c => c.Text == "sys_Custom"), true);
+
+List<CompletionCandidate> pulse = CompletionSource.Filter(expressionCandidates, "pulse");
+Check("子串命中能搜到 sys_Pulse1s", pulse.Any(c => c.Text == "sys_Pulse1s"), true);
+Check("子串命中不含无关变量", pulse.Any(c => c.Text == "StartButton"), false);
+
+// 大小写不敏感匹配，但插入的是原始大小写
+List<CompletionCandidate> upper = CompletionSource.Filter(expressionCandidates, "SYS_PULSE");
+Check("大写输入也能匹配", upper.Any(c => c.Text == "sys_Pulse1s"), true);
+Check("插入保留原始大小写", upper.First(c => c.Text == "sys_Pulse1s").Text, "sys_Pulse1s");
+
+Check("空词返回全部（Ctrl+Space）", CompletionSource.Filter(expressionCandidates, "").Count, expressionCandidates.Count);
+Check("无命中返回空表", CompletionSource.Filter(expressionCandidates, "zzz").Count, 0);
+
+// 前缀命中必须排在子串命中之前：敲 "sys_" 时想要的几乎总是 sys_* 而不是「中间含 sys_」的
+List<CompletionCandidate> mixed = CompletionSource.Filter(
+    new[]
+    {
+        new CompletionCandidate { Text = "x_sys_later" },   // 子串命中
+        new CompletionCandidate { Text = "sys_First" },    // 前缀命中
+    }, "sys_");
+Check("前缀命中优先于子串命中", mixed[0].Text, "sys_First");
+
+// 候选上限：列表再长也没人滚到底
+var many = Enumerable.Range(0, CompletionSource.MaxCandidates + 20)
+    .Select(i => new CompletionCandidate { Text = $"v{i}" })
+    .ToList();
+Check("候选数量有上限", CompletionSource.Filter(many, "v").Count, CompletionSource.MaxCandidates);
+
 Console.WriteLine();
 Console.WriteLine("============================================================");
 Console.WriteLine($"结果：{pass} 通过 / {fail} 失败");

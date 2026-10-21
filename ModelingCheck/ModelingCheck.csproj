@@ -30,6 +30,10 @@
     <Compile Include="..\DSH_Modbus采集工具\Modeling\DataPoint.cs" Link="DataPoint.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Drivers\CommDriver.cs" Link="CommDriver.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Drivers\DriverRegistry.cs" Link="DriverRegistry.cs" />
+    <!-- P7.1 变量名补全的纯逻辑：候选怎么算在这里，怎么画在 Ui/CompletionPopup.cs（不链接）。 -->
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\SystemVariable.cs" Link="SystemVariable.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\GlobalVariable.cs" Link="GlobalVariable.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\CompletionSource.cs" Link="CompletionSource.cs" />
   </ItemGroup>
 
 </Project>

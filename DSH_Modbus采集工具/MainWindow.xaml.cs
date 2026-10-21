@@ -154,6 +154,15 @@ namespace DSH_Modbus采集工具
         private bool _syncingByteOrderCombos;
 
         /// <summary>
+        /// 已挂上变量名补全的「元件名称」文本框（P7.1）。
+        /// <para>
+        /// 用弱表而不是普通字典：监控行会随模板虚拟化反复创建销毁，
+        /// 普通字典会一直攥着已丢弃的文本框不放。
+        /// </para>
+        /// </summary>
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBox, Ui.CompletionPopup> _nameCompletions = new();
+
+        /// <summary>
         /// 正在程序化重设网卡下拉框（扫描列表时）。与 <see cref="_syncingByteOrderCombos"/> 同理：
         /// 扫描会 Clear 再重新 Add，过程中 SelectionChanged 会被触发多次，
         /// 那些都不是用户意图，不该被写进持久化偏好。
@@ -1940,6 +1949,16 @@ namespace DSH_Modbus采集工具
             SystemVariable.Find(name) != null || _globalVarSet.FindByName(name) != null;
 
         /// <summary>
+        /// 全局变量模型列表，供补全用（P7.1）。
+        /// <para>
+        /// 走 <c>Items.Select(Model)</c> 而不是把 <c>GlobalVarItemSet</c> 直接传下去：
+        /// <c>Modeling/</c> 不引用界面层，<c>CompletionSource</c> 只认 <see cref="GlobalVariable"/>。
+        /// </para>
+        /// </summary>
+        private IEnumerable<GlobalVariable> GlobalVarModels =>
+            _globalVarSet.Items.Select(item => item.Model);
+
+        /// <summary>
         /// 状态机定时器启停：**总览页可见 且 停在「PLC状态机」分段** 才跑。
         /// </summary>
         private void SyncMachineTimer()
@@ -1987,7 +2006,8 @@ namespace DSH_Modbus采集工具
         private void MachineStateView_StateDoubleClicked(object? sender, MachineStateItem item)
         {
             Ui.MachineStateEditDialog? dialog =
-                Ui.MachineStateEditDialog.Ask(this, item, ExpressionNameExists);
+                Ui.MachineStateEditDialog.Ask(
+                this, item, ExpressionNameExists, () => CompletionSource.ForExpression(GlobalVarModels));
 
             if (dialog != null)
             {
@@ -3030,12 +3050,50 @@ namespace DSH_Modbus采集工具
                 MessageBoxImage.Warning);
         }
 
+        /// <summary>
+        /// 元件名称框加载：挂变量名补全（P7.1）。
+        /// <para>
+        /// 挂在 <c>Loaded</c> 而不是 XAML 里直接写，是因为这一行在 <c>DataTemplate</c> 里 ——
+        /// 每个监控项各自一份，没有可以一次性写死的那个文本框。
+        /// </para>
+        /// <para>
+        /// 用 <see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey,TValue}"/>
+        /// 记住「这个框已经挂过了」：模板复用/虚拟化会让同一个框多次 Loaded，
+        /// 重复挂载会让同一次按键被处理两遍（表现是补全连跳两格）。
+        /// </para>
+        /// </summary>
+        private void MonitorName_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox tb)
+            {
+                return;
+            }
+
+            if (_nameCompletions.TryGetValue(tb, out _))
+            {
+                return;
+            }
+
+            // 候选现算：变量表随时可变，挂载时抓快照会联想出已删掉的变量
+            var popup = Ui.CompletionPopup.Attach(tb, () => CompletionSource.ForMonitorName(GlobalVarModels));
+            _nameCompletions.Add(tb, popup);
+        }
+
         /// <summary>元件名称框失焦：交给唯一的提交点。</summary>
         private void MonitorName_LostFocus(object sender, RoutedEventArgs e)
         {
-            if (sender is TextBox tb)
+            // 补全列表开着时的失焦，是「用户正在点候选」，不是「输入结束」——
+            // 此刻提交会把半截名字（如 "sys_"）当成错误弹窗。
+            // 弹窗本身用 WS_EX_NOACTIVATE 不抢焦点，正常情况走不到这里；
+            // 这一句是兜底：万一某些输入法/主题下焦点还是丢了，也不至于误报。
+            if (sender is TextBox tb && _nameCompletions.TryGetValue(tb, out Ui.CompletionPopup? popup) && popup.IsOpen)
             {
-                CommitMonitorName(tb);
+                return;
+            }
+
+            if (sender is TextBox box)
+            {
+                CommitMonitorName(box);
             }
         }
 

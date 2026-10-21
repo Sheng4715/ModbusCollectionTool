@@ -982,7 +982,8 @@
                              Grid.Column="1"
                              Style="{StaticResource MonitorInlineTextBox}"
                              KeyDown="MonitorName_KeyDown"
-                             LostFocus="MonitorName_LostFocus"/>
+                             LostFocus="MonitorName_LostFocus"
+                             Loaded="MonitorName_Loaded"/>
 
                     <!--
                         数据类型。选 STRING 时会弹框问长度，确认后本框显示 STRING[n]

@@ -54,7 +54,8 @@ DSH_Modbus采集工具/
 │   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
 │   ├── ByteOrderSettings.cs    # 三套字节顺序（整数 / 浮点 / 字符串）的值类型（P4.3）
 │   ├── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
-│   └── GlobalVariable.cs       # 全局变量模型 + 变量名规则 + GlobalVar.json 持久化（值不落盘）
+│   ├── GlobalVariable.cs       # 全局变量模型 + 变量名规则 + GlobalVar.json 持久化（值不落盘）
+│   └── CompletionSource.cs     # 变量名补全的纯逻辑：取词 + 筛选 + 候选表（P6.5，不含 WPF）
 ├── Logging/                    # 日志落盘与文案规则（不含 WPF 类型）
 │   ├── DeviceLogFileWriter.cs  # 按天追加纯文本 .log + 跨天换文件 + 失败自愈
 │   └── DisconnectReasonClassifier.cs  # 异常原文 → 简短中文（底栏与日志共用）
@@ -63,7 +64,8 @@ DSH_Modbus采集工具/
 ├── Ui/                         # 窗口呈现辅助（引 WPF，但不碰业务）
 │   ├── MaximizedInset.cs       # 最大化溢出补偿：物理像素测量 + 按 DPI 内缩根元素
 │   ├── StatusBarPresenter.cs   # 底栏：状态文字 / 状态点颜色 / 右侧连接参数
-│   └── DeviceLogPresenter.cs   # 运行日志：内存集合 + 上限裁剪 + 落盘旁路 + 级别映射
+│   ├── DeviceLogPresenter.cs   # 运行日志：内存集合 + 上限裁剪 + 落盘旁路 + 级别映射
+│   └── CompletionPopup.cs      # 补全下拉：Popup 绘制 + 键盘/鼠标 + 输入法抑制（P6.5，见 §5.6）
 └── Drivers/
     ├── CommDriver.cs           # 模型：ModbusArea / NumberBase / AddressArea / CommDriver（含字节顺序枚举）
     ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
@@ -513,6 +515,34 @@ Window
 
 **离线断言**：`.tmp/ExpressionCheck` **90 项**（表达式 56 + 状态机模型 34）；
 系统变量名保留另在 `.tmp/SystemVarCheck` **124 项**里覆盖。
+
+### 5.6 变量名补全（P6.5，两处输入框共用一套）
+
+打字即弹候选列表，像 IDE 那样联想变量名。**只联想变量名，不联想通讯地址**（用户定案）。
+
+| 位置 | 挂载点 | 候选来源 |
+|---|---|---|
+| 自由监控「元件名称」框 | `MonitorName_Loaded`（模板里每行一个，走 `ConditionalWeakTable` 防重复挂载） | `CompletionSource.ForMonitorName` → **全局变量** |
+| 状态机编辑窗「表达式」框 | `MachineStateEditDialog` 构造时 | `CompletionSource.ForExpression` → **系统变量 + 全局变量** |
+
+**分层**（照 `ValueCodec` 的老规矩）：
+
+- `Modeling/CompletionSource.cs` —— **纯逻辑**：取词 + 筛选 + 候选表。不引用 WPF，
+  因此能链接进 `ModelingCheck` 断言（§12 共 35 项）
+- `Ui/CompletionPopup.cs` —— 只管显示与按键，只能靠 UIA 端到端测
+
+**语义**（改之前先看这几条，都是踩过的）：
+
+- 前缀命中排在子串命中之前（敲 `sys_` 时想要的几乎总是 `sys_*`）
+- 大小写不敏感匹配，但插入**原始大小写**
+- 标识符规则与 `ExpressionLexer` 一致；**词以数字开头不弹**（`123` 是数字字面量）
+- 列表开着时 `Enter`/`Tab`/`↑`/`↓`/`Esc` **全部归列表**：
+  `Enter` 在这两个框里原本是「提交」、`Esc` 是「关窗」，不拦就会误操作
+- 弹窗用 `WS_EX_NOACTIVATE` **不抢焦点**：否则点候选会让文本框先失焦，
+  触发「失焦即校验」弹出「不是有效软元件或变量」
+- ⚠️ **两处输入框都关掉了输入法**（`InputMethod.SetIsInputMethodEnabled(box, false)`）：
+  变量名是 C 标识符、表达式只有标识符/数字/运算符，中文输入法在这里没有任何用处，
+  却会挡住候选窗、吃掉回车。**这是本项目唯一这么做的两处**，别推广到普通文本框
 
 ## 6. 心跳与连接生命周期
 
