@@ -1,0 +1,21 @@
+<UserControl x:Class="DSH_Modbus采集工具.Ui.MachineStateView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+
+    <!--
+        PLC 状态机画布。
+
+        画布尺寸**固定**为设计尺寸（MachineStateLayout.DesignWidth × DesignHeight），
+        所有子元素都按设计坐标摆放，再由 Viewbox 等比缩放到实际可用空间 ——
+        这样窗口多大都不会把连线画歪，也不必写任何自适应布局代码。
+
+        ⚠️ 内容由 MachineStateView.xaml.cs 在 Bind() 时一次性构建（9 框 + 13 线 + 标签），
+        这里只留一个空 Canvas。
+    -->
+    <Viewbox Stretch="Uniform" StretchDirection="Both">
+        <Canvas x:Name="RootCanvas" Background="Transparent"/>
+    </Viewbox>
+</UserControl>

@@ -108,7 +108,7 @@ Window
 
 | 导航项 | 面板 | 说明 |
 |---|---|---|
-| `OverviewNav` 总览 | `OverviewPanel` | 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
+| `OverviewNav` 总览 | `OverviewPanel` | **两分段**：「PLC状态机」（P1.2，见 §5.5）/「生产数据」（占位）+ 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1 骨架，采集导出未实现）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5，只读清单，见 §5.3） |
@@ -342,6 +342,9 @@ Window
 `GlobalVariable.Value` 仍是内存字段（不落盘），但界面上没有编辑入口。
 
 - **变量名**：C 标识符 `[A-Za-z_][A-Za-z0-9_]*`，最长 **32**，**区分大小写**，**拒绝中文**（`GlobalVariableRules.TryValidateName`）；校验与重名检查都在 `GlobalVariableSet.Add` / `Rename`
+  - ⚠️ **不得与系统变量重名**：`sys_True` 等 16 个名字被保留，`GlobalVariableRules.TryValidateName` 直接拒
+    （正文 `“sys_True”是系统变量，不能重复定义`）。用 `Ordinal` 精确比对 —— 变量名本身区分大小写，
+    故 `sys_true`（全小写）仍允许，不搞「前缀保留」那一套
   - **打字途中不校验**（与自由监控同一节奏）：`CommitGlobalVarName` 是唯一提交点，失焦或回车触发
   - 不合法**弹窗**：标题「变量名称不合法」，正文 = **`“{输入内容}”` + `TryValidateName` / `Rename` 给出的具体规则**（如 `“1abc”变量名称必须以字母或下划线开头`，输入为空时不加引号）—— 前缀是用户刚输入的内容（需求）；重名同样走这条
   - 弹窗后回退到上次有效名称 —— 模型与磁盘里都不留非法变量名
@@ -449,6 +452,49 @@ Window
   - `SystemVariable.Find` **区分大小写**（与变量名规则一致）：`sys_true` 不命中 `sys_True`
 
 **离线断言**：`.tmp/SystemVarCheck`（**118 项**）覆盖取值语义与 `SystemVarRow` 的通知行为（同值不通知、整表推送后与 `Capture` 一致）。
+
+### 5.5 PLC 状态机（P1.2，总览页第一分段）
+
+总览页上排现在是一个卡片：顶部横向胶囊分段「PLC状态机 / 生产数据」，下面是画布。
+「生产数据」目前只有一句「规划中」占位（双击编辑属下一项，尚未接线）。
+
+**布局是写死的**，全部来自项目根目录的 `PLC_MachineState.drawio`：
+9 个状态框 + 13 条转移连线 + 灰底容器。坐标表在 `MachineStateLayout`（`Modeling/MachineState.cs`）里，
+**不要在代码里手调坐标** —— 要改布局请改 drawio 再重新换算，否则框和线会对不上。
+
+- 设计坐标：横向 ×1.5 拉开列距、纵向原样，画布 1095×446，由 `Viewbox` 等比缩放到实际空间
+  - 拉宽是因为原图宽高比 1.43 而画布格约 2.6，不拉会「图缩在中间、两边大片空白」
+- **连线完全照 drawio**：端口（exitX/entryX）与折点原样搬过来，一条都没重画
+  - `Fault` 与 `Immediate Stop` 的起点是**灰底容器的下边缘**（drawio 就是这么画的，不是笔误）
+  - `Toggle` 是唯一的两端箭头
+- **连线标签压在线上**：先用卡片底色盖住线、再写文字，所以线在文字处断开（与 drawio 观感一致）
+  - `Reset Done` / `End Complete` / `Immediate Stop` 折两行（`LabelLines = 2`），按空格硬折而不是自动换行 ——
+    自动换行会在某个缩放比例下突然变一行，图会「跳」
+  - ⏳ **待办**：换行后的标签尚未做垂直居中微调
+- 状态框 150×50（drawio 的 100×50 × 1.5），默认文字就是状态名，默认色取 drawio 的填充色
+- **值为 1 用配置色，值为 0 一律浅灰**（文字也跟着变灰），与状态本身的颜色无关
+  - 浅灰走主题：`Brush.MachineState.Inactive*`，深浅两套各有自己的值
+  - 点亮时框内文字固定 `#1A1A1A`（用户挑的填充色基本都是浅色底）
+- 求值节拍 **50ms、`DispatcherPriority.Background`**，只在「总览页可见 **且** 停在 PLC状态机 分段」时跑
+  - ⚠️ 定时器的**起步点**在 `Window_Loaded` 末尾补了一次 `SyncMachineTimer()`：
+    `InitializeComponent` 期间 `Nav_Checked` 就跑了，那会儿分段按钮还没造出来，
+    条件必然为假。不补这一下，图会一直是灰的（实测踩过）
+- **表达式引擎**在 `Expressions/`（词法 / 语法 / 求值 / 带位置的报错），UI 无关，可离线测
+  - 语法：`|| && ! == != > < >= <= ( )`、`TRUE`/`FALSE`（关键字不区分大小写）、数字、变量
+  - 比较一律按数值比，BOOL 当 0/1 —— 所以 `sys_True == 1` 能写
+  - 比较**不能连写**（`a < b < c` 报错）
+  - 空表达式合法，恒为 `FALSE`
+  - 报错都带「第 N 个字符」；单写 `=` / `&` / `|` 有专门提示，全角符号也会点出来
+  - ⚠️ 位置按**用户实际输入的字符**算（不 Trim），否则前导空格会让位置对不上
+- 表达式能引用**系统变量 + 全局变量**，不含元件地址
+  - 求值时**系统变量优先**：虽然名字已经不允许重名（见 §5.2），但手工改过的 json 仍可能撞上
+- 持久化 `machine-state.json`（挨着 exe），只存文字 / 字形 / 字号 / 颜色 / 表达式，**不存坐标**
+  - 读盘按 `Id` 合并进出厂值：文件里少 id 用默认，多 id 忽略 —— 加状态、改默认值都不必写迁移
+  - ⚠️ `JsonSerializerOptions` 必须开 `PropertyNameCaseInsensitive`：
+    这份文件很可能被人手改，默认区分大小写会让小写键**静默**匹配不上、全部退回默认值（实测踩过，表现是「图一直是灰的」）
+
+**离线断言**：`.tmp/ExpressionCheck` **90 项**（表达式 56 + 状态机模型 34）；
+系统变量名保留另在 `.tmp/SystemVarCheck` **124 项**里覆盖。
 
 ## 6. 心跳与连接生命周期
 
@@ -714,6 +760,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | **自由监控读取（分块规划）** | `MonitorItemSet.BuildReadPlan`（按 `ModbusArea` 分组 + 地址连续性分块）+ `MonitorItemSet.ApplyBlock`（偏移切片 + 格式化回填） |
 | **自由监控轮询入口** | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` 开头按 `_freeViewActive` 分流 → `PollFreeMonitorAsync`（按区选 FC01/FC03/FC04，单块失败不断线） |
 | **系统变量（P3.5，写死只读）** | `Modeling/SystemVariable.cs`（16 项清单）+ 窗口 `AcqView_Checked`（见 **§5.3**；无编辑入口） |
+| **PLC 状态机（P1.2，总览页）** | `Expressions/`（表达式引擎）+ `Modeling/MachineState.cs`（布局/模型/持久化）+ `Ui/MachineStateView.xaml(.cs)`（画布）+ 窗口 `RefreshMachineStates` / `SyncMachineTimer`（见 **§5.5**） |
 | **系统变量监控（P2.3，第四分段）** | `SystemVarRow.cs` + `SystemVariableValues.cs` + 窗口 `RefreshSystemVarValues` / `SyncSystemVarTimer` / `IoView_Checked`（见 **§5.4**） |
 | **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化）+ `GlobalVarItem.cs`（界面包装）+ 窗口 `GlobalVar*` 处理器（见 **§5.2**；不读不写） |
 | **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |

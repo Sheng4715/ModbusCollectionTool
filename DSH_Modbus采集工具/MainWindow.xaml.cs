@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -15,6 +16,7 @@ using System.Windows.Threading;
 using DSH_Modbus采集工具.Drivers;
 using DSH_Modbus采集工具.Io;
 using DSH_Modbus采集工具.Logging;
+using DSH_Modbus采集工具.Expressions;
 using DSH_Modbus采集工具.Modeling;
 using DSH_Modbus采集工具.Net;
 using DSH_Modbus采集工具.Polling;
@@ -195,6 +197,24 @@ namespace DSH_Modbus采集工具
         private readonly List<SystemVarRow> _sysVarRows =
             SystemVariable.All.Select(v => new SystemVarRow(v)).ToList();
 
+        /// <summary>PLC 状态机（P1.2）的 9 个状态与它们的表达式。</summary>
+        private readonly MachineStateSet _machineSet = new();
+
+        /// <summary>
+        /// 状态机求值节拍：与系统变量页一样 50ms。
+        /// <para>同样必须是 <see cref="DispatcherPriority.Background"/> —— 见 <see cref="_sysVarTimer"/> 的说明。</para>
+        /// </summary>
+        private readonly DispatcherTimer _machineTimer = new(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+        };
+
+        /// <summary>是否停在总览页（决定状态机定时器启停）。</summary>
+        private bool _overviewPageActive;
+
+        /// <summary>状态机表达式取值用的适配器（每拍刷新一次系统变量快照）。</summary>
+        private readonly ExpressionVariables _machineVariables = new();
+
         /// <summary>是否停在状态信息页的「系统变量」分段（决定定时器启停）。</summary>
         private bool _sysViewActive;
 
@@ -349,6 +369,14 @@ namespace DSH_Modbus采集工具
             // 没有保存、也没有增删，绑定一次就完事（与两个可编辑表格的区别正在于此）
             SystemVarItemsControl.ItemsSource = SystemVariable.All;
             SystemVarCountText.Text = $"共 {SystemVariable.All.Count} 个";
+
+            // PLC 状态机（P1.2）：从 machine-state.json 读 9 个状态的文字/颜色/表达式，
+            // 再把固定布局画出来。求值由 _machineTimer 驱动，这里只负责首次绑定。
+            _machineVariables.AttachGlobals(_globalVarSet);
+            _machineSet.Load(ExpressionNameExists);
+            _machineSet.RecompileAll(ExpressionNameExists);
+            MachineStateViewControl.Bind(_machineSet.Items);
+            _machineTimer.Tick += (_, _) => RefreshMachineStates();
 
             // 系统变量监控（P2.3）：同一份清单，行对象多一个「当前值」；
             // 定时器先不启动 —— 由「分段可见 + 页面可见」两个条件共同决定（见 SyncSystemVarTimer）
@@ -512,6 +540,12 @@ namespace DSH_Modbus采集工具
             SyncInputHeights();
             ScanNetworkAdapters();
             UpdateOverviewStatus();
+
+            // 状态机定时器：InitializeComponent 期间 Nav_Checked 就跑了，
+            // 那会儿分段按钮还没造出来，条件必然为假 —— 窗口显示完必须补一次，
+            // 否则停在总览页也不刷新（整张图一直是灰的）。
+            _overviewPageActive = OverviewNav?.IsChecked == true;
+            SyncMachineTimer();
         }
 
         private void Nav_Checked(object sender, RoutedEventArgs e)
@@ -519,6 +553,10 @@ namespace DSH_Modbus采集工具
             // 采集跟随页面可见性：离开状态信息页即停采（零报文，灯保留上次数据）
             _ioPageActive = ReferenceEquals(sender, StatusInfoNav);
             SyncSystemVarTimer();
+
+            // 状态机只在总览页可见时求值（离开就停，别白白每 50ms 算一遍）
+            _overviewPageActive = ReferenceEquals(sender, OverviewNav);
+            SyncMachineTimer();
 
             if (OverviewPanel != null)
             {
@@ -1884,6 +1922,156 @@ namespace DSH_Modbus采集工具
             {
                 // 切段后本段有自己的页号与页数，重新切片绑定
                 ApplyIoPage();
+            }
+        }
+
+        // ---------- PLC 状态机（P1.2） ----------
+
+        /// <summary>表达式里能引用的变量名：系统变量 + 全局变量（两者不会重名）。</summary>
+        private bool ExpressionNameExists(string name) =>
+            SystemVariable.Find(name) != null || _globalVarSet.FindByName(name) != null;
+
+        /// <summary>
+        /// 状态机定时器启停：**总览页可见 且 停在「PLC状态机」分段** 才跑。
+        /// </summary>
+        private void SyncMachineTimer()
+        {
+            bool shouldRun = _overviewPageActive
+                && MachineStateSegment?.IsChecked == true
+                && !_windowClosed;
+
+            if (shouldRun == _machineTimer.IsEnabled)
+            {
+                return;
+            }
+
+            if (shouldRun)
+            {
+                RefreshMachineStates();
+                _machineTimer.Start();
+            }
+            else
+            {
+                _machineTimer.Stop();
+            }
+        }
+
+        /// <summary>
+        /// 一拍：刷新系统变量快照 → 求值 9 条表达式 → 把变了的框重画。
+        /// </summary>
+        private void RefreshMachineStates()
+        {
+            _machineVariables.UpdateSystemValues(
+                SystemVariableValues.Capture(DateTime.Now, _runClock.Elapsed));
+
+            _machineSet.EvaluateAll(_machineVariables);
+
+            foreach (MachineStateItem item in _machineSet.Items)
+            {
+                MachineStateViewControl.ApplyVisualState(item);
+            }
+        }
+
+        /// <summary>总览页分段切换（PLC状态机 / 生产数据）。</summary>
+        private void OverviewView_Checked(object sender, RoutedEventArgs e)
+        {
+            if (MachineStateViewControl == null)
+            {
+                return;
+            }
+
+            bool machineView = MachineStateSegment?.IsChecked == true;
+
+            MachineStateViewControl.Visibility = machineView
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            if (ProductionDataHint != null)
+            {
+                ProductionDataHint.Visibility = machineView
+                    ? Visibility.Collapsed
+                    : Visibility.Visible;
+            }
+
+            SyncMachineTimer();
+
+            if (machineView)
+            {
+                RefreshMachineStates();
+            }
+        }
+
+        /// <summary>
+        /// 表达式取值适配器：把「系统变量快照 + 全局变量当前值」按 BOOL / 数字 交给表达式引擎。
+        /// <para>
+        /// ⚠️ 系统变量优先：虽然现在禁止重名（<c>GlobalVariableRules.TryValidateName</c> 会拦），
+        /// 但手工改过的 json 仍可能撞上，顺序定死才不会出现「同一份配置两台机器算出不同结果」。
+        /// </para>
+        /// </summary>
+        private sealed class ExpressionVariables : IExpressionVariables
+        {
+            private IReadOnlyDictionary<string, string> _system =
+                new Dictionary<string, string>(StringComparer.Ordinal);
+
+            private GlobalVarItemSet? _globals;
+
+            public void UpdateSystemValues(IReadOnlyDictionary<string, string> values) =>
+                _system = values;
+
+            public void AttachGlobals(GlobalVarItemSet globals) => _globals = globals;
+
+            public bool TryGetValue(string name, out ExpressionValue value, out string error)
+            {
+                if (SystemVariable.Find(name) is { } system)
+                {
+                    if (_system.TryGetValue(name, out string? text))
+                    {
+                        return Convert(system.Type, text, out value, out error);
+                    }
+
+                    error = $"系统变量“{name}”当前取不到值";
+                    value = default;
+                    return false;
+                }
+
+                GlobalVariable? global = _globals?.FindByName(name);
+                if (global == null)
+                {
+                    error = $"变量“{name}”不存在";
+                    value = default;
+                    return false;
+                }
+
+                return Convert(global.Type, global.Value, out value, out error);
+            }
+
+            private static bool Convert(
+                DataType type, string? text, out ExpressionValue value, out string error)
+            {
+                string raw = (text ?? string.Empty).Trim();
+
+                if (type == DataType.Bool)
+                {
+                    // 与界面里 BOOL 的 "1"/"0" 显示一致；顺手容忍 TRUE/FALSE
+                    bool b = raw is "1"
+                        || raw.Equals("TRUE", StringComparison.OrdinalIgnoreCase);
+
+                    value = ExpressionValue.FromBool(b);
+                    error = string.Empty;
+                    return true;
+                }
+
+                if (double.TryParse(
+                        raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double number))
+                {
+                    value = ExpressionValue.FromNumber(number);
+                    error = string.Empty;
+                    return true;
+                }
+
+                value = ExpressionValue.FromNumber(0);
+                error = $"变量值“{raw}”不是数字";
+                return false;
             }
         }
 

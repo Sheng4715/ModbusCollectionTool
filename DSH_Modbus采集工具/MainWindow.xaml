@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:DSH_Modbus采集工具"
+        xmlns:ui="clr-namespace:DSH_Modbus采集工具.Ui"
         mc:Ignorable="d"
         Title="采集工具"
         Height="640" Width="1024"
@@ -1384,11 +1385,55 @@
                             <RowDefinition Height="1*"/>
                         </Grid.RowDefinitions>
 
-                        <StackPanel Grid.Row="0" VerticalAlignment="Top">
-                            <TextBlock Text="总览"
+                        <Grid Grid.Row="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>   <!-- 页标题 -->
+                                <RowDefinition Height="*"/>      <!-- 状态机 / 生产数据 -->
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Text="总览"
                                        FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                        FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,10,0,10"/>
-                        </StackPanel>
+
+                            <!-- PLC 状态机画布（P1.2）。画布本身是固定设计尺寸，由内部的 Viewbox 缩放到本卡片 -->
+                            <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
+                                    BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                    CornerRadius="8" Padding="12">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>   <!-- 分段切换 -->
+                                        <RowDefinition Height="*"/>      <!-- 内容 -->
+                                    </Grid.RowDefinitions>
+
+                                    <Grid Grid.Row="0" Margin="0,0,0,8">
+                                        <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
+                                                HorizontalAlignment="Left">
+                                            <StackPanel Orientation="Horizontal">
+                                                <RadioButton x:Name="MachineStateSegment"
+                                                             Content="PLC状态机"
+                                                             GroupName="OverviewView" IsChecked="True"
+                                                             Style="{StaticResource IoSegmentRadioButton}"
+                                                             Checked="OverviewView_Checked"/>
+                                                <RadioButton x:Name="ProductionDataSegment"
+                                                             Content="生产数据"
+                                                             GroupName="OverviewView"
+                                                             Style="{StaticResource IoSegmentRadioButton}"
+                                                             Checked="OverviewView_Checked"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+
+                                    <Grid Grid.Row="1">
+                                        <ui:MachineStateView x:Name="MachineStateViewControl"/>
+                                        <TextBlock x:Name="ProductionDataHint"
+                                                   Text="规划中"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
+                                                   Visibility="Collapsed"/>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                        </Grid>
 
                         <!-- 设备状态日志：只记设备状态（连接/断开/连接失败/心跳告警），空时不显示任何内容 -->
                         <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"

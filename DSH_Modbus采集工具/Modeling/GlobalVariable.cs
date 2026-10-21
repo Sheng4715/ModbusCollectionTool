@@ -144,6 +144,16 @@ namespace DSH_Modbus采集工具.Modeling
                 }
             }
 
+            // 系统变量也算全局变量：名字被它占着，用户不能再定义一个同名的。
+            // 否则表达式里的标识符就有歧义（虽然求值顺序定死了「系统变量优先」，
+            // 但那种「看起来一样、行为不一样」的配置最难排查）。
+            // ⚠️ 用 Ordinal 精确比对：变量名本身区分大小写，不搞前缀保留那一套。
+            if (SystemVariable.Find(name) != null)
+            {
+                error = $"“{name}”是系统变量，不能重复定义";
+                return false;
+            }
+
             return true;
         }
 

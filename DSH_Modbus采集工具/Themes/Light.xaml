@@ -37,6 +37,19 @@
     <!-- 左侧导航右边框 + 导航底部斜线 -->
     <SolidColorBrush x:Key="Brush.Nav.Border" Color="#E5E5E5"/>
 
+    <!-- ================= PLC 状态机画布 ================= -->
+
+    <!-- 灰底容器（把中间那 6 个状态框在一起） -->
+    <SolidColorBrush x:Key="Brush.MachineState.Container" Color="#F7F7F7"/>
+    <SolidColorBrush x:Key="Brush.MachineState.Container.Border" Color="#D6D6D6"/>
+    <!-- 值为 0 时的状态框：浅灰，与「点亮」形成对比 -->
+    <SolidColorBrush x:Key="Brush.MachineState.Inactive" Color="#E9E9E9"/>
+    <SolidColorBrush x:Key="Brush.MachineState.Inactive.Border" Color="#C4C4C4"/>
+    <SolidColorBrush x:Key="Brush.MachineState.Inactive.Text" Color="#969696"/>
+    <!-- 转移连线与连线上的文字 -->
+    <SolidColorBrush x:Key="Brush.MachineState.Line" Color="#5A5A5A"/>
+    <SolidColorBrush x:Key="Brush.MachineState.Label" Color="#3C3C3C"/>
+
     <!-- ================= 文字 ================= -->
 
     <!-- 正文 / 标题 -->
