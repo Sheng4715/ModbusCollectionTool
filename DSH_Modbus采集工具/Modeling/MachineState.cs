@@ -142,37 +142,76 @@ namespace DSH_Modbus采集工具.Modeling
         }
     }
 
-    /// <summary>画布上的一条转移连线（含标签）。</summary>
+    /// <summary>
+    /// 画布上的一条转移连线。**几何写死**，只有标签文字可由用户编辑。
+    /// </summary>
     public sealed class MachineStateEdge
     {
         public MachineStateEdge(
-            string label,
+            string id,
+            string defaultText,
             bool doubleArrow,
-            int labelLines,
             DesignPoint labelPoint,
             params DesignPoint[] points)
         {
-            Label = label;
+            Id = id;
+            DefaultText = defaultText;
             DoubleArrow = doubleArrow;
-            LabelLines = labelLines;
             LabelPoint = labelPoint;
             Points = points;
         }
 
-        /// <summary>连线上的文字，如 <c>Reset Done</c>。</summary>
-        public string Label { get; }
+        /// <summary>稳定键（<c>Reset</c> / <c>ResetDone</c> …）—— 落盘按它合并，改文字不影响。</summary>
+        public string Id { get; }
+
+        /// <summary>
+        /// 出厂文字。需要折行的直接带 <c>\n</c>（如 <c>Reset\nDone</c>）——
+        /// 早先按空格硬折的做法已废弃：现在文字可编辑，再自动折会让用户输入的空格凭空消失。
+        /// </summary>
+        public string DefaultText { get; }
 
         /// <summary>两端都画箭头（目前只有 <c>Toggle</c>）。</summary>
         public bool DoubleArrow { get; }
-
-        /// <summary>标签折几行：2 表示按 drawio 那样折成两行。</summary>
-        public int LabelLines { get; }
 
         /// <summary>标签中心点（压在连线上，用画布底色盖住线）。</summary>
         public DesignPoint LabelPoint { get; }
 
         /// <summary>折线经过的点，首尾是要连的两个端点。</summary>
         public IReadOnlyList<DesignPoint> Points { get; }
+    }
+
+    /// <summary>一条转移连线上、用户可编辑的那段文字（状态机切换条件，SC）。</summary>
+    public sealed class MachineEdgeLabel : INotifyPropertyChanged
+    {
+        private string _text;
+
+        public MachineEdgeLabel(string id, string text)
+        {
+            Id = id;
+            _text = text ?? string.Empty;
+        }
+
+        /// <summary>稳定键，与 <see cref="MachineStateEdge.Id"/> 对应。</summary>
+        public string Id { get; }
+
+        /// <summary>显示文字。允许为空（画布上留一个空框，便于再点回来）；允许 <c>\n</c> 换行。</summary>
+        public string Text
+        {
+            get => _text;
+            set
+            {
+                string next = value ?? string.Empty;
+                if (_text == next)
+                {
+                    return;
+                }
+
+                _text = next;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Text)));
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
     }
 
     /// <summary>
@@ -225,26 +264,38 @@ namespace DSH_Modbus采集工具.Modeling
                 ["ManualControl"] = new(339, 358, 150, 50),
             };
 
-        /// <summary>13 条转移连线（顺序即绘制顺序）。</summary>
+        /// <summary>13 条转移连线（顺序即绘制顺序）。几何写死，标签文字可编辑。</summary>
         public static IReadOnlyList<MachineStateEdge> Edges { get; } = new MachineStateEdge[]
         {
-            new("Reset", false, 1, new(129, 270), new(129, 358), new(129, 187)),
-            new("Toggle", true, 1, new(271.5, 383), new(204, 383), new(339, 383)),
-            new("Clear or ImmediateStop", false, 1, new(541.5, 438),
+            new("Reset", "Reset", false, new(129, 270), new(129, 358), new(129, 187)),
+            new("Toggle", "Toggle", true, new(271.5, 383), new(204, 383), new(339, 383)),
+            new("ClearOrImmediateStop", "Clear or ImmediateStop", false, new(541.5, 438),
                 new(954, 408), new(954, 438), new(129, 438), new(129, 408)),
-            new("Reset Done", false, 2, new(271.5, 162), new(204, 162), new(339, 162)),
-            new("Start", false, 1, new(556.5, 162), new(489, 162), new(624, 162)),
-            new("Stop", false, 1, new(826.5, 162), new(774, 162), new(879, 162)),
-            new("Suspend", false, 1, new(736.5, 112), new(736.5, 137), new(736.5, 88)),
-            new("Un Suspend", false, 1, new(607.5, 108),
+            new("ResetDone", "Reset\nDone", false, new(271.5, 162), new(204, 162), new(339, 162)),
+            new("Start", "Start", false, new(556.5, 162), new(489, 162), new(624, 162)),
+            new("Stop", "Stop", false, new(826.5, 162), new(774, 162), new(879, 162)),
+            new("Suspend", "Suspend", false, new(736.5, 112), new(736.5, 137), new(736.5, 88)),
+            new("UnSuspend", "Un Suspend", false, new(607.5, 108),
                 new(624, 63), new(555, 63), new(555, 108), new(661.5, 108), new(661.5, 137)),
-            new("Hold or Error", false, 1, new(699, 218), new(699, 187), new(699, 247)),
-            new("No Error", false, 1, new(555, 230), new(624, 272), new(555, 272), new(555, 177)),
-            new("End Complete", false, 2, new(954, 84),
+            new("HoldOrError", "Hold or Error", false, new(699, 218), new(699, 187), new(699, 247)),
+            new("NoError", "No Error", false, new(555, 230), new(624, 272), new(555, 272), new(555, 177)),
+            new("EndComplete", "End\nComplete", false, new(954, 84),
                 new(954, 137), new(954, 28), new(414, 28), new(414, 137)),
-            new("Fault", false, 1, new(954, 336), new(954, 314), new(954, 358)),
-            new("Immediate Stop", false, 2, new(186, 335), new(166.5, 314), new(166.5, 358)),
+            new("Fault", "Fault", false, new(954, 336), new(954, 314), new(954, 358)),
+            new("ImmediateStop", "Immediate\nStop", false, new(186, 335), new(166.5, 314), new(166.5, 358)),
         };
+
+        /// <summary>13 条连线的出厂标签文字（与 <see cref="Edges"/> 一一对应）。</summary>
+        public static List<MachineEdgeLabel> CreateDefaultEdgeLabels()
+        {
+            var list = new List<MachineEdgeLabel>(Edges.Count);
+            foreach (MachineStateEdge edge in Edges)
+            {
+                list.Add(new MachineEdgeLabel(edge.Id, edge.DefaultText));
+            }
+
+            return list;
+        }
 
         /// <summary>
         /// 9 个状态的**出厂值**：稳定键 → (显示文字, 填充色)。
@@ -315,23 +366,24 @@ namespace DSH_Modbus采集工具.Modeling
 
         public static string FilePath => Path.Combine(AppContext.BaseDirectory, FileName);
 
-        public static List<MachineStateItem> Load()
+        public static (List<MachineStateItem> States, List<MachineEdgeLabel> Edges) Load()
         {
             List<MachineStateItem> items = MachineStateLayout.CreateDefault();
+            List<MachineEdgeLabel> edges = MachineStateLayout.CreateDefaultEdgeLabels();
 
             try
             {
                 string path = FilePath;
                 if (!File.Exists(path))
                 {
-                    return items;
+                    return (items, edges);
                 }
 
                 MachineStateFile? file =
                     JsonSerializer.Deserialize<MachineStateFile>(File.ReadAllText(path), Options);
-                if (file?.States == null)
+                if (file == null)
                 {
-                    return items;
+                    return (items, edges);
                 }
 
                 var byId = items.ToDictionary(x => x.Id, StringComparer.Ordinal);
@@ -348,17 +400,28 @@ namespace DSH_Modbus采集工具.Modeling
                     item.Color = MachineStateItem.NormalizeColor(entry.Color);
                     item.Expression = entry.Expression ?? string.Empty;
                 }
+
+                // 连线标签同理按 id 合并：缺的用出厂文字，多的忽略
+                var edgeById = edges.ToDictionary(x => x.Id, StringComparer.Ordinal);
+                foreach (EdgeEntry entry in file.Edges ?? new List<EdgeEntry>())
+                {
+                    if (!string.IsNullOrEmpty(entry.Id) && edgeById.TryGetValue(entry.Id, out var label))
+                    {
+                        label.Text = entry.Text ?? label.Text;
+                    }
+                }
             }
             catch
             {
                 // 与 DataPointStore / GlobalVariableStore 一致：读失败不阻断启动，退回出厂值
-                return MachineStateLayout.CreateDefault();
+                return (MachineStateLayout.CreateDefault(), MachineStateLayout.CreateDefaultEdgeLabels());
             }
 
-            return items;
+            return (items, edges);
         }
 
-        public static bool Save(IEnumerable<MachineStateItem> items)
+        public static bool Save(
+            IEnumerable<MachineStateItem> items, IEnumerable<MachineEdgeLabel> edges)
         {
             try
             {
@@ -372,6 +435,11 @@ namespace DSH_Modbus采集工具.Modeling
                         FontSize = x.FontSize,
                         Color = x.Color,
                         Expression = x.Expression,
+                    }).ToList(),
+                    Edges = edges.Select(x => new EdgeEntry
+                    {
+                        Id = x.Id,
+                        Text = x.Text,
                     }).ToList(),
                 };
 
@@ -387,6 +455,16 @@ namespace DSH_Modbus采集工具.Modeling
         private sealed class MachineStateFile
         {
             public List<MachineStateEntry> States { get; set; } = new();
+
+            /// <summary>连线标签。老文件没有这一段 → 用出厂文字。</summary>
+            public List<EdgeEntry>? Edges { get; set; }
+        }
+
+        private sealed class EdgeEntry
+        {
+            public string? Id { get; set; }
+
+            public string? Text { get; set; }
         }
 
         private sealed class MachineStateEntry
@@ -409,20 +487,29 @@ namespace DSH_Modbus采集工具.Modeling
     public sealed class MachineStateSet
     {
         private readonly List<MachineStateItem> _items;
+        private readonly List<MachineEdgeLabel> _edgeLabels;
 
         public MachineStateSet()
         {
             _items = MachineStateLayout.CreateDefault();
+            _edgeLabels = MachineStateLayout.CreateDefaultEdgeLabels();
         }
 
         public IReadOnlyList<MachineStateItem> Items => _items;
 
+        /// <summary>13 条连线上的标签（用户可编辑的切换条件文字）。</summary>
+        public IReadOnlyList<MachineEdgeLabel> EdgeLabels => _edgeLabels;
+
         /// <summary>从磁盘读，并把每条表达式编译好。</summary>
         public void Load(Func<string, bool> nameExists)
         {
-            List<MachineStateItem> loaded = MachineStateStore.Load();
+            (List<MachineStateItem> states, List<MachineEdgeLabel> edges) = MachineStateStore.Load();
+
             _items.Clear();
-            _items.AddRange(loaded);
+            _items.AddRange(states);
+
+            _edgeLabels.Clear();
+            _edgeLabels.AddRange(edges);
 
             foreach (MachineStateItem item in _items)
             {
@@ -430,7 +517,7 @@ namespace DSH_Modbus采集工具.Modeling
             }
         }
 
-        public bool Save() => MachineStateStore.Save(_items);
+        public bool Save() => MachineStateStore.Save(_items, _edgeLabels);
 
         /// <summary>
         /// 改一条表达式：编译 + 校验变量存在性，成功才写回。

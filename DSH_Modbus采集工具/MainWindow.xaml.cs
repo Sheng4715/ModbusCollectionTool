@@ -375,8 +375,9 @@ namespace DSH_Modbus采集工具
             _machineVariables.AttachGlobals(_globalVarSet);
             _machineSet.Load(ExpressionNameExists);
             _machineSet.RecompileAll(ExpressionNameExists);
-            MachineStateViewControl.Bind(_machineSet.Items);
+            MachineStateViewControl.Bind(_machineSet.Items, _machineSet.EdgeLabels);
             MachineStateViewControl.StateDoubleClicked += MachineStateView_StateDoubleClicked;
+            MachineStateViewControl.EdgeLabelCommitted += (_, _) => _machineSet.Save();
             _machineTimer.Tick += (_, _) => RefreshMachineStates();
 
             // 系统变量监控（P2.3）：同一份清单，行对象多一个「当前值」；

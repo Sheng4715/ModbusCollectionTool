@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
@@ -31,6 +32,7 @@ namespace DSH_Modbus采集工具.Ui
         private const double ArrowLength = 9;
 
         private readonly Dictionary<string, BoxVisual> _boxes = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, LabelVisual> _labels = new(StringComparer.Ordinal);
 
         public MachineStateView()
         {
@@ -40,18 +42,23 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>双击某个状态框时触发，参数是该状态。</summary>
         public event EventHandler<MachineStateItem>? StateDoubleClicked;
 
+        /// <summary>某条连线的标签被改完（已写回模型），调用方据此落盘。</summary>
+        public event EventHandler? EdgeLabelCommitted;
+
         /// <summary>用一组状态重建整个画面。</summary>
-        public void Bind(IReadOnlyList<MachineStateItem> items)
+        public void Bind(
+            IReadOnlyList<MachineStateItem> items, IReadOnlyList<MachineEdgeLabel> edgeLabels)
         {
             RootCanvas.Children.Clear();
             _boxes.Clear();
+            _labels.Clear();
 
             RootCanvas.Width = MachineStateLayout.DesignWidth;
             RootCanvas.Height = MachineStateLayout.DesignHeight;
 
             BuildContainer();
             BuildEdges();
-            BuildEdgeLabels();
+            BuildEdgeLabels(edgeLabels);
             BuildBoxes(items);
         }
 
@@ -168,57 +175,88 @@ namespace DSH_Modbus采集工具.Ui
         }
 
         /// <summary>
-        /// 连线标签：**压在线上**，用卡片底色把线盖掉一段，与 drawio 的观感一致。
+        /// 连线标签（状态机切换条件，SC）：**压在线上**，用卡片底色把线盖掉一段。
+        /// <para>
+        /// 双击就地变成输入框：回车（不带 Shift）提交、Shift+回车换行、ESC 取消、失焦提交。
+        /// 文字为空时**留一个空框**而不是整块消失 —— 否则那条条件再也点不回来。
+        /// </para>
         /// <para>
         /// 之所以不用 <c>Canvas.Left</c> 直接居中：标签宽度要等测量完才知道，
-        /// 于是用 <see cref="RenderTransformOrigin"/> + 半宽半高的平移变换来居中自己。
+        /// 于是用半宽半高的平移变换来居中自己。
         /// </para>
         /// </summary>
-        private void BuildEdgeLabels()
+        private void BuildEdgeLabels(IReadOnlyList<MachineEdgeLabel> labels)
         {
+            var byId = labels.ToDictionary(x => x.Id, StringComparer.Ordinal);
+
             foreach (MachineStateEdge edge in MachineStateLayout.Edges)
             {
-                var label = new TextBlock
+                if (!byId.TryGetValue(edge.Id, out MachineEdgeLabel? model))
                 {
-                    Text = edge.LabelLines == 2 ? BreakLabel(edge.Label) : edge.Label,
+                    continue;
+                }
+
+                var text = new TextBlock
+                {
                     FontSize = EdgeLabelFontSize,
                     TextAlignment = TextAlignment.Center,
                     TextWrapping = TextWrapping.NoWrap,
-                    Padding = new Thickness(2, 0, 2, 0),
                     IsHitTestVisible = false,
                 };
 
-                label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.MachineState.Label");
-                label.SetResourceReference(TextBlock.BackgroundProperty, "Brush.Card.Background");
+                text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.MachineState.Label");
+                text.SetBinding(
+                    TextBlock.TextProperty,
+                    new Binding(nameof(MachineEdgeLabel.Text)) { Source = model });
+
+                var editor = new TextBox
+                {
+                    FontSize = EdgeLabelFontSize,
+                    MinWidth = 70,
+                    Padding = new Thickness(3, 0, 3, 0),
+                    AcceptsReturn = true,
+                    TextWrapping = TextWrapping.NoWrap,
+                    Visibility = Visibility.Collapsed,
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                };
+
+                editor.SetResourceReference(TextBox.BackgroundProperty, "Brush.Card.Background");
+                editor.SetResourceReference(TextBox.ForegroundProperty, "Brush.MachineState.Label");
+                editor.SetResourceReference(TextBox.BorderBrushProperty, "Brush.Accent");
+
+                var grid = new Grid();
+                grid.Children.Add(text);
+                grid.Children.Add(editor);
+
+                var border = new Border
+                {
+                    Padding = new Thickness(3, 1, 3, 1),
+                    Child = grid,
+                    Cursor = Cursors.Hand,
+                    ToolTip = "双击编辑切换条件",
+                };
+
+                border.SetResourceReference(Border.BackgroundProperty, "Brush.Card.Background");
 
                 var offset = new TranslateTransform();
-                label.RenderTransform = offset;
-                label.SizeChanged += (_, e) =>
+                border.RenderTransform = offset;
+                border.SizeChanged += (_, e) =>
                 {
                     offset.X = -e.NewSize.Width / 2;
                     offset.Y = -e.NewSize.Height / 2;
                 };
 
-                Canvas.SetLeft(label, edge.LabelPoint.X);
-                Canvas.SetTop(label, edge.LabelPoint.Y);
-                RootCanvas.Children.Add(label);
+                Canvas.SetLeft(border, edge.LabelPoint.X);
+                Canvas.SetTop(border, edge.LabelPoint.Y);
+                RootCanvas.Children.Add(border);
+
+                var visual = new LabelVisual(model, border, text, editor, NotifyEdgeLabelCommitted);
+                _labels[edge.Id] = visual;
+                visual.Refresh();
             }
         }
 
-        /// <summary>
-        /// 把标着「折两行」的标签按空格断开。
-        /// <para>
-        /// ⚠️ <c>Reset Done</c> 折成「Reset / Done」而不是按宽度自动换行 ——
-        /// 自动换行会在缩放到某个比例时突然变一行，图会「跳」。
-        /// </para>
-        /// </summary>
-        private static string BreakLabel(string text)
-        {
-            int space = text.IndexOf(' ');
-            return space <= 0 || space == text.Length - 1
-                ? text
-                : text[..space] + "\n" + text[(space + 1)..];
-        }
+        private void NotifyEdgeLabelCommitted() => EdgeLabelCommitted?.Invoke(this, EventArgs.Empty);
 
         private void BuildBoxes(IReadOnlyList<MachineStateItem> items)
         {
@@ -271,6 +309,126 @@ namespace DSH_Modbus采集工具.Ui
 
             e.Handled = true;
             StateDoubleClicked?.Invoke(this, item);
+        }
+
+        /// <summary>
+        /// 一条连线标签的视觉对象：平时是只读文字，双击就地变输入框。
+        /// </summary>
+        private sealed class LabelVisual
+        {
+            private readonly MachineEdgeLabel _model;
+            private readonly Border _border;
+            private readonly TextBlock _text;
+            private readonly TextBox _editor;
+            private readonly Action _onCommitted;
+            private bool _editing;
+
+            public LabelVisual(
+                MachineEdgeLabel model,
+                Border border,
+                TextBlock text,
+                TextBox editor,
+                Action onCommitted)
+            {
+                _model = model;
+                _border = border;
+                _text = text;
+                _editor = editor;
+                _onCommitted = onCommitted;
+
+                _border.MouseLeftButtonDown += Border_MouseLeftButtonDown;
+                _editor.PreviewKeyDown += Editor_PreviewKeyDown;
+                _editor.LostFocus += Editor_LostFocus;
+                _model.PropertyChanged += (_, _) => Refresh();
+            }
+
+            /// <summary>空文字时留一个可见的小空框，否则那条连线就再也点不回来了。</summary>
+            public void Refresh()
+            {
+                bool empty = string.IsNullOrWhiteSpace(_model.Text);
+                _border.BorderThickness = new Thickness(empty ? 1 : 0);
+                _border.MinWidth = empty ? 22 : 0;
+                _border.MinHeight = empty ? 16 : 0;
+
+                if (empty)
+                {
+                    _border.SetResourceReference(
+                        Border.BorderBrushProperty, "Brush.MachineState.Inactive.Border");
+                }
+            }
+
+            private void Border_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+            {
+                if (e.ClickCount < 2)
+                {
+                    return;
+                }
+
+                e.Handled = true;
+                BeginEdit();
+            }
+
+            private void BeginEdit()
+            {
+                if (_editing)
+                {
+                    return;
+                }
+
+                _editing = true;
+                _editor.Text = _model.Text;
+                _text.Visibility = Visibility.Collapsed;
+                _editor.Visibility = Visibility.Visible;
+                _editor.Focus();
+                _editor.SelectAll();
+            }
+
+            private void EndEdit(bool commit)
+            {
+                if (!_editing)
+                {
+                    return;
+                }
+
+                _editing = false;
+
+                if (commit)
+                {
+                    // 只去掉行尾的空白，中间的空格和换行是用户有意敲的
+                    _model.Text = _editor.Text.TrimEnd('\r', '\n');
+                }
+
+                _editor.Visibility = Visibility.Collapsed;
+                _text.Visibility = Visibility.Visible;
+                Refresh();
+
+                if (commit)
+                {
+                    _onCommitted();
+                }
+            }
+
+            private void Editor_PreviewKeyDown(object sender, KeyEventArgs e)
+            {
+                if (e.Key == Key.Escape)
+                {
+                    e.Handled = true;
+                    EndEdit(commit: false);
+                    return;
+                }
+
+                // 回车提交；Shift+回车留给 TextBox 自己插换行。
+                // ⚠️ 主键盘回车是 Key.Return，Key.Enter 是**小键盘**那个 —— 两个都要认，
+                // 只判 Key.Enter 的话按主回车毫无反应（实测踩过）。
+                if (e.Key is Key.Enter or Key.Return && (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
+                {
+                    e.Handled = true;
+                    EndEdit(commit: true);
+                }
+            }
+
+            private void Editor_LostFocus(object sender, RoutedEventArgs e) =>
+                EndEdit(commit: true);
         }
 
         /// <summary>一个状态框的两件视觉对象，以及「上次画成什么样」的缓存。</summary>
