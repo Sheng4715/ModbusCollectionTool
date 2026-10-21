@@ -291,7 +291,10 @@ ushort[] Encode(DataType t, string text, ByteOrderSettings o)
 // 驱动默认值就是出厂约定；未选驱动时用大端兜底
 Check("信捷出厂默认 DINT 字序", ByteOrderSettings.FromDriver(xinje).Int32, ByteOrder32.Order3412);
 Check("信捷出厂默认 REAL 字序", ByteOrderSettings.FromDriver(xinje).Float, ByteOrder32.Order3412);
-Check("未选驱动时整数回落到 1234", ByteOrderSettings.Default.Int32, ByteOrder32.Order1234);
+// 兜底值取主力品牌（信捷）的实测值，不再是照惯例猜的大端 ——
+// 两台验收机（信捷 XD / 汇川 Easy）实测都不是大端，猜错只会给出看着正常的错值。
+Check("未选驱动时整数回落到 3412（信捷实测值）", ByteOrderSettings.Default.Int32, ByteOrder32.Order3412);
+Check("未选驱动时字符串回落到 12（信捷实测值）", ByteOrderSettings.Default.String, StringByteOrder.Order12);
 
 // 两个品牌的默认值都来自真机实测（信捷 §10.3/§10.4、汇川 §10.16）：
 // 整数与浮点两品牌相同（3412），**字符串相反**（信捷 12、汇川 21）。

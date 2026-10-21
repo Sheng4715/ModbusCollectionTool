@@ -35,14 +35,22 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>字符串在寄存器内的字节先后。</summary>
         public StringByteOrder String { get; }
 
-        /// <summary>取某个品牌驱动的出厂默认值；未选驱动时用大端。</summary>
+        /// <summary>取某个品牌驱动的出厂默认值；未选驱动时用 <see cref="Default"/>。</summary>
         public static ByteOrderSettings FromDriver(CommDriver? driver) => driver is null
             ? Default
             : new ByteOrderSettings(driver.Int32ByteOrder, driver.FloatByteOrder, driver.StringByteOrder);
 
-        /// <summary>未选驱动时的兜底值：全部大端（与 <see cref="CommDriver"/> 属性的缺省语义一致）。</summary>
+        /// <summary>
+        /// 未选驱动时的兜底值 = <b>信捷 XD 真机实测值</b>（<c>3412</c> / <c>3412</c> / <c>12</c>）。
+        /// <para>
+        /// 原先这里填的是「大端 <c>1234</c>」—— 那是照通用 Modbus 惯例猜的，本项目两台验收机
+        /// （信捷 XD、汇川 Easy）实测**都不是大端**，猜错只会给出看着正常的错值。
+        /// 兜底取主力品牌（信捷）的实测值，至少落在「本项目真机成立」的一侧。
+        /// 实际运行中这条几乎不会走到：设备类型下拉恒有选中项，构造期就 <c>SetDriver</c> 了。
+        /// </para>
+        /// </summary>
         public static ByteOrderSettings Default { get; } = new(
-            ByteOrder32.Order1234, ByteOrder32.Order1234, StringByteOrder.Order12);
+            ByteOrder32.Order3412, ByteOrder32.Order3412, StringByteOrder.Order12);
 
         public bool Equals(ByteOrderSettings other)
             => Int32 == other.Int32 && Float == other.Float && String == other.String;

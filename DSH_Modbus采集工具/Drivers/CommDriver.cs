@@ -141,7 +141,8 @@ namespace DSH_Modbus采集工具.Drivers
 
         /// <summary>
         /// 32 位整数的字节顺序（品牌约定）。
-        /// 属性初值为信捷 XD 真机实测值；各品牌应在 <see cref="DriverRegistry"/> 里显式声明。
+        /// 属性初值 = 信捷 XD 真机实测值（<c>Design.md</c> §10.3）；各品牌在 <see cref="DriverRegistry"/>
+        /// 里**必须显式声明**，别依赖这里的初值 —— 汇川实测同样是 <c>3412</c>，但字符串相反（§10.16）。
         /// </summary>
         public ByteOrder32 Int32ByteOrder { get; init; } = ByteOrder32.Order3412;
 
@@ -153,7 +154,8 @@ namespace DSH_Modbus采集工具.Drivers
 
         /// <summary>
         /// 字符串在寄存器内的字节顺序（品牌约定）。
-        /// 属性初值为信捷 XD 真机实测值；各品牌应在 <see cref="DriverRegistry"/> 里显式声明。
+        /// 属性初值 = 信捷 XD 真机实测值 <c>12</c>（<c>Design.md</c> §10.4）；
+        /// ⚠️ 汇川实测是 <c>21</c>（§10.16）—— 这是两品牌唯一不同的一项，务必显式声明。
         /// </summary>
         public StringByteOrder StringByteOrder { get; init; } = StringByteOrder.Order12;
 
