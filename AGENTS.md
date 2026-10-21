@@ -52,6 +52,7 @@ DSH_Modbus采集工具/
 ├── Modeling/                   # 数据类型系统（P6.4 数据模型层）
 │   ├── DataTypes.cs            # DataType / DisplayFormat 枚举 + DataTypeSpec 规格表
 │   ├── ValueCodec.cs           # 原始寄存器 ↔ 类型值 编解码 + 显示格式化
+│   ├── ByteOrderSettings.cs    # 三套字节顺序（整数 / 浮点 / 字符串）的值类型（P4.3）
 │   ├── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
 │   └── GlobalVariable.cs       # 全局变量模型 + 变量名规则 + GlobalVar.json 持久化（值不落盘）
 ├── Logging/                    # 日志落盘与文案规则（不含 WPF 类型）
@@ -152,7 +153,7 @@ Window
 
 - **总览**：顶部仅「总览」标题（原状态卡已移除，连接状态统一在全局底栏）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。
 - **状态信息**：见 §5 IO 监控 / §5.1 自由监控。
-- **设备配置**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 §8.1）。连接中锁定表单（`SetInputsEnabled`）。串口模式仅隐藏以太网面板，**功能未实现**。
+- **设备配置**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 §8.1）。连接中锁定表单（`SetInputsEnabled`）——**例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍即生效，锁上反而挡住现场纠正（见 §8.1）。串口模式仅隐藏以太网面板，**功能未实现**。
 
 **连接参数会被记住**（`app-settings.json`）：`TargetNic` / `TargetIp` / `TargetPort`，下次启动回填。
 
@@ -678,8 +679,21 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 - 记号含义见 `CommDriver.cs` 的枚举注释：把 4 个字节**按重要性**编号 1=MSB…4=LSB，名称即字节流里的排列顺序
 - **信捷的值是真机定案**（`Design.md` §10.3 / §10.4）；**汇川未实测**，暂用大端 `1234` 并已在代码注释标红
-- 切换设备类型时下拉框按驱动的值重置默认（`ByteOrderComboBox_SelectionChanged`）；这三个值是 `ValueCodec` 各方法的入参，**编解码器不读全局状态**
 - ⚠️ 字符串**不涉及「字序」**：它只是字节序列，没有字的权重之分，别把 `3412` 套到 `STRING` 上
+
+**三套各自独立，且真的会被读**（P4.3，2026-10-21 接线）：
+
+- 载体是 `Modeling/ByteOrderSettings.cs`（`Int32` / `Float` / `String` 三个字段 + `FromDriver`）。
+  `ValueCodec.FormatRegisters` / `TryEncodeRegisters` 收的是**整份** settings，按行类型取对应那套 ——
+  编解码器仍然**不读全局状态**，只认入参
+- ⚠️ `REAL` 与 `DINT` **不再共用一套字序**。早先两者绑在一个 `byteOrder` 参数上，
+  「32位浮点数字节顺序」下拉框改了也不生效（界面显示 1234、数值仍按 3412 解，**不报错但全是错值**）
+- **切换设备类型 = 重置为驱动默认**（用户定案）：`SyncByteOrderCombos` 里 `ApplyByteOrders(FromDriver(driver))`，
+  `MonitorItemSet.SetDriver` 也同步重置一次；**不持久化**，重启回到驱动默认
+- 所有改动路径都走窗口的 `ApplyByteOrders`（写 `_byteOrders` + `_monitorSet.SetByteOrders`）——
+  **不要只改下拉框**，那样界面与数据会各说各话
+- 轮询回填取 `_host.MonitorSet.ByteOrders` 那份快照（`ApplyBlock` 的入参）：后台线程不能读窗口字段
+- 验证：`ModelingCheck` 新增 §11 共 10 项（改浮点不影响整数、改整数不影响浮点、编码侧同样各走各的）
 
 ## 9. 代码约定
 
@@ -793,7 +807,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 | **元件名称输入 → 符号+编号拆分** | `CommDriver.TrySplitName`（`TryResolve` 与自由监控共用） |
 | **数据类型候选（线圈/寄存器）** | `CommDriver.AreasOfElement` + `DataTypes.CoilTypes` / `RegisterTypes` |
 | **监控项持久化** | `DataPointStore`（`data-points.json`）；模型 `Modeling/DataPoint.cs` |
-| **字节顺序（字序/字符串序）** | `CommDriver.Int32ByteOrder` / `FloatByteOrder` / `StringByteOrder` + 设备配置页三个下拉框（见 §8.1） |
+| **字节顺序（字序/字符串序）** | `Modeling/ByteOrderSettings.cs`（三套值）+ 设备配置页三个下拉框 + 窗口 `ApplyByteOrders` / `SyncByteOrderCombos`（见 §8.1）；读取用 `MonitorItemSet.ByteOrders` |
 | **类型值编解码与显示格式化** | `Modeling/ValueCodec.cs`（入参传字节顺序，不读全局状态） |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
 | 心跳周期/空闲判断/地址来源 | `Drivers/ModbusHeartbeat.cs` → `RunAsync`；`ModbusTcpClient.HeartbeatIfIdleAsync` |

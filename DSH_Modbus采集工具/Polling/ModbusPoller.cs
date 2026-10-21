@@ -105,7 +105,7 @@ internal sealed class ModbusPoller
         // 自由监控走 _monitorSet —— 只有当前显示的那一个才读，其余不读也不清值。
         if (snap.FreeViewActive)
         {
-            await PollFreeMonitorAsync(modbus, driver, token);
+            await PollFreeMonitorAsync(modbus, token);
             return;
         }
 
@@ -195,8 +195,12 @@ internal sealed class ModbusPoller
     /// <item>读取失败**不触发断线**，只把原因写到该行的「当前值」格 ——
     /// 一个配错的地址不该拖垮整条连接（与心跳遇异常码保持连接的做法一致）。</item>
     /// </list>
+    /// <para>
+    /// 字节顺序不从这里传：它由用户在设备配置页改，跟着 <see cref="ICollectorHost.MonitorSet"/>
+    /// 上的 <c>ByteOrders</c> 走，回填时直接取那份快照。
+    /// </para>
     /// </summary>
-    public async Task PollFreeMonitorAsync(ModbusTcpClient modbus, CommDriver driver, CancellationToken token)
+    public async Task PollFreeMonitorAsync(ModbusTcpClient modbus, CancellationToken token)
     {
         List<ReadBlock> plan = _host.MonitorSet.BuildReadPlan();
         if (plan.Count == 0)
@@ -282,7 +286,7 @@ internal sealed class ModbusPoller
                     continue;
                 }
 
-                MonitorItemSet.ApplyBlock(block, coils, regs, driver);
+                MonitorItemSet.ApplyBlock(block, coils, regs, _host.MonitorSet.ByteOrders);
             }
         });
     }

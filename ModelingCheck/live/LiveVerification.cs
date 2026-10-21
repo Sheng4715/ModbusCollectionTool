@@ -92,9 +92,9 @@ static byte[] ReadExact(NetworkStream s, int n)
 
 CommDriver drv = DriverRegistry.GetByKey("xinje_xd")!;
 
-// 字序取自设备配置页下拉框的当前值（信捷 XD 实测为 3412 / 12）
-const ByteOrder32 BO = ByteOrder32.Order3412;
-const StringByteOrder SO = StringByteOrder.Order12;
+// 字序取自设备配置页三个下拉框的当前值（信捷 XD 出厂默认 = 真机实测 3412 / 3412 / 12）
+ByteOrderSettings orders = ByteOrderSettings.FromDriver(drv);
+ByteOrder32 BO = orders.Int32;
 
 Console.WriteLine();
 Console.WriteLine("=== 用数据模型层读真机 D800/D802/D810 ===");
@@ -103,8 +103,8 @@ var pInt = new DataPoint { Element = "D", Index = "800", Type = DataType.DInt, F
 if (!DataPointStore.TryResolve(pInt, drv, out string e1)) { Console.WriteLine($"  D800 解析失败：{e1}"); return 1; }
 ushort[] rInt = ReadRegs((ushort)pInt.Address, (ushort)pInt.RawCount);
 Console.WriteLine($"  原始：D800=0x{rInt[0]:X4} D801=0x{rInt[1]:X4}");
-Check("D800 声明 DINT -> 值", ValueCodec.FormatRegisters(pInt.Type, rInt, pInt.Format, BO, SO, 0), "123456");
-Check("D800 声明 DINT -> HEX", ValueCodec.FormatRegisters(pInt.Type, rInt, DisplayFormat.Hex, BO, SO, 0), "0x0001E240");
+Check("D800 声明 DINT -> 值", ValueCodec.FormatRegisters(pInt.Type, rInt, pInt.Format, orders, 0), "123456");
+Check("D800 声明 DINT -> HEX", ValueCodec.FormatRegisters(pInt.Type, rInt, DisplayFormat.Hex, orders, 0), "0x0001E240");
 
 var pReal = new DataPoint { Element = "D", Index = "802", Type = DataType.Real, Format = DisplayFormat.Dec };
 if (!DataPointStore.TryResolve(pReal, drv, out string e2)) { Console.WriteLine($"  D802 解析失败：{e2}"); return 1; }
@@ -116,15 +116,15 @@ var pStr = new DataPoint { Element = "D", Index = "810", Type = DataType.String,
 if (!DataPointStore.TryResolve(pStr, drv, out string e3)) { Console.WriteLine($"  D810 解析失败：{e3}"); return 1; }
 ushort[] rStr = ReadRegs((ushort)pStr.Address, (ushort)pStr.RawCount);
 Console.WriteLine($"  原始：D810=0x{rStr[0]:X4} D811=0x{rStr[1]:X4}");
-Check("D810 声明 STRING[4] -> 值", ValueCodec.DecodeString(rStr, pStr.Length, SO), "abcd");
+Check("D810 声明 STRING[4] -> 值", ValueCodec.DecodeString(rStr, pStr.Length, orders.String), "abcd");
 
 // 关键对照：同一段寄存器按不同类型声明，解出的值不同 —— 证明类型真的在起作用
 var pAsInt = new DataPoint { Element = "D", Index = "800", Type = DataType.Int, Format = DisplayFormat.Dec };
 if (!DataPointStore.TryResolve(pAsInt, drv, out _)) { Console.WriteLine("  D800 解析失败"); return 1; }
 
-string asInt = ValueCodec.FormatRegisters(DataType.Int, rInt, DisplayFormat.Dec, BO, SO, 0);
-string asUInt = ValueCodec.FormatRegisters(DataType.UInt, rInt, DisplayFormat.Dec, BO, SO, 0);
-string asDInt = ValueCodec.FormatRegisters(DataType.DInt, rInt, DisplayFormat.Dec, BO, SO, 0);
+string asInt = ValueCodec.FormatRegisters(DataType.Int, rInt, DisplayFormat.Dec, orders, 0);
+string asUInt = ValueCodec.FormatRegisters(DataType.UInt, rInt, DisplayFormat.Dec, orders, 0);
+string asDInt = ValueCodec.FormatRegisters(DataType.DInt, rInt, DisplayFormat.Dec, orders, 0);
 Console.WriteLine($"  对照：同一 2 寄存器原始值 0x{rInt[0]:X4}/0x{rInt[1]:X4} 按三种声明解释：");
 Console.WriteLine($"          INT  -> {asInt}      (只取首寄存器低字)");
 Console.WriteLine($"          UINT -> {asUInt}");

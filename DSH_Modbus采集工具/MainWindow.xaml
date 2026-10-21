@@ -2212,7 +2212,7 @@
                                                       Width="200"
                                                       VerticalAlignment="Center"
                                               Style="{StaticResource FormComboBox}"
-                                                      ToolTip="32 位整数占 2 个连续寄存器。1=最高字节 … 4=最低字节；名称即 4 个字节在字节流里的顺序。信捷 XD 实测为 3412（低字在前）。"
+                                                      ToolTip="32 位整数占 2 个连续寄存器。1=最高字节 … 4=最低字节；名称即 4 个字节在字节流里的顺序。信捷 XD 实测为 3412（低字在前）。与下方浮点字序互不影响。"
                                                       SelectionChanged="ByteOrderComboBox_SelectionChanged">
                                                 <ComboBoxItem Content="1234（大端，高字在前）"/>
                                                 <ComboBoxItem Content="2143（字内字节交换，高字在前）"/>
@@ -2230,7 +2230,7 @@
                                                       Width="200"
                                                       VerticalAlignment="Center"
                                               Style="{StaticResource FormComboBox}"
-                                                      ToolTip="REAL 与 DINT 是同一个 32 位整数，只是解释方式不同，多数品牌两者字序相同。信捷 XD 实测为 3412。"
+                                                      ToolTip="REAL 独占一套字序，与上面的 32 位整数互不影响（改这里不会改变整数解释，反之亦然）。信捷 XD 实测为 3412。"
                                                       SelectionChanged="ByteOrderComboBox_SelectionChanged">
                                                 <ComboBoxItem Content="1234（大端，高字在前）"/>
                                                 <ComboBoxItem Content="2143（字内字节交换，高字在前）"/>

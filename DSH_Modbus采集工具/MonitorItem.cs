@@ -527,8 +527,8 @@ namespace DSH_Modbus采集工具
         /// 免得同一个值在这里能填、接到地址后却写不进去。
         /// </para>
         /// </summary>
-        /// <param name="driver">提供字节顺序；未选设备时用默认顺序（只影响编码，不影响是否合法）。</param>
-        public bool TrySetMemoryValue(string? text, CommDriver? driver, out string error)
+        /// <param name="orders">三套字节顺序（设备配置页下拉框的当前值）；只影响编码，不影响是否合法。</param>
+        public bool TrySetMemoryValue(string? text, ByteOrderSettings orders, out string error)
         {
             error = string.Empty;
 
@@ -561,8 +561,7 @@ namespace DSH_Modbus采集工具
                          variable.Format,
                          value,
                          variable.Length,
-                         driver?.Int32ByteOrder ?? ByteOrder32.Order1234,
-                         driver?.StringByteOrder ?? StringByteOrder.Order12,
+                         orders,
                          out _,
                          out error))
             {
@@ -608,6 +607,15 @@ namespace DSH_Modbus采集工具
         /// <summary>当前驱动，用于解析地址；随设备类型切换而更新。</summary>
         public CommDriver? Driver { get; private set; }
 
+        /// <summary>
+        /// 数据解释用的三套字节顺序。默认取当前驱动，用户改设备配置页的下拉框后由窗口覆盖。
+        /// <para>
+        /// 放在这里而不是每次从窗口读：轮询在后台线程回填（<see cref="ApplyBlock"/>），
+        /// 而 <c>Polling/</c> 不许碰 WPF，只能从宿主暴露的集合上取这份快照。
+        /// </para>
+        /// </summary>
+        public ByteOrderSettings ByteOrders { get; private set; } = ByteOrderSettings.Default;
+
         /// <summary>变量查找器，由窗口在载入全局变量表后注入（见 <see cref="MonitorItem.SetVariableLookup"/>）。</summary>
         private Func<string, GlobalVariable?>? _variableLookup;
 
@@ -631,8 +639,16 @@ namespace DSH_Modbus采集工具
         public void SetDriver(CommDriver? driver)
         {
             Driver = driver;
+
+            // 换设备类型 = 换品牌约定：字序一律回到该驱动的出厂默认（用户定案）。
+            // 调用方（窗口）随后会把下拉框同步成同一份值，故这里不需要通知谁。
+            ByteOrders = ByteOrderSettings.FromDriver(driver);
+
             ReResolveAll();
         }
+
+        /// <summary>用户改了设备配置页的字节顺序下拉框：立即生效于下一拍读/写。</summary>
+        public void SetByteOrders(ByteOrderSettings orders) => ByteOrders = orders;
 
         /// <summary>
         /// 从磁盘载入。解析失败项**保留在列表里并标红**，不静默丢弃 ——
@@ -823,7 +839,7 @@ namespace DSH_Modbus采集工具
         /// 只标该项读失败，不能连累同块其它项的值。
         /// </para>
         /// </summary>
-        public static void ApplyBlock(ReadBlock block, bool[]? coils, ushort[]? registers, CommDriver driver)
+        public static void ApplyBlock(ReadBlock block, bool[]? coils, ushort[]? registers, ByteOrderSettings orders)
         {
             foreach (ReadEntry e in block.Entries)
             {
@@ -852,8 +868,7 @@ namespace DSH_Modbus采集工具
                             e.Item.Model.Type,
                             slice,
                             e.Item.Model.Format,
-                            driver.Int32ByteOrder,
-                            driver.StringByteOrder,
+                            orders,
                             e.Item.Model.Length));
                     }
 
@@ -890,7 +905,7 @@ namespace DSH_Modbus采集工具
         public static bool TryBuildWrite(
             MonitorItem item,
             string? text,
-            CommDriver driver,
+            ByteOrderSettings orders,
             out WritePlan plan,
             out string error)
         {
@@ -937,8 +952,7 @@ namespace DSH_Modbus采集工具
                     item.Model.Format,
                     text,
                     item.Model.Length,
-                    driver.Int32ByteOrder,
-                    driver.StringByteOrder,
+                    orders,
                     out ushort[] regs,
                     out error))
             {

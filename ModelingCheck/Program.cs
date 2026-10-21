@@ -27,13 +27,17 @@ void CheckThrows(string name, Action act)
     catch (Exception e) { fail++; Console.WriteLine($"  [FAIL] {name,-46} 抛了 {e.GetType().Name}"); }
 }
 
+// 设备配置页三个下拉框的当前值：信捷 XD 的出厂默认 = 真机实测值（3412 / 3412 / 12）
+CommDriver xinje = DriverRegistry.GetByKey("xinje_xd")!;
+ByteOrderSettings orders = ByteOrderSettings.FromDriver(xinje);
+
 Console.WriteLine("=== 1. 真机黄金样本：DINT 123456 （字序 3412，低字在低地址）===");
 ushort[] d800 = { 0xE240, 0x0001 };
 long rawInt = ValueCodec.DecodeInteger(DataType.DInt, d800, ByteOrder32.Order3412);
 Check("DecodeInteger DINT", rawInt, 123456);
-Check("FormatRegisters DINT/DEC", ValueCodec.FormatRegisters(DataType.DInt, d800, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "123456");
-Check("FormatRegisters DINT/HEX", ValueCodec.FormatRegisters(DataType.DInt, d800, DisplayFormat.Hex, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "0x0001E240");
-Check("FormatRegisters DINT/BIN 位数", ValueCodec.FormatRegisters(DataType.DInt, d800, DisplayFormat.Bin, ByteOrder32.Order3412, StringByteOrder.Order12, 0).Replace(" ", "").Length, 32);
+Check("FormatRegisters DINT/DEC", ValueCodec.FormatRegisters(DataType.DInt, d800, DisplayFormat.Dec, orders, 0), "123456");
+Check("FormatRegisters DINT/HEX", ValueCodec.FormatRegisters(DataType.DInt, d800, DisplayFormat.Hex, orders, 0), "0x0001E240");
+Check("FormatRegisters DINT/BIN 位数", ValueCodec.FormatRegisters(DataType.DInt, d800, DisplayFormat.Bin, orders, 0).Replace(" ", "").Length, 32);
 
 Console.WriteLine();
 Console.WriteLine("=== 2. 真机黄金样本：REAL 123.45 ===");
@@ -46,17 +50,17 @@ Check("DecodeReal", ValueCodec.DecodeReal(d802, ByteOrder32.Order3412), 123.45f)
 // 通讯或字节序有问题。现改为 "G7"：与本项目工程量（6~7 位有效数字）匹配。
 // ⚠️ 解码精度不受影响，见下面 DecodeReal 的断言。
 Check("REAL 解码值 == float 123.45", ValueCodec.DecodeReal(d802, ByteOrder32.Order3412) == 123.45f, true);
-Check("FormatRegisters REAL/DEC 显示为 123.45", ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "123.45");
+Check("FormatRegisters REAL/DEC 显示为 123.45", ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Dec, orders, 0), "123.45");
 // 代价：7 位有效数字以外的末位会被四舍五入（这是选 G7 的已知取舍，不是 bug）
-Check("G7 取舍：1234.567 显示为 1234.567", ValueCodec.FormatRegisters(DataType.Real, new ushort[] { 0x5225, 0x449A }, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "1234.567");
-Check("FormatRegisters REAL/HEX", ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Hex, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "0x42F6E666");
+Check("G7 取舍：1234.567 显示为 1234.567", ValueCodec.FormatRegisters(DataType.Real, new ushort[] { 0x5225, 0x449A }, DisplayFormat.Dec, orders, 0), "1234.567");
+Check("FormatRegisters REAL/HEX", ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Hex, orders, 0), "0x42F6E666");
 
 Console.WriteLine();
 Console.WriteLine("=== 3. 真机黄金样本：STRING 'abcd' （每寄存器 2 字符、高字节在前）===");
 ushort[] d810 = { 0x6162, 0x6364 };
 Check("DecodeString len=4", ValueCodec.DecodeString(d810, 4, StringByteOrder.Order12), "abcd");
 Check("DecodeString len=3 (截断)", ValueCodec.DecodeString(d810, 3, StringByteOrder.Order12), "abc");
-Check("FormatRegisters STRING/ASCII", ValueCodec.FormatRegisters(DataType.String, d810, DisplayFormat.Ascii, ByteOrder32.Order3412, StringByteOrder.Order12, 4), "abcd");
+Check("FormatRegisters STRING/ASCII", ValueCodec.FormatRegisters(DataType.String, d810, DisplayFormat.Ascii, orders, 4), "abcd");
 Check("STRING[9] 占用寄存器数", DataTypes.Get(DataType.String).RegistersForLength(9), 5);
 Check("STRING[4] 占用寄存器数", DataTypes.Get(DataType.String).RegistersForLength(4), 2);
 
@@ -73,12 +77,12 @@ Console.WriteLine($"        （1234 会解成 {ValueCodec.DecodeReal(d802, ByteO
 Console.WriteLine();
 Console.WriteLine("=== 5. INT/UINT 严格按声明类型（同一 0xFFFF 两种结果）===");
 ushort[] ffff = { 0xFFFF };
-Check("INT  -1", ValueCodec.FormatRegisters(DataType.Int, ffff, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "-1");
-Check("UINT 65535", ValueCodec.FormatRegisters(DataType.UInt, ffff, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "65535");
-Check("INT  HEX 按 16 位补零", ValueCodec.FormatRegisters(DataType.Int, ffff, DisplayFormat.Hex, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "0xFFFF");
+Check("INT  -1", ValueCodec.FormatRegisters(DataType.Int, ffff, DisplayFormat.Dec, orders, 0), "-1");
+Check("UINT 65535", ValueCodec.FormatRegisters(DataType.UInt, ffff, DisplayFormat.Dec, orders, 0), "65535");
+Check("INT  HEX 按 16 位补零", ValueCodec.FormatRegisters(DataType.Int, ffff, DisplayFormat.Hex, orders, 0), "0xFFFF");
 ushort[] d7fff = { 0x8000 };
-Check("INT  0x8000 = -32768", ValueCodec.FormatRegisters(DataType.Int, d7fff, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "-32768");
-Check("UINT 0x8000 = 32768", ValueCodec.FormatRegisters(DataType.UInt, d7fff, DisplayFormat.Dec, ByteOrder32.Order3412, StringByteOrder.Order12, 0), "32768");
+Check("INT  0x8000 = -32768", ValueCodec.FormatRegisters(DataType.Int, d7fff, DisplayFormat.Dec, orders, 0), "-32768");
+Check("UINT 0x8000 = 32768", ValueCodec.FormatRegisters(DataType.UInt, d7fff, DisplayFormat.Dec, orders, 0), "32768");
 
 Console.WriteLine();
 Console.WriteLine("=== 6. 类型与格式的约束（Brief 要求）===");
@@ -90,7 +94,7 @@ Check("STRING 不允许 HEX", DataTypes.Get(DataType.String).AllowsFormat(Displa
 Check("线圈类型只有 BOOL", DataTypes.CoilTypes.Count, 1);
 Check("寄存器类型有 6 种", DataTypes.RegisterTypes.Count, 6);
 CheckThrows("STRING 按 HEX 格式化应报错", () =>
-    ValueCodec.FormatRegisters(DataType.String, d810, DisplayFormat.Hex, ByteOrder32.Order3412, StringByteOrder.Order12, 4));
+    ValueCodec.FormatRegisters(DataType.String, d810, DisplayFormat.Hex, orders, 4));
 
 Console.WriteLine();
 Console.WriteLine("=== 7. 编解码互逆（P4-2 写入的正确性前提）===");
@@ -111,7 +115,6 @@ foreach (StringByteOrder so in new[] { StringByteOrder.Order12, StringByteOrder.
 
 Console.WriteLine();
 Console.WriteLine("=== 8. 驱动解析与越界校验（信捷）===");
-CommDriver xinje = DriverRegistry.GetByKey("xinje_xd")!;
 var p1 = new DataPoint { Element = "D", Index = "800", Type = DataType.DInt, Format = DisplayFormat.Dec };
 Check("D800 DINT 解析", DataPointStore.TryResolve(p1, xinje, out _), true);
 Check("D800 DINT 地址", p1.Address, 800);
@@ -180,44 +183,44 @@ void CheckRegs(string name, ushort[] actual, ushort[] expected)
     else { fail++; Console.WriteLine($"  [FAIL] {name,-46} = {Fmt(actual)}   期望 {Fmt(expected)}"); }
 }
 
-void CheckEncode(string name, DataType t, DisplayFormat f, string text, int len, ByteOrder32 bo, StringByteOrder so, ushort[] expected)
+void CheckEncode(string name, DataType t, DisplayFormat f, string text, int len, ByteOrderSettings o, ushort[] expected)
 {
-    bool ok = ValueCodec.TryEncodeRegisters(t, f, text, len, bo, so, out ushort[] regs, out string err);
+    bool ok = ValueCodec.TryEncodeRegisters(t, f, text, len, o, out ushort[] regs, out string err);
     if (!ok) { fail++; Console.WriteLine($"  [FAIL] {name,-46} 解析失败：{err}"); return; }
     CheckRegs(name, regs, expected);
 }
 
 void CheckReject(string name, DataType t, DisplayFormat f, string text, int len)
 {
-    bool ok = ValueCodec.TryEncodeRegisters(t, f, text, len, xinje.Int32ByteOrder, xinje.StringByteOrder, out _, out string err);
+    bool ok = ValueCodec.TryEncodeRegisters(t, f, text, len, orders, out _, out string err);
     if (!ok) { pass++; Console.WriteLine($"  [PASS] {name,-46} 正确拒绝：{err}"); }
     else { fail++; Console.WriteLine($"  [FAIL] {name,-46} 本应拒绝却通过了"); }
 }
 
 // 整数：必须是 FormatRegisters 的严格逆运算（往返一致）
-CheckEncode("INT  1234 -> 1 个寄存器", DataType.Int, DisplayFormat.Dec, "1234", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 1234 });
-CheckEncode("INT  -1 -> 0xFFFF（补码）", DataType.Int, DisplayFormat.Dec, "-1", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0xFFFF });
-CheckEncode("UINT 65535 -> 0xFFFF", DataType.UInt, DisplayFormat.Dec, "65535", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0xFFFF });
-CheckEncode("INT  HEX 输入 1F", DataType.Int, DisplayFormat.Hex, "1F", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0x001F });
-CheckEncode("INT  HEX 输入 0x1F（带前缀）", DataType.Int, DisplayFormat.Hex, "0x1F", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0x001F });
-CheckEncode("INT  BIN 输入 1010", DataType.Int, DisplayFormat.Bin, "1010", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0b1010 });
+CheckEncode("INT  1234 -> 1 个寄存器", DataType.Int, DisplayFormat.Dec, "1234", 0, orders, new ushort[] { 1234 });
+CheckEncode("INT  -1 -> 0xFFFF（补码）", DataType.Int, DisplayFormat.Dec, "-1", 0, orders, new ushort[] { 0xFFFF });
+CheckEncode("UINT 65535 -> 0xFFFF", DataType.UInt, DisplayFormat.Dec, "65535", 0, orders, new ushort[] { 0xFFFF });
+CheckEncode("INT  HEX 输入 1F", DataType.Int, DisplayFormat.Hex, "1F", 0, orders, new ushort[] { 0x001F });
+CheckEncode("INT  HEX 输入 0x1F（带前缀）", DataType.Int, DisplayFormat.Hex, "0x1F", 0, orders, new ushort[] { 0x001F });
+CheckEncode("INT  BIN 输入 1010", DataType.Int, DisplayFormat.Bin, "1010", 0, orders, new ushort[] { 0b1010 });
 
 // 32 位：真机黄金样本反向 —— 123456 应产出 D800=0xE240, D801=0x0001（字序 3412）
-CheckEncode("DINT 123456 -> 真机两寄存器", DataType.DInt, DisplayFormat.Dec, "123456", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0xE240, 0x0001 });
-CheckEncode("REAL 123.45 -> 真机两寄存器", DataType.Real, DisplayFormat.Dec, "123.45", 0, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0xE666, 0x42F6 });
-CheckEncode("REAL 负数 -1.5", DataType.Real, DisplayFormat.Dec, "-1.5", 0, xinje.Int32ByteOrder, xinje.StringByteOrder,
-    ValueCodec.Split32(unchecked((uint)BitConverter.SingleToInt32Bits(-1.5f)), xinje.Int32ByteOrder));
+CheckEncode("DINT 123456 -> 真机两寄存器", DataType.DInt, DisplayFormat.Dec, "123456", 0, orders, new ushort[] { 0xE240, 0x0001 });
+CheckEncode("REAL 123.45 -> 真机两寄存器", DataType.Real, DisplayFormat.Dec, "123.45", 0, orders, new ushort[] { 0xE666, 0x42F6 });
+CheckEncode("REAL 负数 -1.5", DataType.Real, DisplayFormat.Dec, "-1.5", 0, orders,
+    ValueCodec.Split32(unchecked((uint)BitConverter.SingleToInt32Bits(-1.5f)), orders.Int32));
 
 // 字符串：真机黄金样本 'abcd' -> 0x6162, 0x6364
-CheckEncode("STRING[4] 'abcd' -> 真机两寄存器", DataType.String, DisplayFormat.Ascii, "abcd", 4, xinje.Int32ByteOrder, xinje.StringByteOrder, new ushort[] { 0x6162, 0x6364 });
+CheckEncode("STRING[4] 'abcd' -> 真机两寄存器", DataType.String, DisplayFormat.Ascii, "abcd", 4, orders, new ushort[] { 0x6162, 0x6364 });
 
 // ⚠️ 关键：编码必须补齐到声明的寄存器数（EncodeString 按文本长度自算，会少给）
-CheckRegs("STRING[9] 'abc' 补零到 5 个寄存器", ValueCodec.EncodeStringFixed("abc", 9, xinje.StringByteOrder),
+CheckRegs("STRING[9] 'abc' 补零到 5 个寄存器", ValueCodec.EncodeStringFixed("abc", 9, orders.String),
     new ushort[] { 0x6162, 0x6300, 0x0000, 0x0000, 0x0000 });
-CheckRegs("STRING[9] 超长 'abcdefghijkl' 截断到 9 字符", ValueCodec.EncodeStringFixed("abcdefghijkl", 9, xinje.StringByteOrder),
+CheckRegs("STRING[9] 超长 'abcdefghijkl' 截断到 9 字符", ValueCodec.EncodeStringFixed("abcdefghijkl", 9, orders.String),
     new ushort[] { 0x6162, 0x6364, 0x6566, 0x6768, 0x6900 });
 Check("STRING 补零后的寄存器数 == RegistersForLength",
-    ValueCodec.EncodeStringFixed("abc", 9, xinje.StringByteOrder).Length,
+    ValueCodec.EncodeStringFixed("abc", 9, orders.String).Length,
     DataTypes.Get(DataType.String).RegistersForLength(9));
 
 // 范围校验：红字提示要能说清边界
@@ -237,12 +240,12 @@ CheckReject("BOOL 不能作为寄存器写入", DataType.Bool, DisplayFormat.Bin
 // 往返一致性：编码后再解码应回到原值（写入正确性的核心保证）
 void CheckRoundTrip(string name, DataType t, DisplayFormat f, string text)
 {
-    if (!ValueCodec.TryEncodeRegisters(t, f, text, 0, xinje.Int32ByteOrder, xinje.StringByteOrder, out ushort[] regs, out string err))
+    if (!ValueCodec.TryEncodeRegisters(t, f, text, 0, orders, out ushort[] regs, out string err))
     {
         fail++; Console.WriteLine($"  [FAIL] {name,-46} 编码失败：{err}"); return;
     }
 
-    string back = ValueCodec.FormatRegisters(t, regs, f, xinje.Int32ByteOrder, xinje.StringByteOrder, 0);
+    string back = ValueCodec.FormatRegisters(t, regs, f, orders, 0);
     Check(name, back, text);
 }
 
@@ -253,6 +256,44 @@ CheckRoundTrip("往返 DINT '-123456'", DataType.DInt, DisplayFormat.Dec, "-1234
 CheckRoundTrip("往返 REAL '123.45'", DataType.Real, DisplayFormat.Dec, "123.45");
 CheckRoundTrip("往返 REAL '-1.5'", DataType.Real, DisplayFormat.Dec, "-1.5");
 CheckRoundTrip("往返 UDINT '4000000000'", DataType.UDInt, DisplayFormat.Dec, "4000000000");
+
+Console.WriteLine();
+Console.WriteLine("=== 11. 浮点字序与 32 位整数字序相互独立（P4.3）===");
+// 用户定案：设备配置页的「32位整数」与「32位浮点」两个下拉框各管各的。
+// 下面这组断言就是「改浮点不影响整数、反之亦然」的可执行证明 ——
+// 若哪天有人把它们又并回一套，这几条会立刻红。
+var int3412Float1234 = new ByteOrderSettings(ByteOrder32.Order3412, ByteOrder32.Order1234, StringByteOrder.Order12);
+var int1234Float3412 = new ByteOrderSettings(ByteOrder32.Order1234, ByteOrder32.Order3412, StringByteOrder.Order12);
+
+Check("整数 3412：D800 -> 123456",
+    ValueCodec.FormatRegisters(DataType.DInt, d800, DisplayFormat.Dec, int3412Float1234, 0), "123456");
+Check("同一份 settings 下浮点 1234：REAL 解不出 123.45",
+    ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Dec, int3412Float1234, 0) == "123.45", false);
+Check("整数 1234：D800 解不出 123456",
+    ValueCodec.FormatRegisters(DataType.DInt, d800, DisplayFormat.Dec, int1234Float3412, 0) == "123456", false);
+Check("同一份 settings 下浮点 3412：REAL -> 123.45",
+    ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Dec, int1234Float3412, 0), "123.45");
+
+// 编码侧同样各走各的：整数按 Int32、浮点按 Float
+CheckRegs("DINT 编码走 Int32=3412", Encode(DataType.DInt, "123456", int3412Float1234), new ushort[] { 0xE240, 0x0001 });
+CheckRegs("REAL 编码走 Float=3412（Int32 是 1234 也不影响）", Encode(DataType.Real, "123.45", int1234Float3412), new ushort[] { 0xE666, 0x42F6 });
+
+ushort[] Encode(DataType t, string text, ByteOrderSettings o)
+{
+    if (!ValueCodec.TryEncodeRegisters(t, DisplayFormat.Dec, text, 0, o, out ushort[] regs, out string err))
+    {
+        throw new InvalidOperationException($"编码失败：{err}");
+    }
+
+    return regs;
+}
+
+// 驱动默认值就是出厂约定；未选驱动时用大端兜底
+Check("信捷出厂默认 DINT 字序", ByteOrderSettings.FromDriver(xinje).Int32, ByteOrder32.Order3412);
+Check("信捷出厂默认 REAL 字序", ByteOrderSettings.FromDriver(xinje).Float, ByteOrder32.Order3412);
+Check("未选驱动时整数回落到 1234", ByteOrderSettings.Default.Int32, ByteOrder32.Order1234);
+Check("切换驱动 = 重新取默认（不是继承上一份）",
+    ByteOrderSettings.FromDriver(DriverRegistry.GetByKey("inovance_easy")).Int32, ByteOrder32.Order1234);
 
 Console.WriteLine();
 Console.WriteLine("============================================================");

@@ -9,13 +9,18 @@ namespace DSH_Modbus采集工具.Modeling
     /// <summary>
     /// 原始寄存器/线圈 ↔ 类型值 的编解码，以及值的显示格式化。
     /// <para>
-    /// <b>字序为「真机定案」的硬事实，不随品牌变化</b>（信捷 XD 实测，见 <c>Design.md</c> §10.3 / §10.4）：
+    /// <b>信捷 XD 的真机定案值</b>（见 <c>Design.md</c> §10.3 / §10.4）：
     /// <list type="bullet">
     /// <item>32 位值占 2 个连续寄存器，<b>低字在低地址</b>；字节流顺序 <c>3412</c>（CDAB）。</item>
     /// <item>字符串每寄存器 2 个字符、<b>高字节在前</b>；<c>STRING[n]</c> 占 ⌈n/2⌉ 个寄存器。</item>
     /// </list>
-    /// 设备配置页的三个下拉框（<see cref="ByteOrder32"/> / <see cref="StringByteOrder"/>）
-    /// 一旦选定，即通过各方法的 <c>byteOrder</c> / <c>stringOrder</c> 参数传入本类 —— 本类不读全局状态。
+    /// 但这只是**出厂默认**：设备配置页的三个下拉框可以把它们各自改掉，故本类<b>不硬编码任何字序</b>，
+    /// 一律经 <see cref="ByteOrderSettings"/> 入参（<c>Int32</c> / <c>Float</c> / <c>String</c> 三套独立）。
+    /// 本类不读全局状态，也不碰 WPF —— 可被独立工程链接源码断言。
+    /// </para>
+    /// <para>
+    /// ⚠️ <c>REAL</c> 与 <c>DINT</c> 虽然都是「2 个寄存器拼成的 32 位值」，但<b>字序各用各的</b>：
+    /// 两者混用一套是历史做法，已按用户定案（2026-10-21）拆开。
     /// </para>
     /// </summary>
     public static class ValueCodec
@@ -149,8 +154,10 @@ namespace DSH_Modbus采集工具.Modeling
         // ==================== 格式化：值 → 显示文本 ====================
 
         /// <summary>把寄存器原始值按类型与格式格式化成显示文本。</summary>
+        /// <param name="orders">三套字序：整数取 <see cref="ByteOrderSettings.Int32"/>，
+        /// 浮点取 <see cref="ByteOrderSettings.Float"/>，字符串取 <see cref="ByteOrderSettings.String"/>。</param>
         public static string FormatRegisters(DataType type, ReadOnlySpan<ushort> regs,
-            DisplayFormat format, ByteOrder32 byteOrder, StringByteOrder stringOrder, int stringLength)
+            DisplayFormat format, ByteOrderSettings orders, int stringLength)
         {
             DataTypeSpec spec = DataTypes.Get(type);
             if (!spec.AllowsFormat(format))
@@ -160,18 +167,19 @@ namespace DSH_Modbus采集工具.Modeling
 
             if (type == DataType.String)
             {
-                return DecodeString(regs, stringLength, stringOrder);
+                return DecodeString(regs, stringLength, orders.String);
             }
 
             if (type == DataType.Real)
             {
-                float f = DecodeReal(regs, byteOrder);
+                // 浮点用自己那套字序，不跟 32 位整数共用
+                float f = DecodeReal(regs, orders.Float);
                 return format == DisplayFormat.Hex
                     ? "0x" + unchecked((uint)BitConverter.SingleToInt32Bits(f)).ToString("X8", CultureInfo.InvariantCulture)
                     : FormatFloat(f);
             }
 
-            long raw = DecodeInteger(type, regs, byteOrder);
+            long raw = DecodeInteger(type, regs, orders.Int32);
             return FormatInteger(type, raw, format);
         }
 
@@ -540,8 +548,7 @@ namespace DSH_Modbus采集工具.Modeling
             DisplayFormat format,
             string? text,
             int stringLength,
-            ByteOrder32 byteOrder,
-            StringByteOrder stringOrder,
+            ByteOrderSettings orders,
             out ushort[] registers,
             out string error)
         {
@@ -563,7 +570,7 @@ namespace DSH_Modbus采集工具.Modeling
                     return false;
                 }
 
-                registers = EncodeStringFixed(text ?? string.Empty, stringLength, stringOrder);
+                registers = EncodeStringFixed(text ?? string.Empty, stringLength, orders.String);
                 return true;
             }
 
@@ -582,7 +589,7 @@ namespace DSH_Modbus采集工具.Modeling
                     return false;
                 }
 
-                registers = Split32(unchecked((uint)BitConverter.SingleToInt32Bits(f)), byteOrder);
+                registers = Split32(unchecked((uint)BitConverter.SingleToInt32Bits(f)), orders.Float);
                 return true;
             }
 
@@ -593,7 +600,7 @@ namespace DSH_Modbus采集工具.Modeling
 
             registers = spec.BitWidth == 16
                 ? new[] { (ushort)bits }
-                : Split32(unchecked((uint)bits), byteOrder);
+                : Split32(unchecked((uint)bits), orders.Int32);
             return true;
         }
     }

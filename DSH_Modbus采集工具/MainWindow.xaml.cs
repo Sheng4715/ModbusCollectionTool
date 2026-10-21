@@ -141,13 +141,14 @@ namespace DSH_Modbus采集工具
         private CommDriver? _currentDriver;
 
         /// <summary>
-        /// 字节顺序：设备通讯区域三个下拉框的当前选择（初值 = 当前驱动约定，切换设备类型时重同步）。
-        /// <b>目前仅收集用户选择，尚未被任何数据解释逻辑读取</b> ——
-        /// 具体用途要等 P3-3（数据类型系统）落地，届时按这三个值解释寄存器组。
+        /// 字节顺序：设备通讯区域三个下拉框的当前选择，**三套各自独立**（整数 / 浮点 / 字符串）。
+        /// <para>
+        /// 初值 = 当前驱动约定；切换设备类型时由 <see cref="SyncByteOrderCombos"/> 重置为驱动默认
+        /// （用户 2026-10-21 定案），用户改动后立即生效于读取与写入。
+        /// 轮询侧拿的是 <c>_monitorSet.ByteOrders</c> 那份快照 —— 后台线程不能读窗口字段。
+        /// </para>
         /// </summary>
-        private ByteOrder32 _int32ByteOrder;
-        private ByteOrder32 _floatByteOrder;
-        private StringByteOrder _stringByteOrder;
+        private ByteOrderSettings _byteOrders = ByteOrderSettings.Default;
 
         /// <summary>正在按设备类型同步字节顺序下拉框（用于区分「程序设置」与「用户改动」）。</summary>
         private bool _syncingByteOrderCombos;
@@ -1270,20 +1271,10 @@ namespace DSH_Modbus采集工具
                 PollIntervalComboBox.IsEnabled = enabled;
             }
 
-            if (Int32OrderComboBox != null)
-            {
-                Int32OrderComboBox.IsEnabled = enabled;
-            }
-
-            if (FloatOrderComboBox != null)
-            {
-                FloatOrderComboBox.IsEnabled = enabled;
-            }
-
-            if (StringOrderComboBox != null)
-            {
-                StringOrderComboBox.IsEnabled = enabled;
-            }
+            // ⚠️ 三个「字节顺序」下拉框**刻意不参与连接期锁定**（P4.3，2026-10-21）：
+            // 它们不改报文、不改连接参数，只决定「同一批寄存器怎么解释」，
+            // 改完下一拍即生效、无需重连。锁上反而挡住最该做的动作 ——
+            // 现场看到数值不对（如汇川字序与默认不符）时，当场换一套字序就能验证。
 
             if (TargetNicComboBox != null)
             {
@@ -1539,15 +1530,29 @@ namespace DSH_Modbus采集工具
             {
                 _syncingByteOrderCombos = false;
             }
+
+            // 下拉框是「用户看到的值」，_byteOrders 是「真正拿去解释的值」——
+            // 两者必须在这里一起重置，否则切换设备类型后界面显示新默认、数据仍按旧值解。
+            ApplyByteOrders(ByteOrderSettings.FromDriver(driver));
         }
 
         /// <summary>
-        /// 三个字节顺序下拉框共用。此处只做「用户改过」的记录 ——
-        /// 具体的数据解释要等 P3-3（数据类型系统）落地后才会被读取，现在仅收集用户选择。
+        /// 落定一份字节顺序：记到窗口字段 + 同步给监控集合（轮询回填读的是它）。
+        /// 所有改动路径（同步下拉框、用户改下拉框）都必须走这里，避免两处真值漂移。
+        /// </summary>
+        private void ApplyByteOrders(ByteOrderSettings orders)
+        {
+            _byteOrders = orders;
+            _monitorSet.SetByteOrders(orders);
+        }
+
+        /// <summary>
+        /// 三个字节顺序下拉框共用：任一改动都重建整份 <see cref="ByteOrderSettings"/> 并立即生效
+        /// （下一拍读取即按新字序解释，写入同样）。三套互相独立，改浮点不影响 32 位整数。
         /// </summary>
         private void ByteOrderComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
-            // 程序化同步（切换设备类型）不算用户改动，跳过
+            // 程序化同步（切换设备类型）不算用户改动，跳过 —— 那条路径由 SyncByteOrderCombos 落定
             if (_syncingByteOrderCombos)
             {
                 return;
@@ -1558,9 +1563,10 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            _int32ByteOrder = (ByteOrder32)Math.Max(0, Int32OrderComboBox.SelectedIndex);
-            _floatByteOrder = (ByteOrder32)Math.Max(0, FloatOrderComboBox.SelectedIndex);
-            _stringByteOrder = (StringByteOrder)Math.Max(0, StringOrderComboBox.SelectedIndex);
+            ApplyByteOrders(new ByteOrderSettings(
+                (ByteOrder32)Math.Max(0, Int32OrderComboBox.SelectedIndex),
+                (ByteOrder32)Math.Max(0, FloatOrderComboBox.SelectedIndex),
+                (StringByteOrder)Math.Max(0, StringOrderComboBox.SelectedIndex)));
         }
 
         /// <summary>
@@ -3333,7 +3339,7 @@ namespace DSH_Modbus采集工具
             // 放在连接检查之前，否则没连 PLC 时连内存变量都改不了。
             if (item.IsMemoryVariable)
             {
-                if (!item.TrySetMemoryValue(text, driver, out string memoryError))
+                if (!item.TrySetMemoryValue(text, _byteOrders, out string memoryError))
                 {
                     item.WriteError = memoryError;
                     item.IsEditing = true;
@@ -3355,7 +3361,7 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            if (!MonitorItemSet.TryBuildWrite(item, text, driver, out WritePlan plan, out string error))
+            if (!MonitorItemSet.TryBuildWrite(item, text, _byteOrders, out WritePlan plan, out string error))
             {
                 // 编码失败（类型不匹配、越界、非法字面量）——本地就能判定，不发报文。
                 //

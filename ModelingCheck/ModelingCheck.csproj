@@ -26,6 +26,7 @@
     <Compile Include="Program.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Modeling\DataTypes.cs" Link="DataTypes.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Modeling\ValueCodec.cs" Link="ValueCodec.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\ByteOrderSettings.cs" Link="ByteOrderSettings.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Modeling\DataPoint.cs" Link="DataPoint.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Drivers\CommDriver.cs" Link="CommDriver.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Drivers\DriverRegistry.cs" Link="DriverRegistry.cs" />
