@@ -225,6 +225,21 @@ namespace DSH_Modbus采集工具
         /// <summary>状态机表达式取值用的适配器（每拍刷新一次系统变量快照）。</summary>
         private readonly ExpressionVariables _machineVariables = new();
 
+        /// <summary>
+        /// 是否停在总览页的「PLC状态机」分段 —— 采集侧据此决定要不要采状态机引用的全局变量。
+        /// <para>由 <see cref="SyncMachineTimer"/> 统一维护（页面切换与分段切换都会走到那里）。</para>
+        /// </summary>
+        private bool _machineViewActive;
+
+        /// <summary>
+        /// 状态机表达式**实际引用到**的全局变量（去重后）。采集线程按这份清单拼报文。
+        /// <para>
+        /// 只在表达式或变量定义变动时重算（<see cref="RefreshMachineGlobals"/>），
+        /// 采集每拍只交引用、不在后台线程里遍历表达式 —— 快照必须便宜。
+        /// </para>
+        /// </summary>
+        private IReadOnlyList<GlobalVariable> _machineGlobals = Array.Empty<GlobalVariable>();
+
         /// <summary>是否停在状态信息页的「系统变量」分段（决定定时器启停）。</summary>
         private bool _sysViewActive;
 
@@ -385,6 +400,7 @@ namespace DSH_Modbus采集工具
             _machineVariables.AttachGlobals(_globalVarSet);
             _machineSet.Load(ExpressionNameExists);
             _machineSet.RecompileAll(ExpressionNameExists);
+            RefreshMachineGlobals();
             MachineStateViewControl.Bind(_machineSet.Items, _machineSet.EdgeLabels);
             MachineStateViewControl.StateDoubleClicked += MachineStateView_StateDoubleClicked;
             MachineStateViewControl.EdgeLabelCommitted += (_, _) => _machineSet.Save();
@@ -1761,7 +1777,9 @@ namespace DSH_Modbus采集工具
             IoPageActive: _ioPageActive,
             FreeViewActive: _freeViewActive,
             VisiblePage: _visiblePage,
-            PollIntervalMs: _pollIntervalMs);
+            PollIntervalMs: _pollIntervalMs,
+            MachineViewActive: _machineViewActive,
+            MachineGlobals: _machineGlobals);
 
         bool ICollectorHost.IsCurrentConnection(ModbusTcpClient client, CancellationToken token) =>
             IsCurrentConnection(client, token);
@@ -1959,6 +1977,53 @@ namespace DSH_Modbus采集工具
             _globalVarSet.Items.Select(item => item.Model);
 
         /// <summary>
+        /// 重算「状态机表达式引用了哪些全局变量」（P1.2，2026-10-21）。
+        /// <para>
+        /// 采集侧按这份清单拼报文，所以清单必须**只含真正被用到的**变量 ——
+        /// 全表都采等于把没人看的地址也拖上总线，与 IO 监控「只采可见页」的原则相悖。
+        /// </para>
+        /// <para>
+        /// 调用时机只有三类：表达式被改、变量定义被改（改名 / 改类型 / 改地址 / 删除）、启动载入。
+        /// **不放进每拍**：<see cref="ICollectorHost.CaptureSnapshot"/> 必须便宜，
+        /// 而这里要遍历 9 条表达式的变量引用。
+        /// </para>
+        /// </summary>
+        private void RefreshMachineGlobals()
+        {
+            var needed = new List<GlobalVariable>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (MachineStateItem item in _machineSet.Items)
+            {
+                if (item.Compiled == null)
+                {
+                    continue;
+                }
+
+                foreach (var (name, _) in item.Compiled.UsedNames)
+                {
+                    if (!seen.Add(name))
+                    {
+                        continue;
+                    }
+
+                    // 系统变量不是全局变量：它的值来自内存快照，不产生任何报文
+                    if (SystemVariable.Find(name) != null)
+                    {
+                        continue;
+                    }
+
+                    if (_globalVarSet.FindByName(name) is { } variable)
+                    {
+                        needed.Add(variable);
+                    }
+                }
+            }
+
+            _machineGlobals = needed;
+        }
+
+        /// <summary>
         /// 状态机定时器启停：**总览页可见 且 停在「PLC状态机」分段** 才跑。
         /// </summary>
         private void SyncMachineTimer()
@@ -1966,6 +2031,10 @@ namespace DSH_Modbus采集工具
             bool shouldRun = _overviewPageActive
                 && MachineStateSegment?.IsChecked == true
                 && !_windowClosed;
+
+            // 采集侧看这个标志：状态机可见就要采它引用的全局变量（与 IO 监控同一逻辑）。
+            // 放在下面的早退**之前** —— 否则「状态没变」时标志就更新不到了。
+            _machineViewActive = shouldRun;
 
             if (shouldRun == _machineTimer.IsEnabled)
             {
@@ -2019,6 +2088,9 @@ namespace DSH_Modbus采集工具
                 // 走集合的唯一入口：编译 + 变量存在性校验 + 清掉旧的错误态
                 _machineSet.TrySetExpression(item, dialog.ExpressionText, ExpressionNameExists, out _);
                 _machineSet.Save();
+
+                // 表达式换了 = 引用的变量可能换了，采集清单要跟着重算
+                RefreshMachineGlobals();
 
                 MachineStateViewControl.ApplyVisualState(item);
                 RefreshMachineStates();
@@ -2287,7 +2359,7 @@ namespace DSH_Modbus采集工具
                 RefreshGlobalVarView();
 
                 // 被删的变量可能正被监控行引用，那些行现在应标红「变量不存在」
-                RefreshMonitorRowsAfterVariableChange();
+                RefreshAfterVariableChange();
             }
         }
 
@@ -2309,7 +2381,7 @@ namespace DSH_Modbus采集工具
             RefreshGlobalVarView();
 
             // 全部删完，所有监控变量行都会变成「变量不存在」
-            RefreshMonitorRowsAfterVariableChange();
+            RefreshAfterVariableChange();
         }
 
         /// <summary>行容器加载：把行对象挂到 Tag，供事件处理器取用。</summary>
@@ -2477,14 +2549,18 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 变量定义变了（改名 / 改类型 / 改地址 / 删除）之后，让自由监控里引用变量的行重新解析。
+        /// 变量定义变了（改名 / 改类型 / 改地址 / 删除）之后要做的两件事：
+        /// 让自由监控里引用变量的行重新解析，并重算状态机的采集清单。
         /// <para>
         /// 监控行的类型与地址都是从变量表现取的，变量一改它就得跟着重算 ——
         /// 不刷新的话，界面上会继续显示旧类型、继续按旧地址采集。
         /// </para>
         /// </summary>
-        private void RefreshMonitorRowsAfterVariableChange()
+        private void RefreshAfterVariableChange()
         {
+            // 放在下面的早退之前：没有监控行时也要更新状态机的清单
+            RefreshMachineGlobals();
+
             if (_monitorSet.Items.Count == 0)
             {
                 return;
@@ -2542,7 +2618,7 @@ namespace DSH_Modbus采集工具
                 _globalVarSet.Save();
 
                 // 改名会让引用旧名字的监控行失效，必须重解析一遍
-                RefreshMonitorRowsAfterVariableChange();
+                RefreshAfterVariableChange();
                 return;
             }
 
@@ -2613,7 +2689,7 @@ namespace DSH_Modbus采集工具
             _globalVarSet.Save();
 
             // 地址变了，引用该变量的监控行要跟着换地址
-            RefreshMonitorRowsAfterVariableChange();
+            RefreshAfterVariableChange();
         }
 
         /// <summary>
@@ -2703,7 +2779,7 @@ namespace DSH_Modbus采集工具
             RefreshGlobalVarView();
 
             // 类型变了，引用该变量的监控行要跟着换类型与读取长度
-            RefreshMonitorRowsAfterVariableChange();
+            RefreshAfterVariableChange();
         }
 
         /// <summary>把焦点移到指定变量的名称框（新增后连续录入用）。</summary>

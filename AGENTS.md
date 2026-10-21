@@ -55,7 +55,8 @@ DSH_Modbus采集工具/
 │   ├── ByteOrderSettings.cs    # 三套字节顺序（整数 / 浮点 / 字符串）的值类型（P4.3）
 │   ├── DataPoint.cs            # 监控项模型 + data-points.json 持久化 + 驱动校验解析
 │   ├── GlobalVariable.cs       # 全局变量模型 + 变量名规则 + GlobalVar.json 持久化（值不落盘）
-│   └── CompletionSource.cs     # 变量名补全的纯逻辑：取词 + 筛选 + 候选表（P6.5，不含 WPF）
+│   ├── CompletionSource.cs     # 变量名补全的纯逻辑：取词 + 筛选 + 候选表（P6.5，不含 WPF）
+│   └── GlobalReadPlan.cs       # 全局变量读计划 + 回填（按可见页面采集，P1.2，不含 WPF）
 ├── Logging/                    # 日志落盘与文案规则（不含 WPF 类型）
 │   ├── DeviceLogFileWriter.cs  # 按天追加纯文本 .log + 跨天换文件 + 失败自愈
 │   └── DisconnectReasonClassifier.cs  # 异常原文 → 简短中文（底栏与日志共用）
@@ -341,8 +342,11 @@ Window
 采集配置页分三段：**采集数据**（P3.1 骨架）/ **全局变量**（本项）/ **系统变量**（P3.5，见 §5.3）。
 表列：**序号 / 变量名称 / 数据类型 / 映射地址 / 注释 / 删除**。
 
-⚠️ **本页只管理变量定义** —— 不显示当前值、不轮询、不写入。变量的读/写属后续采集与 MES 阶段；
-`GlobalVariable.Value` 仍是内存字段（不落盘），但界面上没有编辑入口。
+⚠️ **本页只管理变量定义** —— 不显示当前值、不写入。`GlobalVariable.Value` 仍是内存字段（不落盘），
+界面上没有编辑入口。
+
+**但变量值会被采集**（2026-10-21 补，与 IO 监控同一逻辑，见下）：全局变量**本身不轮询**，
+只有「当前可见页面用到它」时才采，离开即停。
 
 - **变量名**：C 标识符 `[A-Za-z_][A-Za-z0-9_]*`，最长 **32**，**区分大小写**，**拒绝中文**（`GlobalVariableRules.TryValidateName`）；校验与重名检查都在 `GlobalVariableSet.Add` / `Rename`
   - ⚠️ **不得与系统变量重名**：`sys_True` 等 16 个名字被保留，`GlobalVariableRules.TryValidateName` 直接拒
@@ -393,6 +397,50 @@ Window
 
 **离线断言**：`.tmp/GlobalVarCheck`（**164 项**，未提交），改 `GlobalVariable.cs` / `GlobalVarItem.cs` / `DataPoint.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\gv-temp"`。
 变量行另有一个 WPF 断言工程 `.tmp/MonitorVarCheck`（**63 项**，未提交；含内存变量可改值、不入读取计划、断线不误标）：`MonitorItem.cs` 用了 `System.Windows.Media.Brush`，故它必须 `UseWPF`；跑前先 `$env:TEMP = "$PWD\.tmp\mv-temp"`。
+
+#### 5.2.1 变量值跟随可见性采集（2026-10-21）
+
+**起因是个 bug**：状态机 9 条表达式全写成 `SysState == 0..8`，但 `SysState` 恒等于初始值 0 ——
+画面上永远只有 Stopped 亮，其余 8 个恒灰，**且不报任何错**。原因是 `GlobalVariable.Value`
+在整个项目里只有「启动 / 新增时重置为初始值」三处赋值，**没有任何代码从 PLC 读它**。
+
+**用户定案的做法**（比「全局变量统一轮询」轻得多）：全局变量不轮询，但**当前可见页面用到哪几个就采哪几个**，
+与 IO 监控同一逻辑。
+
+| | IO 监控（原有） | 状态机变量（本次） |
+|---|---|---|
+| 何时采 | `PollSnapshot.IoPageActive` + 当前分段 | `PollSnapshot.MachineViewActive` |
+| 采哪些 | 当前页点位数组 | 表达式**实际引用到**的全局变量 |
+| 分块 | 同区按地址合并、有空洞断开 | 同一套算法（`GlobalReadPlan.Build`） |
+| 单块失败 | 不断开连接 | 同 |
+
+**四个文件的分工**：
+
+- `Modeling/GlobalReadPlan.cs`（新）—— 读计划 + 回填，**不引 WPF**，故进 `ModelingCheck` §13（25 项）
+- `Polling/PollSnapshot.cs` —— 加 `MachineViewActive` 与 `MachineGlobals` 两个字段
+- `Polling/ModbusPoller.cs` —— `PollMachineGlobalsAsync` + `PollOnceAsync` 开头一个分支
+- `MainWindow.xaml.cs` —— `RefreshMachineGlobals()`：遍历 9 条表达式的 `UsedNames`，剔除系统变量与不存在的名字、去重
+
+**必须守住的几条**（都是刻意的）：
+
+- `RefreshMachineGlobals()` **只在三处调**：启动载入、表达式被改、变量定义被改。**绝不进每拍** ——
+  `CaptureSnapshot` 每拍都跑，必须便宜（只交引用）
+- 采集清单**只含真正被用到的变量**：全表都采等于把没人看的地址拖上总线，与「只采可见页」相悖
+- **单块读失败保留上次值，不清零**：清零会让 `SysState == 0` 算出「Stopped 亮」，
+  看起来像设备真停了 —— 比不刷新更误导。有断言守着（`长度不足时保留上次值（不清零）`）
+- `_machineViewActive` 在 `SyncMachineTimer` 里赋值，且必须在**早退之前**，否则「状态没变」时标志更新不到
+
+**端到端怎么验**（`.tmp/machine-poll-e2e.ps1` + `.tmp/MachineSlave`，均未提交）：
+假从站记录每一帧的 `(功能码, 起始, 数量)`，然后断言「总览页 D10 在采 / 切到状态信息页停采 / 切回来恢复」。
+
+- ⚠️ **假从站必须绑在应用所选网卡的地址上**（如 `192.168.1.80`）：应用会把本地端点绑到那块网卡，
+  绑 `127.0.0.1` 时它连不上，从站一帧都收不到 —— 表现成「代码没跑」，其实只是连不上
+- ⚠️ **断言只能数 `FC3 start=10` 那一种帧**：切到状态信息页后应用**仍会**读 IO（FC1 两个块），
+  数全部帧会把 IO 采集误判成「还在读状态机变量」（第一版就这么误报了 74 帧）
+- ⚠️ 脚本里**不要 `Start-Process` 起从站**：实测会挂住。从站用单独的后台任务先起好
+
+**尚未实现**：全局变量的**写入**（需求里的「写变量值即写映射地址」）。
+目前自由监控里引用变量的行，写入走元件写入路径；直接改变量值那条路是空的。
 
 ### 5.3 系统变量（P3.5，采集配置页第三分段）
 

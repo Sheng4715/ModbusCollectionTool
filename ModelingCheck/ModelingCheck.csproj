@@ -34,6 +34,8 @@
     <Compile Include="..\DSH_Modbus采集工具\Modeling\SystemVariable.cs" Link="SystemVariable.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Modeling\GlobalVariable.cs" Link="GlobalVariable.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Modeling\CompletionSource.cs" Link="CompletionSource.cs" />
+    <!-- P1.2 状态机采集全局变量：读计划与回填的纯逻辑（不链接 Ui/ 下的显示部分）。 -->
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\GlobalReadPlan.cs" Link="GlobalReadPlan.cs" />
   </ItemGroup>
 
 </Project>

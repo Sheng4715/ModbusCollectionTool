@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using DSH_Modbus采集工具.Drivers;
+using DSH_Modbus采集工具.Modeling;
 
 namespace DSH_Modbus采集工具.Polling;
 
@@ -94,6 +95,13 @@ internal sealed class ModbusPoller
     public async Task PollOnceAsync(ModbusTcpClient modbus, CommDriver driver, CancellationToken token)
     {
         PollSnapshot snap = _host.CaptureSnapshot();
+
+        // 总览页「PLC状态机」：表达式引用的全局变量跟随可见性采集。
+        // 与下面的 IO / 自由监控**互斥**（总览与状态信息是两个页面），故各走各的、不叠加。
+        if (snap.MachineViewActive)
+        {
+            await PollMachineGlobalsAsync(modbus, snap.MachineGlobals, token);
+        }
 
         // 离开状态信息页仅停采；独立心跳继续工作，各分段保留上次采集数据。
         if (!snap.IoPageActive)
@@ -287,6 +295,103 @@ internal sealed class ModbusPoller
                 }
 
                 MonitorItemSet.ApplyBlock(block, coils, regs, _host.MonitorSet.ByteOrders);
+            }
+        });
+    }
+
+    /// <summary>
+    /// 读「PLC状态机」表达式引用到的全局变量，写回 <c>GlobalVariable.Value</c>，
+    /// 供 <c>ExpressionVariables</c> 求值（P1.2，2026-10-21）。
+    /// <para>
+    /// 与 <see cref="PollFreeMonitorAsync"/> 同一套规矩：跟随可见性、逐块复查、
+    /// 单块失败**不触发断线**（一个配错的地址不该拖垮整条连接）。
+    /// </para>
+    /// <para>
+    /// ⚠️ 单块失败时**保留上一次的值**，不把变量清零：清零会让 <c>SysState == 0</c>
+    /// 这类表达式算出「Stopped 亮」，看起来像是设备真的停了 —— 比不刷新更误导。
+    /// 连接级的失败另有底栏与日志兜底。
+    /// </para>
+    /// </summary>
+    public async Task PollMachineGlobalsAsync(
+        ModbusTcpClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
+    {
+        List<GlobalReadBlock> plan = GlobalReadPlan.Build(variables);
+        if (plan.Count == 0)
+        {
+            return;
+        }
+
+        var results = new List<(GlobalReadBlock Block, bool[]? Coils, ushort[]? Registers, string? Error)>();
+
+        foreach (GlobalReadBlock block in plan)
+        {
+            // 逐块复查可见性：用户切走后立即停发剩余报文
+            PollSnapshot mid = _host.CaptureSnapshot();
+            if (!mid.MachineViewActive)
+            {
+                return;
+            }
+
+            try
+            {
+                if (block.Area is ModbusArea.Coil)
+                {
+                    bool[] coils = await modbus.ReadCoilsAsync(
+                        (ushort)block.StartAddress, (ushort)block.Count, token);
+                    results.Add((block, coils, null, null));
+                }
+                else if (block.Area == ModbusArea.DiscreteInput)
+                {
+                    bool[] inputs = await modbus.ReadDiscreteInputsAsync(
+                        (ushort)block.StartAddress, (ushort)block.Count, token);
+                    results.Add((block, inputs, null, null));
+                }
+                else if (block.Area == ModbusArea.HoldingRegister)
+                {
+                    ushort[] regs = await modbus.ReadHoldingRegistersAsync(
+                        (ushort)block.StartAddress, (ushort)block.Count, token);
+                    results.Add((block, null, regs, null));
+                }
+                else
+                {
+                    ushort[] regs = await modbus.ReadInputRegistersAsync(
+                        (ushort)block.StartAddress, (ushort)block.Count, token);
+                    results.Add((block, null, regs, null));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                results.Add((block, null, null, _host.ClassifyDisconnectReason(ex.Message)));
+            }
+        }
+
+        await _host.RunOnUiAsync(() =>
+        {
+            if (!_host.IsCurrentConnection(modbus, token))
+            {
+                return;
+            }
+
+            // 复查可见性：本拍可能跨越了用户的切换动作，已切走就丢弃本拍结果
+            PollSnapshot after = _host.CaptureSnapshot();
+            if (!after.MachineViewActive)
+            {
+                return;
+            }
+
+            foreach (var (block, coils, regs, error) in results)
+            {
+                if (error != null)
+                {
+                    // 保留上次值（见方法注释）
+                    continue;
+                }
+
+                GlobalReadPlan.Apply(block, coils, regs, _host.MonitorSet.ByteOrders);
             }
         });
     }

@@ -394,6 +394,106 @@ var many = Enumerable.Range(0, CompletionSource.MaxCandidates + 20)
     .ToList();
 Check("候选数量有上限", CompletionSource.Filter(many, "v").Count, CompletionSource.MaxCandidates);
 
+
+// ============================================================
+// 13. 状态机采集全局变量：读计划与回填（P1.2）
+//
+// 背景（2026-10-21 实测发现）：状态机表达式引用全局变量，但全局变量原本**没有任何采集**，
+// GlobalVariable.Value 只在启动/新增时重置为初始值，此后永不更新。
+// 于是 SysState == 0 恒真、其余恒假 —— 表达式引擎、定时器、刷新链路都是好的，
+// 坏的是「值根本没人填」。
+//
+// 本节验两件事：① 报文怎么拼（合并 / 断开 / 只收可读的）；② 回填怎么解（含字节顺序）。
+// 与 IO 监控同一逻辑：只采可见页面需要的，所以「挑哪些变量」由界面决定、由 Build 收下。
+// ============================================================
+
+Console.WriteLine();
+Console.WriteLine("=== 13. 状态机全局变量：读计划与回填（P1.2）===");
+
+CommDriver xd = DriverRegistry.GetByKey("xinje_xd")!;
+ByteOrderSettings xdOrders = ByteOrderSettings.FromDriver(xd);
+
+// 造变量的辅助：解析地址走真驱动的地址表，与运行时同一条路径
+GlobalVariable Var(string name, DataType type, string address, DisplayFormat format = DisplayFormat.Dec, int len = 0)
+{
+    var v = new GlobalVariable { Name = name, Type = type, Format = format, Address = address, Length = len };
+    GlobalVariableStore.TryResolve(v, xd, out _, out _);
+    return v;
+}
+
+// ---- ① 只收「能读」的变量 ----
+GlobalVariable d0 = Var("a", DataType.Int, "D0");
+GlobalVariable d1 = Var("b", DataType.Int, "D1");
+GlobalVariable mem = new() { Name = "c", Type = DataType.Int, Address = string.Empty };
+GlobalVariable bad = new() { Name = "d", Type = DataType.Int, Address = "ZZZ9" };
+GlobalVariableStore.TryResolve(bad, xd, out _, out _);
+
+List<GlobalReadBlock> planMixed = GlobalReadPlan.Build(new[] { d0, d1, mem, bad });
+Check("内存变量不发报文", planMixed.Sum(b => b.Entries.Count), 2);
+Check("解析失败的变量不发报文", planMixed.SelectMany(b => b.Entries).Any(e => e.Variable.Name == "d"), false);
+Check("空清单返回空计划", GlobalReadPlan.Build(null).Count, 0);
+Check("全部不可读时计划为空", GlobalReadPlan.Build(new[] { mem }).Count, 0);
+
+// ---- ② 相邻地址并成一块（一次报文读完）----
+Check("D0+D1 并成一块", planMixed.Count, 1);
+Check("块从 D0 开始", planMixed[0].StartAddress, 0);
+Check("块长 2（两个 INT）", planMixed[0].Count, 2);
+Check("块内两项", planMixed[0].Entries.Count, 2);
+Check("D1 在块内偏移 1", planMixed[0].Entries.First(e => e.Variable.Name == "b").Offset, 1);
+
+// ---- ③ 有空洞就断开（隔很远一次跨读既慢又可能越界）----
+GlobalVariable far = Var("e", DataType.Int, "D100");
+List<GlobalReadBlock> planGap = GlobalReadPlan.Build(new[] { d0, d1, far });
+Check("D0/D1 与 D100 之间断开成两块", planGap.Count, 2);
+Check("两块合计仍是 3 项", planGap.Sum(b => b.Entries.Count), 3);
+
+// ---- ④ 32 位类型占两个寄存器，块长按占用算 ----
+GlobalVariable dint = Var("f", DataType.DInt, "D20");
+GlobalVariable next = Var("g", DataType.Int, "D22");
+List<GlobalReadBlock> plan32 = GlobalReadPlan.Build(new[] { dint, next });
+Check("DINT 占 2 个寄存器", plan32[0].Entries.First(e => e.Variable.Name == "f").Units, 2);
+Check("紧随其后的 INT 并进同一块", plan32.Count, 1);
+Check("块长 = 2 + 1", plan32[0].Count, 3);
+
+// ---- ⑤ 线圈与寄存器分属不同块（功能码不同，绝不能混读）----
+GlobalVariable coil = Var("h", DataType.Bool, "M10", DisplayFormat.Bin);
+List<GlobalReadBlock> planAreas = GlobalReadPlan.Build(new[] { d0, coil });
+Check("线圈与寄存器分成两块", planAreas.Count, 2);
+Check("线圈块在 Coil 区", planAreas.Any(b => b.Area == ModbusArea.Coil), true);
+Check("寄存器块在 HoldingRegister 区", planAreas.Any(b => b.Area == ModbusArea.HoldingRegister), true);
+
+// ---- ⑥ 回填：整数 ----
+GlobalVariable target = Var("sysState", DataType.Int, "D10");
+List<GlobalReadBlock> planRead = GlobalReadPlan.Build(new[] { target });
+GlobalReadPlan.Apply(planRead[0], null, new ushort[] { 8 }, xdOrders);
+Check("INT 回填 8", target.Value, "8");
+GlobalReadPlan.Apply(planRead[0], null, new ushort[] { 0 }, xdOrders);
+Check("INT 回填 0", target.Value, "0");
+
+// ---- ⑦ 回填：32 位按字节顺序解（真机黄金样本 123456 = 0xE240,0x0001）----
+GlobalVariable dintVal = Var("v32", DataType.DInt, "D800");
+GlobalReadBlock planDint = GlobalReadPlan.Build(new[] { dintVal })[0];
+GlobalReadPlan.Apply(planDint, null, new ushort[] { 0xE240, 0x0001 }, xdOrders);
+Check("DINT 按 3412 解回 123456", dintVal.Value, "123456");
+
+// ---- ⑧ 回填：线圈 ----
+GlobalVariable coilVal = Var("flag", DataType.Bool, "M10", DisplayFormat.Bin);
+GlobalReadBlock planCoil = GlobalReadPlan.Build(new[] { coilVal })[0];
+GlobalReadPlan.Apply(planCoil, new[] { true }, null, xdOrders);
+Check("线圈回填 1", coilVal.Value, "1");
+GlobalReadPlan.Apply(planCoil, new[] { false }, null, xdOrders);
+Check("线圈回填 0", coilVal.Value, "0");
+
+// ---- ⑨ 响应长度不足时保留上次值（不要清成 0）----
+GlobalVariable keep = Var("keep", DataType.Int, "D30");
+GlobalReadBlock planKeep = GlobalReadPlan.Build(new[] { keep })[0];
+GlobalReadPlan.Apply(planKeep, null, new ushort[] { 42 }, xdOrders);
+Check("先写入 42", keep.Value, "42");
+GlobalReadPlan.Apply(planKeep, null, new ushort[0], xdOrders);
+Check("长度不足时保留上次值（不清零）", keep.Value, "42");
+GlobalReadPlan.Apply(planKeep, null, null, xdOrders);
+Check("没有数据时保留上次值", keep.Value, "42");
+
 Console.WriteLine();
 Console.WriteLine("============================================================");
 Console.WriteLine($"结果：{pass} 通过 / {fail} 失败");

@@ -23,8 +23,18 @@ namespace DSH_Modbus采集工具.Polling;
 /// <param name="FreeViewActive">是否显示「自由监控」分段。</param>
 /// <param name="VisiblePage">当前显示分段「当前页」的 IO 点位快照；未导入 IO 表时为空数组。</param>
 /// <param name="PollIntervalMs">本拍结束后到下一拍的目标间隔。</param>
+/// <param name="MachineViewActive">
+/// 是否停在总览页的「PLC状态机」分段。状态机表达式会引用全局变量，
+/// 而这些变量的值**只在它可见时才采**（与 IO 监控同一逻辑）。
+/// </param>
+/// <param name="MachineGlobals">
+/// 状态机表达式**实际引用到**的全局变量（已去重、已剔除系统变量与不存在的名字）。
+/// 由 UI 线程在表达式或变量定义变动时重算一次，本字段只是交引用，不在采集线程里算。
+/// </param>
 internal readonly record struct PollSnapshot(
     bool IoPageActive,
     bool FreeViewActive,
     IoPoint[] VisiblePage,
-    int PollIntervalMs);
+    int PollIntervalMs,
+    bool MachineViewActive,
+    IReadOnlyList<GlobalVariable> MachineGlobals);
