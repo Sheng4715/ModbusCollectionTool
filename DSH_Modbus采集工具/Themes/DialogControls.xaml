@@ -78,8 +78,11 @@
 
   <Style x:Key="Dialog.TextBox" TargetType="TextBox">
     <Setter Property="Height" Value="30" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+    <Setter Property="UseLayoutRounding" Value="True" />
     <Setter Property="FontSize" Value="12" />
-    <Setter Property="Padding" Value="9,0,9,0" />
+    <!-- 与 Dialog.ComboBox 的文字左边距一致（ComboBox 的 ContentPresenter Margin 是 10） -->
+    <Setter Property="Padding" Value="10,0,10,0" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
     <Setter Property="Background" Value="{DynamicResource Brush.Input.Background}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Brush.Input.Border}" />
@@ -93,9 +96,16 @@
                   Background="{TemplateBinding Background}"
                   BorderBrush="{TemplateBinding BorderBrush}"
                   BorderThickness="{TemplateBinding BorderThickness}"
-                  CornerRadius="6">
+                  CornerRadius="6"
+                  SnapsToDevicePixels="True">
+            <!--
+              ⚠️ 这里**不能**再写 Margin="{TemplateBinding Padding}"。
+              TextBoxView（PART_ContentHost 里面那个）**自己就会吃一遍 Padding**，
+              模板里再套一次等于加了两倍：实测 150% DPI 下文字起点距左边框 20 DIP，
+              而下拉框只有 10 DIP，肉眼一眼看出没对齐。
+              只保留 TextBox 的 Padding 一处，文字就与下拉框齐平。
+            -->
             <ScrollViewer x:Name="PART_ContentHost"
-                          Margin="{TemplateBinding Padding}"
                           VerticalAlignment="Center"
                           Focusable="False"
                           HorizontalScrollBarVisibility="Hidden"

@@ -934,7 +934,14 @@ public sealed class MyDialog : Window
    弹层里的滚动条由 `ScrollViewer` **内部创建**，拿不到 keyed 样式，深色下会是一条白条。
    **不能**把样式写进 `ControlTemplate` 里的 `ScrollViewer.Resources`：模板作用域内
    `StaticResource` 查不到后定义的键，会直接崩。
-4. ⚠️ **错误提示一律内联（`Dialog.Error` 红字），不要用 `MessageBox`**。系统消息框
+4. ⚠️ **输入框不要写死 `Width`，让它在列里拉伸**。对话框客户区比看起来窄：
+   `Width=442` 的窗口在 150% DPI 下，列 1 只有约 **327 DIP**。写死 `Width=330`
+   会超出 3 DIP 被裁掉 —— 表现为**右边框整条不见了**（左/上/下三条都在，
+   因为那 1px 落在被裁的像素上）。用 `HorizontalAlignment="Stretch"`。
+5. ⚠️ **TextBox 模板里不要再给 `PART_ContentHost` 套 `Margin="{TemplateBinding Padding}"`**。
+   `TextBoxView` 自己就会吃一遍 `Padding`，套两次等于双倍：实测文字起点距左边框
+   20 DIP，而下拉框只有 10 DIP，一眼看出没对齐。只保留 `TextBox.Padding` 一处。
+6. ⚠️ **错误提示一律内联（`Dialog.Error` 红字），不要用 `MessageBox`**。系统消息框
    不跟主题（深色下弹一块白板）、且会抢焦点打断「改到对为止」的循环。
    **联动坑**：若校验失败后会**程序回填**输入框（如恢复上次有效值），`TextChanged`
    里那个「一改字就清错误」的逻辑会把刚显示的错误**立刻擦掉** —— 表现为

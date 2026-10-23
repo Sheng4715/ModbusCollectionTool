@@ -127,7 +127,7 @@ namespace DSH_Modbus采集工具.Ui
             AddLabel(root, "状态文本", row);
             _textBox = MakeTextBox(item.Text);
             _textBox.TextChanged += (_, _) => UpdatePreview();
-            Place(root, _textBox, row++, new Thickness(0, 0, 0, 10));
+            Place(root, _textBox, row++, new Thickness(0, 0, 0, 10), stretch: true);
 
             AddLabel(root, "字体样式", row);
             _styleCombo = MakeCombo(150);
@@ -194,7 +194,7 @@ namespace DSH_Modbus采集工具.Ui
             {
                 CompletionPopup.Attach(_expressionBox, _completions);
             }
-            Place(root, _expressionBox, row++, new Thickness(0, 0, 0, 12));
+            Place(root, _expressionBox, row++, new Thickness(0, 0, 0, 12), stretch: true);
 
             // 表达式错误**就地显示**，不再弹 MessageBox —— 系统消息框不吃主题，
             // 深色下会蹦出一块纯白的框，而且它还会抢焦点、打断「改到对为止」的节奏。
@@ -510,12 +510,12 @@ namespace DSH_Modbus采集工具.Ui
             root.Children.Add(label);
         }
 
-        private static void Place(Grid root, UIElement element, int row, Thickness margin)
+        private static void Place(Grid root, UIElement element, int row, Thickness margin, bool stretch = false)
         {
             if (element is FrameworkElement fe)
             {
                 fe.Margin = margin;
-                fe.HorizontalAlignment = HorizontalAlignment.Left;
+                fe.HorizontalAlignment = stretch ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
             }
 
             Grid.SetRow(element, row);
@@ -523,10 +523,12 @@ namespace DSH_Modbus采集工具.Ui
             root.Children.Add(element);
         }
 
+        // 不写死宽度：原先 Width=330，而对话框客户区在 150% DPI 下只给列 1 留了约 327 DIP，
+        // 超出的 3 DIP 被裁掉 —— 表现为「右边框整条不见了」（左边、上边、下边都在）。
+        // 交给 Place(..., stretch: true) 随列宽拉伸，右边框就完整了。
         private TextBox MakeTextBox(string text) => new()
         {
             Text = text,
-            Width = 330,
             Style = RequireStyle("Dialog.TextBox"),
         };
 
