@@ -522,7 +522,7 @@ Window
 「生产数据」目前只有一句「规划中」占位。
 
 **布局是写死的**，全部来自项目根目录的 `PLC_MachineState.drawio`：
-9 个状态框 + 13 条转移连线 + 灰底容器。坐标表在 `MachineStateLayout`（`Modeling/MachineState.cs`）里，
+9 个状态框 + **14 条**转移连线 + 灰底容器。坐标表在 `MachineStateLayout`（`Modeling/MachineState.cs`）里，
 **不要在代码里手调坐标** —— 要改布局请改 drawio 再重新换算，否则框和线会对不上。
 
 - 设计坐标：横向 ×1.5 拉开列距、纵向原样，画布 1095×446，由 `Viewbox` 等比缩放到实际空间
@@ -531,6 +531,12 @@ Window
   - `Fault` 与 `Immediate Stop` 的起点是**灰底容器的下边缘**（drawio 就是这么画的，不是笔误）
   - `Toggle` 是唯一的两端箭头
   - 每条边有稳定 `Id`（`Reset` / `ResetDone` …），落盘按它合并
+  - ⚠️ **同一段文字可以是两条不同的线**：`HoldOrError`（Running → Held）与
+    `HoldOrErrorCompleting`（Completing → Held）都叫「Hold or Error」，但起点不同、是两条独立的边。
+    不要因为文字相同就把它们合并，也不要试图用文字当键 —— **键永远是 `Id`**
+  - `HoldOrErrorCompleting` 走右侧通道：从 Completing 底边竖直下到 Held 的水平中线，
+    再左折进 Held 右边。它与 `Fault` 那条竖线共线，视觉上像一条从 Completing 直通下方的线
+    （drawio 里就是这么画的）
 - **连线标签（SC，切换条件）可编辑**：双击就地变输入框
   - 回车（主键盘 `Key.Return` / 小键盘 `Key.Enter` 都认）提交、**Shift+回车**换行、ESC 取消、失焦提交
   - 文字为空时**留一个可见的小空框**（不是整块消失）—— 否则那条连线再也点不回来

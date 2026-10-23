@@ -215,7 +215,7 @@ namespace DSH_Modbus采集工具.Modeling
     }
 
     /// <summary>
-    /// 状态机画布的**固定布局**：9 个框的位置、13 条连线、灰底容器。
+    /// 状态机画布的**固定布局**：9 个框的位置、14 条连线、灰底容器。
     /// <para>
     /// 这些坐标全部由项目根目录的 <c>PLC_MachineState.drawio</c> 换算而来
     /// （横向 ×1.5 拉开列距，纵向原样），**不要在代码里手调** ——
@@ -264,7 +264,7 @@ namespace DSH_Modbus采集工具.Modeling
                 ["ManualControl"] = new(339, 358, 150, 50),
             };
 
-        /// <summary>13 条转移连线（顺序即绘制顺序）。几何写死，标签文字可编辑。</summary>
+        /// <summary>14 条转移连线（顺序即绘制顺序）。几何写死，标签文字可编辑。</summary>
         public static IReadOnlyList<MachineStateEdge> Edges { get; } = new MachineStateEdge[]
         {
             new("Reset", "Reset", false, new(129, 270), new(129, 358), new(129, 187)),
@@ -283,9 +283,16 @@ namespace DSH_Modbus采集工具.Modeling
                 new(954, 137), new(954, 28), new(414, 28), new(414, 137)),
             new("Fault", "Fault", false, new(954, 336), new(954, 314), new(954, 358)),
             new("ImmediateStop", "Immediate\nStop", false, new(186, 335), new(166.5, 314), new(166.5, 358)),
+
+            // Completing → Held：与 Running → Held 同一个条件文字，但**是两条独立的线**
+            // （同一条件在两个状态下都可能成立，不能合并）。走右侧通道：从 Completing 底边
+            // 竖直下到 Held 的水平中线，再左折进 Held 右边 —— 与 Fault 那条竖线共线，
+            // 视觉上像一条从 Completing 直通下方的线。
+            new("HoldOrErrorCompleting", "Hold or Error", false, new(955, 231),
+                new(955, 187), new(955, 272), new(774, 272)),
         };
 
-        /// <summary>13 条连线的出厂标签文字（与 <see cref="Edges"/> 一一对应）。</summary>
+        /// <summary>14 条连线的出厂标签文字（与 <see cref="Edges"/> 一一对应）。</summary>
         public static List<MachineEdgeLabel> CreateDefaultEdgeLabels()
         {
             var list = new List<MachineEdgeLabel>(Edges.Count);
@@ -497,7 +504,7 @@ namespace DSH_Modbus采集工具.Modeling
 
         public IReadOnlyList<MachineStateItem> Items => _items;
 
-        /// <summary>13 条连线上的标签（用户可编辑的切换条件文字）。</summary>
+        /// <summary>14 条连线上的标签（用户可编辑的切换条件文字）。</summary>
         public IReadOnlyList<MachineEdgeLabel> EdgeLabels => _edgeLabels;
 
         /// <summary>从磁盘读，并把每条表达式编译好。</summary>
