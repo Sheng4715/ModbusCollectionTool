@@ -24,3 +24,6 @@ IO模板.xlsx
 
 # 文档重排时的临时备份（不进版本库）
 docs_backup_*/
+
+# drawio 每次保存自动生成的备份（删了还会再生成）
+.$*.drawio.bkp

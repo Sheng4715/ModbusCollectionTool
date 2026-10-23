@@ -50,10 +50,23 @@ namespace DSH_Modbus采集工具.Ui
         private readonly TextBox _expressionBox;
         private readonly Border _currentSwatch;
         private readonly TextBlock _currentHex;
+        private readonly Border _preview;
+        private readonly TextBlock _previewText;
+        private readonly TextBlock _error;
         private readonly List<(string Hex, Border Cell)> _swatches = new();
 
         private string _colorHex;
         private string _lastValidExpression;
+
+        /// <summary>
+        /// 正在由程序回填表达式框（校验失败后恢复旧值）。
+        /// <para>
+        /// 回填会触发 <c>TextChanged</c>，而 TextChanged 的职责是「用户一改字就撤掉错误提示」。
+        /// 不挡住的话，刚显示出来的错误会被自己这次回填立刻擦掉 —— 实测踩过，
+        /// 表现为「校验明明失败了，但界面上一个字都不显示」。
+        /// </para>
+        /// </summary>
+        private bool _revertingExpression;
 
         private MachineStateEditDialog(
             MachineStateItem item,
@@ -71,23 +84,49 @@ namespace DSH_Modbus采集工具.Ui
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false;
-            FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI");
-            FontSize = 12;
-            WindowStyle = WindowStyle.SingleBorderWindow;
-            SetResourceReference(BackgroundProperty, "Brush.Card.Background");
+
+            // 统一外壳：卡片底色 + 统一字体 + 深色主题下标题栏也跟着变深
+            DialogChrome.Apply(this);
 
             var root = new Grid { Margin = new Thickness(16) };
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            for (int i = 0; i < 9; i++)
+            for (int i = 0; i < 11; i++)
             {
                 root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             }
 
             int row = 0;
 
+            // ---------- 实时预览 ----------
+            // 早先改完字体/字号/颜色要关窗才看得到效果，选错了得重开一遍。
+            // 这里放一个和画布上一样的框（圆角 6、边框 1px、深色字），改哪个都立刻反映。
+            _previewText = new TextBlock
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A)),
+            };
+
+            _preview = new Border
+            {
+                Height = 52,
+                CornerRadius = new CornerRadius(6),
+                BorderThickness = new Thickness(1),
+                Margin = new Thickness(0, 0, 0, 14),
+                Padding = new Thickness(10, 0, 10, 0),
+                Child = _previewText,
+            };
+
+            Grid.SetRow(_preview, row++);
+            Grid.SetColumnSpan(_preview, 2);
+            root.Children.Add(_preview);
+
             AddLabel(root, "状态文本", row);
             _textBox = MakeTextBox(item.Text);
+            _textBox.TextChanged += (_, _) => UpdatePreview();
             Place(root, _textBox, row++, new Thickness(0, 0, 0, 10));
 
             AddLabel(root, "字体样式", row);
@@ -98,6 +137,7 @@ namespace DSH_Modbus采集工具.Ui
             }
 
             SelectStyle(item.FontStyle);
+            _styleCombo.SelectionChanged += (_, _) => UpdatePreview();
             Place(root, _styleCombo, row++, new Thickness(0, 0, 0, 10));
 
             AddLabel(root, "字体大小", row);
@@ -109,6 +149,7 @@ namespace DSH_Modbus采集工具.Ui
             }
 
             SelectSize(item.FontSize);
+            _sizeCombo.SelectionChanged += (_, _) => UpdatePreview();
             Place(root, _sizeCombo, row++, new Thickness(0, 0, 0, 10));
 
             AddLabel(root, "状态颜色", row, topAlign: true);
@@ -155,6 +196,28 @@ namespace DSH_Modbus采集工具.Ui
             }
             Place(root, _expressionBox, row++, new Thickness(0, 0, 0, 12));
 
+            // 表达式错误**就地显示**，不再弹 MessageBox —— 系统消息框不吃主题，
+            // 深色下会蹦出一块纯白的框，而且它还会抢焦点、打断「改到对为止」的节奏。
+            _error = new TextBlock
+            {
+                Style = RequireStyle("Dialog.Error"),
+                Margin = new Thickness(0, 0, 0, 10),
+                Visibility = Visibility.Collapsed,
+            };
+
+            Grid.SetRow(_error, row++);
+            Grid.SetColumn(_error, 1);
+            root.Children.Add(_error);
+
+            // 挂在 _error 建好之后：一改字就把上次的错误提示撤掉（但程序回填不算）
+            _expressionBox.TextChanged += (_, _) =>
+            {
+                if (!_revertingExpression)
+                {
+                    ShowError(null);
+                }
+            };
+
             var buttons = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -179,6 +242,8 @@ namespace DSH_Modbus采集工具.Ui
 
             Content = root;
 
+            // 注意顺序：UpdateColorUi 内部会调 UpdatePreview，
+            // 所以必须在 _preview/_previewText 都构造完之后再调。
             UpdateColorUi();
         }
 
@@ -235,16 +300,28 @@ namespace DSH_Modbus采集工具.Ui
         /// </summary>
         private void ExpressionBox_LostFocus(object sender, RoutedEventArgs e)
         {
+            // 补全弹窗正开着时不算真的失焦（点候选会走这里），别误判成「填完了」去校验
             string text = _expressionBox.Text;
 
             if (!TryValidateExpression(text, out string error))
             {
-                MessageBox.Show(
-                    this, error, "表达式无效", MessageBoxButton.OK, MessageBoxImage.Warning);
-                _expressionBox.Text = _lastValidExpression;
+                ShowError(error);
+
+                _revertingExpression = true;
+                try
+                {
+                    _expressionBox.Text = _lastValidExpression;
+                    _expressionBox.CaretIndex = _expressionBox.Text.Length;
+                }
+                finally
+                {
+                    _revertingExpression = false;
+                }
+
                 return;
             }
 
+            ShowError(null);
             _lastValidExpression = text;
         }
 
@@ -264,12 +341,13 @@ namespace DSH_Modbus采集工具.Ui
             // 失焦时已经校验过；这里再兜一次（例如用户没离开表达式框就按了回车）
             if (!TryValidateExpression(_expressionBox.Text, out string error))
             {
-                MessageBox.Show(
-                    this, error, "表达式无效", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ShowError(error);
                 _expressionBox.Focus();
+                _expressionBox.SelectAll();
                 return;
             }
 
+            ShowError(null);
             DialogResult = true;
         }
 
@@ -332,6 +410,48 @@ namespace DSH_Modbus采集工具.Ui
                     ? new SolidColorBrush(Color.FromRgb(0x00, 0x67, 0xC0))
                     : new SolidColorBrush(Color.FromRgb(0xAF, 0xAF, 0xAF));
             }
+
+            UpdatePreview();
+        }
+
+        /// <summary>
+        /// 把当前五项设置画到预览框上。**与画布上状态框的规则保持一致**：
+        /// 圆角 6、1px 边框、填充取所选色、边框是该色压暗到 72%、框内字用深色。
+        /// 预览和画布不一致的话，这个预览就只是在骗人。
+        /// </summary>
+        private void UpdatePreview()
+        {
+            Color fill = ParseColor(_colorHex);
+
+            _preview.Background = new SolidColorBrush(fill);
+            _preview.BorderBrush = new SolidColorBrush(Color.FromRgb(
+                (byte)(fill.R * 0.72),
+                (byte)(fill.G * 0.72),
+                (byte)(fill.B * 0.72)));
+
+            _previewText.Text = _textBox.Text;
+            _previewText.FontSize = Math.Clamp(FontSizeValue, 8, 72);
+
+            bool bold = FontStyleValue is MachineStateFontStyle.Bold or MachineStateFontStyle.BoldItalic;
+            bool italic = FontStyleValue is MachineStateFontStyle.Italic or MachineStateFontStyle.BoldItalic;
+
+            // 画布上「粗体」用的是 SemiBold 而不是 Bold（见 MachineStateView.BoxVisual）
+            _previewText.FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal;
+
+            // 注意：本类的 FontStyles 静态字段（下拉候选）会挡住 System.Windows.FontStyles 类型，
+            // 这里必须写全名，否则编译器会去找字段上的 Normal / Italic 成员。
+            _previewText.FontStyle = italic
+                ? System.Windows.FontStyles.Italic
+                : System.Windows.FontStyles.Normal;
+        }
+
+        /// <summary>显示/清除内联错误。</summary>
+        private void ShowError(string? message)
+        {
+            _error.Text = message ?? string.Empty;
+            _error.Visibility = string.IsNullOrEmpty(message)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
 
         private void SelectStyle(MachineStateFontStyle style)
@@ -375,16 +495,16 @@ namespace DSH_Modbus采集工具.Ui
             _sizeCombo.SelectedIndex = index;
         }
 
-        private static void AddLabel(Grid root, string text, int row, bool topAlign = false)
+        private void AddLabel(Grid root, string text, int row, bool topAlign = false)
         {
             var label = new TextBlock
             {
                 Text = text,
+                Style = RequireStyle("Dialog.Label"),
                 VerticalAlignment = topAlign ? VerticalAlignment.Top : VerticalAlignment.Center,
                 Margin = topAlign ? new Thickness(0, 4, 0, 10) : new Thickness(0, 0, 0, 10),
             };
 
-            label.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
             Grid.SetRow(label, row);
             Grid.SetColumn(label, 0);
             root.Children.Add(label);
@@ -403,63 +523,34 @@ namespace DSH_Modbus采集工具.Ui
             root.Children.Add(element);
         }
 
-        private TextBox MakeTextBox(string text)
+        private TextBox MakeTextBox(string text) => new()
         {
-            var box = new TextBox
-            {
-                Text = text,
-                Height = 28,
-                Width = 330,
-                Padding = new Thickness(8, 0, 8, 0),
-                VerticalContentAlignment = VerticalAlignment.Center,
-                FontSize = 12,
-            };
+            Text = text,
+            Width = 330,
+            Style = RequireStyle("Dialog.TextBox"),
+        };
 
-            box.SetResourceReference(TextBox.BackgroundProperty, "Brush.Input.Background");
-            box.SetResourceReference(TextBox.ForegroundProperty, "Brush.Text.Primary");
-            box.SetResourceReference(TextBox.BorderBrushProperty, "Brush.Input.Border");
-            return box;
-        }
-
-        private ComboBox MakeCombo(double width)
+        private ComboBox MakeCombo(double width) => new()
         {
-            var combo = new ComboBox
-            {
-                Width = width,
-                Height = 28,
-                FontSize = 12,
-                VerticalContentAlignment = VerticalAlignment.Center,
-            };
+            Width = width,
+            Style = RequireStyle("Dialog.ComboBox"),
+        };
 
-            combo.SetResourceReference(ComboBox.BackgroundProperty, "Brush.Input.Background");
-            combo.SetResourceReference(ComboBox.ForegroundProperty, "Brush.Text.Primary");
-            combo.SetResourceReference(ComboBox.BorderBrushProperty, "Brush.Input.Border");
-            return combo;
-        }
-
-        private Button MakeButton(string text, bool primary)
+        private Button MakeButton(string text, bool primary) => new()
         {
-            var button = new Button
-            {
-                Content = text,
-                Width = 72,
-                Height = 32,
-                FontSize = 12,
-            };
+            Content = text,
+            Style = RequireStyle(primary ? "Dialog.Button.Primary" : "Dialog.Button.Secondary"),
+        };
 
-            if (primary)
-            {
-                button.SetResourceReference(Button.BackgroundProperty, "Brush.Accent.Fill");
-                button.SetResourceReference(Button.ForegroundProperty, "Brush.Text.OnAccent");
-            }
-            else
-            {
-                button.SetResourceReference(Button.BackgroundProperty, "Brush.Control.Background");
-                button.SetResourceReference(Button.ForegroundProperty, "Brush.Text.Primary");
-            }
-
-            return button;
-        }
+        /// <summary>
+        /// 取统一控件样式。**取不到就抛**：样式名写错会静默退化成系统默认外观
+        /// （深色主题下正好表现为「浅灰底白字」那种几乎看不见的控件），
+        /// 宁可开窗就崩，也不要让人对着一个看不见的下拉框猜。
+        /// </summary>
+        private Style RequireStyle(string key) =>
+            TryFindResource(key) as Style
+            ?? throw new InvalidOperationException(
+                $"缺少样式资源 {key}，请检查 Themes/DialogControls.xaml 是否已合并进 App.xaml");
 
         private static Color ParseColor(string hex)
         {

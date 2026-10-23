@@ -883,12 +883,70 @@ OrderProbe <ip> <port> <unitId> <localIp|-> <addr:count> [addr:count ...]
 - 「跟随系统」读注册表 `AppsUseLightTheme` 并挂 `SystemEvents.UserPreferenceChanged`；**显式选了浅/深就不再跟随系统**
 - 选择持久化在 `app-settings.json`（与 `io-comments.json` 同级），字段缺失或损坏都回退到「跟随系统」
 
+### 9.3 对话框控件（新增对话框必读）
+
+**对话框用另一套样式，键前缀 `Dialog.`，定义在 `Themes/DialogControls.xaml`**
+（由 `App.xaml` 合并进 `Application.Resources`）。**不要**在对话框里复用
+`FormComboBox` / `FormTextBox` / `FormButton` —— 那些是 `Window.Resources`，
+作用域到不了别的窗口；且主窗口的胶囊风格尺寸不适合对话框。
+
+| 用途 | 键 |
+|---|---|
+| 标签 / 说明 / 红色错误 | `Dialog.Label` / `Dialog.Hint` / `Dialog.Error` |
+| 输入框 | `Dialog.TextBox` |
+| 下拉框 / 下拉项 | `Dialog.ComboBox` / `Dialog.ComboBoxItem` |
+| 按钮（次色 / 主色） | `Dialog.Button.Secondary` / `Dialog.Button.Primary` |
+| 窗口外壳（字体、边框、底色、深色标题栏） | `Ui/DialogChrome.cs` 的 `DialogChrome.Apply(this)` |
+
+新建对话框的最小骨架：
+
+```csharp
+public sealed class MyDialog : Window
+{
+    public MyDialog()
+    {
+        DialogChrome.Apply(this);              // 字体 / 底色 / 深色标题栏，必须第一个调
+        Title = "标题";
+
+        var root = new StackPanel { Margin = new Thickness(24) };
+        root.Children.Add(new TextBlock { Text = "提示", Style = RequireStyle("Dialog.Label") });
+        root.Children.Add(new TextBox { Style = RequireStyle("Dialog.TextBox") });
+        // ...
+        Content = root;
+    }
+
+    // 取不到样式就抛 —— 见下方第 1 条
+    private static Style RequireStyle(string key) =>
+        (Style)Application.Current.TryFindResource(key)
+        ?? throw new InvalidOperationException($"缺少样式 {key}");
+}
+```
+
+**四条容易踩的**：
+
+1. ⚠️ **样式取不到必须抛，不要静默用默认外观**。WPF 默认 ComboBox 模板把
+   ToggleButton 画成**硬编码的浅色渐变、完全忽略 `Background`** —— 深色主题下
+   文字 `#F0F0F0` 落在 `#EBEBEB` 底上，实测对比度 **1.05:1**（等于看不见）。
+   这种「改了颜色却没用」的 bug 极难查，所以宁可启动就崩。
+2. ⚠️ **ComboBox 必须用 `Dialog.ComboBox`，不能只改颜色**。原因同上：默认模板不吃
+   `Background`，只有整份重绘才修得掉。
+3. ⚠️ **`Dialog.ScrollBar` 必须是隐式样式**（`<Style TargetType="ScrollBar" .../>` 无 `x:Key`）。
+   弹层里的滚动条由 `ScrollViewer` **内部创建**，拿不到 keyed 样式，深色下会是一条白条。
+   **不能**把样式写进 `ControlTemplate` 里的 `ScrollViewer.Resources`：模板作用域内
+   `StaticResource` 查不到后定义的键，会直接崩。
+4. ⚠️ **错误提示一律内联（`Dialog.Error` 红字），不要用 `MessageBox`**。系统消息框
+   不跟主题（深色下弹一块白板）、且会抢焦点打断「改到对为止」的循环。
+   **联动坑**：若校验失败后会**程序回填**输入框（如恢复上次有效值），`TextChanged`
+   里那个「一改字就清错误」的逻辑会把刚显示的错误**立刻擦掉** —— 表现为
+   「校验失败了但界面一个字都不显示」。加一个 `_reverting` 标志挡住程序回填。
+
 ## 10. 任务速查
 
 | 需求 | 位置 |
 |------|------|
 | **加输入框 / 下拉框 / 按钮（新增控件必读）** | 套用现成样式，别手写外观 —— 见 **§9.1 控件风格约定** |
 | **改任何颜色（必读）** | 用主题键，**不要写字面量** —— 见 **§9.2 主题与配色** |
+| **新增 / 改对话框（必读）** | 用 `Dialog.*` 样式 + `DialogChrome.Apply`，别复用主窗口样式 —— 见 **§9.3 对话框控件** |
 | **加/改主题、深色适配、跟随系统** | `Themes/`（`Light.xaml` / `Dark.xaml` 同键）+ `Themes/ThemeManager.cs`；C# 侧画刷见 §9.2 |
 | **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；自动连接 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` / `TryAutoConnect`（见 §7.2）；项目信息 `RefreshProjectInfo`（见 §7.3） |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |

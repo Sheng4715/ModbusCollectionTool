@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using DSH_Modbus采集工具.Ui;
 
 namespace DSH_Modbus采集工具
 {
@@ -30,13 +31,10 @@ namespace DSH_Modbus采集工具
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false;
-            Background = Brushes.White;
-            FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI");
-            FontSize = 12;
 
-            // 主窗口本身是 WindowChrome 自绘标题栏；这里用系统标题栏，
-            // 保证在任务栏/Alt+Tab 里可见、也便于自动化与键盘操作。
-            WindowStyle = WindowStyle.SingleBorderWindow;
+            // 统一外壳：卡片底色 + 统一字体 + 深色主题下标题栏也跟着变深。
+            // 早先这里是写死的 Background = Brushes.White，深色主题下会蹦出一整块白。
+            DialogChrome.Apply(this);
 
             var root = new StackPanel { Margin = new Thickness(16) };
 
@@ -44,24 +42,21 @@ namespace DSH_Modbus采集工具
             {
                 Text = prompt,
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 8),
-                Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A)),
+                Margin = new Thickness(0, 0, 0, 10),
+                Style = RequireStyle("Dialog.Label"),
             });
 
             _error = new TextBlock
             {
-                Foreground = new SolidColorBrush(Color.FromRgb(0xC4, 0x2B, 0x1C)),
-                Margin = new Thickness(0, 6, 0, 0),
-                TextWrapping = TextWrapping.Wrap,
+                Style = RequireStyle("Dialog.Error"),
+                Margin = new Thickness(0, 8, 0, 0),
                 Visibility = Visibility.Collapsed,
             };
 
             _box = new TextBox
             {
                 Text = initial.ToString(CultureInfo.InvariantCulture),
-                FontSize = 13,
-                Padding = new Thickness(6, 4, 6, 4),
-                VerticalContentAlignment = VerticalAlignment.Center,
+                Style = RequireStyle("Dialog.TextBox"),
             };
             _box.SelectAll();
             _box.TextChanged += (_, _) => _error.Visibility = Visibility.Collapsed;
@@ -79,8 +74,7 @@ namespace DSH_Modbus采集工具
             var cancel = new Button
             {
                 Content = "取消",
-                MinWidth = 76,
-                Padding = new Thickness(10, 5, 10, 5),
+                Style = RequireStyle("Dialog.Button.Secondary"),
                 Margin = new Thickness(0, 0, 8, 0),
                 IsCancel = true,
             };
@@ -89,8 +83,7 @@ namespace DSH_Modbus采集工具
             var ok = new Button
             {
                 Content = "确定",
-                MinWidth = 76,
-                Padding = new Thickness(10, 5, 10, 5),
+                Style = RequireStyle("Dialog.Button.Primary"),
                 IsDefault = true,
             };
             ok.Click += Ok_Click;
@@ -129,6 +122,15 @@ namespace DSH_Modbus采集工具
             _box.Focus();
             _box.SelectAll();
         }
+
+        /// <summary>
+        /// 取统一控件样式。**取不到就抛**：样式名写错会静默退化成系统默认外观，
+        /// 在深色主题下正好表现为「浅底浅字」那种几乎看不见的控件。
+        /// </summary>
+        private Style RequireStyle(string key) =>
+            TryFindResource(key) as Style
+            ?? throw new InvalidOperationException(
+                $"缺少样式资源 {key}，请检查 Themes/DialogControls.xaml 是否已合并进 App.xaml");
 
         public int Min { get; }
 
