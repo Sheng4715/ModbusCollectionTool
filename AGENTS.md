@@ -64,6 +64,7 @@ DSH_Modbus采集工具/
 │   └── NicScanner.cs           # 网络接口 → NicInfo + 「上次选择」还原优先级
 ├── Ui/                         # 窗口呈现辅助（引 WPF，但不碰业务）
 │   ├── MaximizedInset.cs       # 最大化溢出补偿：物理像素测量 + 按 DPI 内缩根元素
+│   ├── WindowCorners.cs        # 窗口圆角 + 边缘线（DWM 绘制，见 §3.8）
 │   ├── StatusBarPresenter.cs   # 底栏：状态文字 / 状态点颜色 / 右侧连接参数
 │   ├── DeviceLogPresenter.cs   # 运行日志：内存集合 + 上限裁剪 + 落盘旁路 + 级别映射
 │   └── CompletionPopup.cs      # 补全下拉：Popup 绘制 + 键盘/鼠标 + 输入法抑制（P6.5，见 §5.6）
@@ -112,7 +113,7 @@ Window
 
 | 导航项 | 面板 | 说明 |
 |---|---|---|
-| `OverviewNav` 总览 | `OverviewPanel` | **两分段横排在卡片顶部**（`IoSegmentRadioButton` 灰底轨道 + 白底胶囊）：「PLC状态机」（P1.2，见 §5.5）/「生产数据」（占位）+ 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
+| `OverviewNav` 总览 | `OverviewPanel` | 视图切换在**页头右侧下拉框**「当前视图」（`FormComboBox`）：「PLC状态机」（P1.2，见 §5.5）/「生产数据」（占位）；卡片内只有画布 + 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
 | `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1 骨架，采集导出未实现）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5，只读清单，见 §5.3） |
@@ -141,7 +142,7 @@ Window
 | `IoPagerButton` | 分页箭头（26×26，首末页置灰） |
 | `IoCardButton` | **通用文字按钮**（浅灰实底胶囊／圆角 6／高 26／字号 12；底色走 `Brush.Control.Background`） |
 | `FormButton` | 设备配置页按钮，`BasedOn` `IoCardButton`，仅字号 14、内边距 14 |
-| `FormComboBox` | 设备配置页下拉框：**胶囊**（灰底无边框圆角 6 + chevron），字号 14／高 26 |
+| `FormComboBox` | 设备配置页下拉框：**胶囊**（灰底 + 圆角 6 + chevron），字号 14／高 26。默认 `BorderThickness=0`（无框线）；模板已 `TemplateBinding` `BorderBrush`/`BorderThickness`，个别位置需要框线时自己设 1 即可（总览页「当前视图」就是） |
 | `FormComboItem` | 表单下拉项容器（含 `ItemContainerStyle`，勿漏） |
 | `FormTextBox` | 设备配置页输入框：**框线**（白底 + `Brush.Input.Border` 圆角 4），字号 14／高 26 |
 | `MonitorInlineComboBox` / `MonitorTypeCombo` | 自由监控行内下拉框：胶囊，字号 12／高 22 |
@@ -222,6 +223,27 @@ Window
 - ⚠️ **`Margin` 与 `Padding` 在这里分工不同，别混**：`Margin` 管「让开导航」，`Padding` 管「卡片缩进」。分隔线位置只由 `Margin` 决定，改 `Padding` 不会动线
 - ⚠️ 改 `Margin.Left` 时必须**同时**改导航 `Border` 的右边距（两个 112 是成对的，见 §3.5）；只改一个会让分隔线与内容起点脱节
 - 卡片**外框**已与页面大标题左对齐；卡片**内容**再往内缩各自 `Padding.Left`（各卡不同：设置页三卡 24、设备配置 20、状态信息 12、总览日志卡无）。这是卡片内边距，不是错位
+
+### 3.8 窗口圆角与边缘线（DWM 绘制）
+
+窗口用 `WindowChrome` 自绘标题栏，且 `GlassFrameThickness=0` + `NonClientFrameEdges=None`，
+**系统既不画边框也不画圆角** —— 窗口贴在桌面上没有边界。两件事都交给 DWM 做，在
+`Ui/WindowCorners.cs`（`WindowCorners.Apply(this)`，在 `Window_Loaded` 里调一次）：
+
+| 属性 | 值 | 作用 |
+|---|---|---|
+| `DWMWA_WINDOW_CORNER_PREFERENCE` (33) | `DWMWCP_ROUND` (2) | 系统标准圆角，随 DPI 缩放 |
+| `DWMWA_BORDER_COLOR` (34) | 主题 `Brush.Window.Border` | 边缘线颜色（浅 `#C8C8C8` / 深 `#4A4A4A`） |
+
+- ⚠️ **不要在 XAML 里自绘描边**（已试过、已删）：开启 DWM 圆角后系统会自己在最外层补一圈 1px 边框，
+  自绘那条会被盖住（实测边缘色变成 DWM 的 `#B5B5B6` 而不是设的 `#C8C8C8`），
+  圆角处还会露出两道错开的弧线。**两件事都交给 DWM，圆角与边框才同心同半径。**
+- 最大化时 DWM 自动收掉圆角、让边框贴边，**不需要**在 `Window_StateChanged` 里手工同步任何值
+- ⚠️ DWM 要的是 `COLORREF`（`0x00BBGGRR`，**BGR 顺序**），不是 WPF 的 RGB；写反会变蓝边
+- ⚠️ 换主题时 `DynamicResource` 换不到 DWM 属性，`OnThemeChanged` 里要调一次
+  `WindowCorners.SyncBorderColor(this)`；颜色必须从资源取，不能写死
+- 老系统（Win10）上这两个属性号不认识，`DwmSetWindowAttribute` 返回非 0，此时**安静放弃** ——
+  窗口保持直角无边框，不影响功能
 
 ## 4. 代码分工（MainWindow.xaml.cs）
 
@@ -518,27 +540,38 @@ Window
 
 ### 5.5 PLC 状态机（P1.2，总览页第一分段）
 
-总览页上排是一个卡片，**卡片内部上下两段**：顶上一条横排分段切换，下面是画布。
+视图切换是**页头右侧的下拉框**，卡片里只放内容：
 
 ```
+总览                                    当前视图 [PLC状态机 ▾]
 ┌ 卡片 ──────────────────────────────────────────┐
-│  [PLC状态机][生产数据]                          │
 │                                                 │
 │              画布 / 规划中                       │
 └────────────────────────────────────────────────┘
 ```
 
-- 分段是**横排胶囊**，直接用 `IoSegmentRadioButton`（与「状态信息」页同一个控件）：
-  外层灰底轨道 `Brush.Control.Background` + `CornerRadius=6` + `Padding=2`，
-  选中项是白底浮起的胶囊。**不要**在这里另造一套样式。
+- 页头是两栏 `Grid`：左「总览」标题、右 `StackPanel`（右对齐）里放
+  「当前视图」标签 + `OverviewViewCombo`。标签字号 **14**，必须与 `FormComboBox` 的
+  `FontSize` 一致 —— 早先写 13，比右侧选项小一号，一眼就能看出来。
+- 下拉框直接用 `FormComboBox`（采集配置 / 设备配置页同一套：高 26、圆角 6、灰底）。
+  **不要**为它另造样式，否则以后调外观会各走各的。
+  - 总览页这一个额外加了 `BorderThickness="1"` + `BorderBrush="{DynamicResource Brush.Input.Border}"`，
+    因为它悬在页头空白处、没有卡片衬底，不加框线看不出来是个控件。
+  - ⚠️ `FormComboBox` 的模板原本**完全忽略** `BorderBrush`/`BorderThickness`，写上去没效果。
+    现已改成 `TemplateBinding`，并在 Style 里补 `BorderThickness=0` 作为默认值 ——
+    不补这一条，其余 8 个下拉框会跟着一起长出框线。
 - 「生产数据」目前只有一句「规划中」占位；`ProductionDataHint` 与画布叠在同一个格子里，
-  由 `OverviewView_Checked` 切换两者可见性。
-- 卡片下方 1/4 固定给「运行日志」卡片（`Grid.Row="1"`，与状态机卡片同宽，天然对齐）。
+  由 `OverviewView_SelectionChanged` 切换两者可见性。
+- ⚠️ 初始化顺序：XAML 里的 `SelectedIndex="0"` 会在 `InitializeComponent` 期间就触发一次
+  `SelectionChanged`，那时 `MachineStateViewControl` 还没造出来，处理器必须**先判空返回**；
+  初始可见性由 XAML 默认值保证（画布可见、「规划中」折叠），与第 0 项一致。
+- 卡片下方 1/4 固定给「运行日志」卡片（`Grid.Row="1"`），
+  日志卡片带 `Margin="0,4,0,0"` —— 不留缝的话两张卡片各自的 1 DIP 边框会叠成一条 2.67 DIP 的粗线。
 
-> **历史（别重复踩）**：2026-10-24 曾把这条分段改成「卡片左侧竖排 + 大导航同款样式」
-> （`cafa332` → `96f8fd4` → `92cfbae`），又试过把导航挪到卡片外、加竖分隔线
-> 并对齐两张卡片（`e859f86`）。用户最终要求**还原成横排胶囊**，遂回到本版，
-> 并删掉只服务于竖排的 `SubNavRadioButton` 样式（`NavItemTemplate` 保留，大导航仍在用）。
+> **历史（别重复踩）**：2026-10-24 这条分段换过好几版 —— 卡片内横排胶囊 → 卡片左侧竖排 +
+> 大导航同款样式（`cafa332` → `96f8fd4` → `92cfbae`）→ 导航挪到卡片外 + 竖分隔线
+> + 两张卡片对齐（`e859f86`）→ 还原成横排胶囊（`71bba37`）→ 现在的页头下拉框。
+> 用户最终选定下拉框版，`SubNavRadioButton` 样式已删（`NavItemTemplate` 保留，大导航仍在用）。
 > 若日后又要竖排，去 `e859f86` 取回；那条路的两个坑：**列定义必须提到外层网格**
 > 才能让两张卡片真正对齐（不能靠 `Margin` 凑），**分隔线要 `RowSpan="2"`**
 > 否则会在日志卡片处断掉。

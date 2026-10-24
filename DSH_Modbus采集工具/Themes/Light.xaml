@@ -17,6 +17,8 @@
 
     <!-- 窗口最底层背景 -->
     <SolidColorBrush x:Key="Brush.Window.Background" Color="#F3F3F3"/>
+    <!-- 窗口边缘线颜色（由 DWM 绘制，见 Ui/WindowCorners.cs；改这里换主题时自动生效） -->
+    <SolidColorBrush x:Key="Brush.Window.Border" Color="#C8C8C8"/>
     <!-- 卡片（白底 + 细边框圆角 8） -->
     <SolidColorBrush x:Key="Brush.Card.Background" Color="#FFFFFF"/>
     <SolidColorBrush x:Key="Brush.Card.Border" Color="#E8E8E8"/>

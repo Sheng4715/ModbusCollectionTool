@@ -756,6 +756,8 @@
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <!-- 默认不画框线（模板会读 BorderThickness，不显式置 0 会拿到系统默认的 1） -->
+            <Setter Property="BorderThickness" Value="0"/>
             <!--
                 下拉项容器样式写在这里，而不是逐个控件加 —— 设备配置页有 8 个下拉框，
                 逐个写容易漏（漏掉的那个会用系统默认的蓝色选中条，与胶囊风格明显不搭）。
@@ -765,7 +767,15 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
-                            <Border x:Name="Bd" Background="{DynamicResource Brush.Control.Background}" CornerRadius="6">
+                            <!--
+                                框线走 TemplateBinding：默认 BorderThickness=0（见 Style 里的 Setter），
+                                所以其余下拉框外观不变；需要「框出来」的地方自己设 1 + Brush.Input.Border。
+                                模板里原本完全不看这两个属性，写上去也没效果。
+                            -->
+                            <Border x:Name="Bd" Background="{DynamicResource Brush.Control.Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6">
                                 <Grid Margin="{TemplateBinding Padding}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -1404,54 +1414,52 @@
                                 <RowDefinition Height="*"/>      <!-- 状态机 / 生产数据 -->
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" Text="总览"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
-                                       FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,10,0,10"/>
+                            <!-- 页标题行：标题靠左，「当前视图」+ 下拉框靠右。
+                                 下拉框直接用 FormComboBox（与采集配置/设备配置页同一套：高 26、圆角 6、
+                                 灰底 Brush.Control.Background），不另造样式。 -->
+                            <Grid Grid.Row="0" Margin="0,10,0,10">
+                                <TextBlock Text="总览"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
+                                           FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
+                                           VerticalAlignment="Center"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <!-- 字号与 FormComboBox 一致（14），否则「当前视图」会比右侧选项小一号 -->
+                                    <TextBlock Text="当前视图"
+                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <ComboBox x:Name="OverviewViewCombo"
+                                              Style="{StaticResource FormComboBox}"
+                                              Width="132"
+                                              BorderThickness="1"
+                                              BorderBrush="{DynamicResource Brush.Input.Border}"
+                                              SelectedIndex="0"
+                                              SelectionChanged="OverviewView_SelectionChanged">
+                                        <ComboBoxItem Content="PLC状态机"/>
+                                        <ComboBoxItem Content="生产数据"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </Grid>
 
                             <!-- PLC 状态机画布（P1.2）。画布本身是固定设计尺寸，由内部的 Viewbox 缩放到本卡片 -->
                             <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
                                     BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                     CornerRadius="8" Padding="12">
-                                <!-- 分段切换**横排在卡片顶部**：灰底轨道 + 白底浮起胶囊
-                                     （IoSegmentRadioButton，与状态信息页同一套控件）。 -->
+                                <!-- 视图切换已移到页头右侧的「当前视图」下拉框，卡片里只放内容。
+                                     画布与「规划中」占位叠在同一格，由下拉框切换可见性。 -->
                                 <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/>   <!-- 分段切换 -->
-                                        <RowDefinition Height="*"/>      <!-- 内容 -->
-                                    </Grid.RowDefinitions>
-
-                                    <Grid Grid.Row="0" Margin="0,0,0,8">
-                                        <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
-                                                HorizontalAlignment="Left">
-                                            <StackPanel Orientation="Horizontal">
-                                                <RadioButton x:Name="MachineStateSegment"
-                                                             Content="PLC状态机"
-                                                             GroupName="OverviewView" IsChecked="True"
-                                                             Style="{StaticResource IoSegmentRadioButton}"
-                                                             Checked="OverviewView_Checked"/>
-                                                <RadioButton x:Name="ProductionDataSegment"
-                                                             Content="生产数据"
-                                                             GroupName="OverviewView"
-                                                             Style="{StaticResource IoSegmentRadioButton}"
-                                                             Checked="OverviewView_Checked"/>
-                                            </StackPanel>
-                                        </Border>
-                                    </Grid>
-
-                                    <Grid Grid.Row="1">
-                                        <ui:MachineStateView x:Name="MachineStateViewControl"/>
-                                        <TextBlock x:Name="ProductionDataHint"
-                                                   Text="规划中"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
-                                                   Visibility="Collapsed"/>
-                                    </Grid>
+                                    <ui:MachineStateView x:Name="MachineStateViewControl"/>
+                                    <TextBlock x:Name="ProductionDataHint"
+                                               Text="规划中"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
+                                               Visibility="Collapsed"/>
                                 </Grid>
                             </Border>
                         </Grid>
 
-                        <!-- 设备状态日志：只记设备状态（连接/断开/连接失败/心跳告警），空时不显示任何内容 -->
-                        <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
+                        <!-- 设备状态日志：只记设备状态（连接/断开/连接失败/心跳告警），空时不显示任何内容
+                             与上方卡片留 4 DIP 间隙：不加的话两条 1 DIP 边框会叠成一条 2.67 DIP 的粗线。 -->
+                        <Border Grid.Row="1" Margin="0,6,0,0" Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8">
                             <Grid>

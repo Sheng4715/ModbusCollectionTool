@@ -546,6 +546,10 @@ namespace DSH_Modbus采集工具
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            // 窗口圆角 + 边缘线都走 DWM（系统合成器画，见 Ui/WindowCorners.cs）。
+            // 放在 Loaded 而不是构造函数：句柄要 SourceInitialized 之后才存在。
+            WindowCorners.Apply(this);
+
             // 主题已由 App.OnStartup 应用（窗口构造前），这里只同步分段选中态
             SyncThemeSegments();
             Themes.ThemeManager.ThemeChanged += OnThemeChanged;
@@ -706,6 +710,9 @@ namespace DSH_Modbus采集工具
 
             // 底栏：按当前状态重取颜色（文字不变）
             _statusBar?.ReapplyTheme();
+
+            // 窗口边缘线是 DWM 画的，DynamicResource 换不到它，得按新主题重设一次
+            WindowCorners.SyncBorderColor(this);
         }
 
         // ---------- 设置：日志保存（P5-2） ----------
@@ -2023,13 +2030,16 @@ namespace DSH_Modbus采集工具
             _machineGlobals = needed;
         }
 
+        /// <summary>当前是否停在「PLC状态机」视图（页头下拉框第 0 项）。</summary>
+        private bool IsMachineViewSelected => OverviewViewCombo?.SelectedIndex == 0;
+
         /// <summary>
-        /// 状态机定时器启停：**总览页可见 且 停在「PLC状态机」分段** 才跑。
+        /// 状态机定时器启停：**总览页可见 且 停在「PLC状态机」视图** 才跑。
         /// </summary>
         private void SyncMachineTimer()
         {
             bool shouldRun = _overviewPageActive
-                && MachineStateSegment?.IsChecked == true
+                && IsMachineViewSelected
                 && !_windowClosed;
 
             // 采集侧看这个标志：状态机可见就要采它引用的全局变量（与 IO 监控同一逻辑）。
@@ -2100,15 +2110,22 @@ namespace DSH_Modbus采集工具
             SyncMachineTimer();
         }
 
-        /// <summary>总览页分段切换（PLC状态机 / 生产数据）。</summary>
-        private void OverviewView_Checked(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 总览页视图切换（PLC状态机 / 生产数据）。
+        /// <para>
+        /// ⚠️ 初始化期间也会触发一次（XAML 里的 <c>SelectedIndex="0"</c>）——
+        /// 那时 <c>MachineStateViewControl</c> 还没造出来，所以先判空直接返回；
+        /// 初始可见性由 XAML 默认值保证（画布可见、「规划中」折叠），与第 0 项一致。
+        /// </para>
+        /// </summary>
+        private void OverviewView_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (MachineStateViewControl == null)
             {
                 return;
             }
 
-            bool machineView = MachineStateSegment?.IsChecked == true;
+            bool machineView = IsMachineViewSelected;
 
             MachineStateViewControl.Visibility = machineView
                 ? Visibility.Visible
