@@ -1416,81 +1416,70 @@
                 <StackPanel>
 
                     <!-- 总览：高度取内容区视口高度，下方 1/4 固定给设备状态日志（贴窗口底部）。
-                         设计器只认 d:Visibility，本页为设计器默认预览页（切换见 AGENTS.md） -->
+                         设计器只认 d:Visibility，本页为设计器默认预览页（切换见 AGENTS.md）
+
+                         布局：三列贯穿两行
+                              [子导航] [竖分隔线] [卡片]
+                         两张卡片都落在第 3 列，左右边缘天然对齐 —— 不要给日志卡片单独写 Margin
+                         去「凑」位置，那样以后改导航宽度就又错开了。
+                         分隔线 RowSpan=2，从状态机卡片顶一直拉到日志卡片底，形成一条完整的侧栏分界。 -->
                     <Grid x:Name="OverviewPanel" d:Visibility="Visible"
                           Height="{Binding ViewportHeight, ElementName=ContentScrollViewer}">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="3*"/>
-                            <RowDefinition Height="1*"/>
+                            <RowDefinition Height="Auto"/>   <!-- 页标题 -->
+                            <RowDefinition Height="3*"/>     <!-- 状态机卡片 -->
+                            <RowDefinition Height="1*"/>     <!-- 日志卡片 -->
                         </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>   <!-- 子导航 -->
+                            <ColumnDefinition Width="Auto"/>   <!-- 竖分隔线 -->
+                            <ColumnDefinition Width="*"/>      <!-- 卡片（两张共用，保证左右对齐） -->
+                        </Grid.ColumnDefinitions>
 
-                        <Grid Grid.Row="0">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>   <!-- 页标题 -->
-                                <RowDefinition Height="*"/>      <!-- 状态机 / 生产数据 -->
-                            </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Text="总览"
+                                   FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
+                                   FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,10,0,10"/>
 
-                            <TextBlock Grid.Row="0" Text="总览"
-                                       FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
-                                       FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}" Margin="0,10,0,10"/>
+                        <!-- 分段切换：竖排在卡片左侧（与 drawio 示意图一致），外观同左侧大导航。
+                             宽度用 MinWidth 而不是 Width —— 竖排 StackPanel 自身宽度取「最宽那项」，
+                             子项横向 Stretch，所以两条高亮**自动等宽**；MinWidth 只是把选中态高亮
+                             拉成整行条（像大导航那样），否则会紧贴文字看着像个 chip。 -->
+                        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Vertical"
+                                    VerticalAlignment="Top"
+                                    MinWidth="106"
+                                    Margin="0,0,10,0">
+                            <RadioButton x:Name="MachineStateSegment"
+                                         Content="PLC状态机"
+                                         GroupName="OverviewView" IsChecked="True"
+                                         Style="{StaticResource SubNavRadioButton}"
+                                         Checked="OverviewView_Checked"/>
+                            <RadioButton x:Name="ProductionDataSegment"
+                                         Content="生产数据"
+                                         GroupName="OverviewView"
+                                         Style="{StaticResource SubNavRadioButton}"
+                                         Checked="OverviewView_Checked"/>
+                        </StackPanel>
 
-                            <!-- PLC 状态机画布（P1.2）。画布本身是固定设计尺寸，由内部的 Viewbox 缩放到本卡片 -->
-                            <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
-                                    BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
-                                    CornerRadius="8" Padding="12">
-                                <!--
-                                    分段切换**竖排在卡片左侧**（与 drawio 示意图一致），
-                                    右侧用一条竖分隔线把「导航」和「内容」分开。
+                        <!-- 竖分隔线：RowSpan=2 贯穿「卡片 + 日志卡片」两行，侧栏分界才完整 -->
+                        <Border Grid.Row="1" Grid.RowSpan="2" Grid.Column="1" Width="1" Margin="0,0,10,0"
+                                Background="{DynamicResource Brush.Nav.Border}"/>
 
-                                    外观走 SubNavRadioButton —— 与左侧大导航同一套观感
-                                    （无灰底轨道、选中叠加色 + 加粗、文字左对齐）。
-
-                                    宽度用 MinWidth 而不是 Width：竖排 StackPanel 自身宽度取
-                                    「最宽那项」，子项横向 Stretch，所以两个条目**自动等宽**；
-                                    MinWidth 只是把选中态那条高亮拉成**整行条**（像大导航那样），
-                                    否则高亮会紧贴文字、看着像个 chip。用 Min 而非固定值，
-                                    日后加更长的文案也不会被裁。
-                                -->
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>   <!-- 左侧竖排分段 -->
-                                        <ColumnDefinition Width="Auto"/>   <!-- 竖分隔线 -->
-                                        <ColumnDefinition Width="*"/>      <!-- 内容 -->
-                                    </Grid.ColumnDefinitions>
-
-                                    <StackPanel Grid.Column="0" Orientation="Vertical"
-                                                VerticalAlignment="Top"
-                                                MinWidth="106"
-                                                Margin="0,0,10,0">
-                                        <RadioButton x:Name="MachineStateSegment"
-                                                     Content="PLC状态机"
-                                                     GroupName="OverviewView" IsChecked="True"
-                                                     Style="{StaticResource SubNavRadioButton}"
-                                                     Checked="OverviewView_Checked"/>
-                                        <RadioButton x:Name="ProductionDataSegment"
-                                                     Content="生产数据"
-                                                     GroupName="OverviewView"
-                                                     Style="{StaticResource SubNavRadioButton}"
-                                                     Checked="OverviewView_Checked"/>
-                                    </StackPanel>
-
-                                    <Border Grid.Column="1" Width="1" Margin="0,0,10,0"
-                                            Background="{DynamicResource Brush.Nav.Border}"/>
-
-                                    <Grid Grid.Column="2">
-                                        <ui:MachineStateView x:Name="MachineStateViewControl"/>
-                                        <TextBlock x:Name="ProductionDataHint"
-                                                   Text="规划中"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
-                                                   Visibility="Collapsed"/>
-                                    </Grid>
-                                </Grid>
-                            </Border>
-                        </Grid>
+                        <!-- PLC 状态机画布（P1.2）。画布本身是固定设计尺寸，由内部的 Viewbox 缩放到本卡片 -->
+                        <Border Grid.Row="1" Grid.Column="2" Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="12">
+                            <Grid>
+                                <ui:MachineStateView x:Name="MachineStateViewControl"/>
+                                <TextBlock x:Name="ProductionDataHint"
+                                           Text="规划中"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
+                                           Visibility="Collapsed"/>
+                            </Grid>
+                        </Border>
 
                         <!-- 设备状态日志：只记设备状态（连接/断开/连接失败/心跳告警），空时不显示任何内容 -->
-                        <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
+                        <Border Grid.Row="2" Grid.Column="2" Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8">
                             <Grid>
