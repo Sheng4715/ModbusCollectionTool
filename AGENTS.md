@@ -536,10 +536,14 @@ Window
   **文字水平左对齐 + 垂直居中**（与大导航逐项一致）。
 - **高度与字号是「分级」的**，都在各自的 Style 上，模板不写死：
 
-  | | MinHeight | FontSize | Margin | Padding |
-  |---|---|---|---|---|
-  | 大导航 `NavRadioButton` | 40 | 14 | `8,2` | `14,0` |
-  | 子导航 `SubNavRadioButton` | 32 | 13 | `0,2` | `12,0` |
+  | | MinHeight | FontSize | Margin | Padding | 渲染尺寸 @150% |
+  |---|---|---|---|---|---|
+  | 大导航 `NavRadioButton` | 40 | 14 | `8,2` | `14,0` | 312×60 px |
+  | 子导航 `SubNavRadioButton` | 29.33 | 12 | `0,2` | `12,0` | 160×44 px |
+
+  > 子导航那两个数不是拍脑袋的：用户按**截图像素**提的「44×160 px」，本机是 150% 缩放，
+  > 所以 DIP = px ÷ 1.5。**写 DIP 不写像素** —— WPF 按 DIP 布局，写死像素换个缩放就错。
+  > 宽度落在总览页那个 `StackPanel` 的 `MinWidth="106.67"` 上。
 
   用 `MinHeight` 而非 `Height`：`Height` 是固定高度，字号调大后文字会被裁；
   `MinHeight` 让「至少这么高、内容更高时自己撑开」。模板里是

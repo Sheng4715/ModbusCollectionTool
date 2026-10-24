@@ -132,14 +132,17 @@
             <EventSetter Event="Checked" Handler="Nav_Checked"/>
         </Style>
 
-        <!-- 总览页左侧子导航：外观与左侧大导航一致，但**层级更轻** ——
-             条目 32 高、字号 13（大导航是 40 / 14），让人一眼看出这是二级导航。
+        <!-- 总览页左侧子导航：外观与左侧大导航一致，但**层级更轻**（大导航 40 / 14），
+             让人一眼看出这是二级导航。
              ⚠️ **不能**带 Nav_Checked —— 那个处理器是切页面的，套上就会把整个窗口切走；
-             缩进也小一点（0,2 / 12,0），因为它贴在卡片 Padding 之内。 -->
+             缩进也小一点（0,2 / 12,0），因为它贴在卡片 Padding 之内。
+
+             高度 29.33 DIP = 用户要的 44px @150% 缩放；宽度同理见下方 StackPanel 的 MinWidth。
+             用 DIP 而不是像素值写，是因为 WPF 按 DIP 布局，写死像素在别的缩放下会错。 -->
         <Style x:Key="SubNavRadioButton" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
-            <Setter Property="FontSize" Value="13"/>
-            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="MinHeight" Value="29.33"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Margin" Value="0,2"/>
             <Setter Property="Padding" Value="12,0"/>
@@ -1452,7 +1455,7 @@
 
                                     <StackPanel Grid.Column="0" Orientation="Vertical"
                                                 VerticalAlignment="Top"
-                                                MinWidth="112"
+                                                MinWidth="106.67"
                                                 Margin="0,0,10,0">
                                         <RadioButton x:Name="MachineStateSegment"
                                                      Content="PLC状态机"
