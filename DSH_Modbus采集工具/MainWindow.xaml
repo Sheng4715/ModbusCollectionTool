@@ -89,12 +89,16 @@
             抽成共享模板的原因：总览页的子导航要求「和大导航一个样式」，
             若各写一份，日后调颜色/圆角/高度必然只改一处，两个地方就慢慢走样了。
 
-            外距（Margin）从模板里挪到了控件的 Style 上：大导航要 8,2 的缩进，
-            子导航贴在卡片里要 0,2，模板写死就只能各写一份。
+            外距（Margin）与高度都从模板里挪到了控件的 Style 上：
+            大导航要 8,2 的缩进 + 40 高，子导航贴在卡片里要 0,2 + 更矮的一条，
+            模板写死就只能各写一份。
+
+            ⚠️ 高度用 MinHeight 而不是 Height：Height 是死值，字号调大后文字会被裁；
+            MinHeight 让「至少这么高、内容更高时自己撑开」。
         -->
         <ControlTemplate x:Key="NavItemTemplate" TargetType="RadioButton">
             <Border x:Name="Backplate"
-                    Height="40"
+                    MinHeight="{TemplateBinding MinHeight}"
                     Padding="{TemplateBinding Padding}"
                     CornerRadius="4"
                     Background="Transparent"
@@ -116,10 +120,11 @@
             </ControlTemplate.Triggers>
         </ControlTemplate>
 
-        <!-- 左侧大导航 -->
+        <!-- 左侧大导航：条目 40 高、字号 14 -->
         <Style x:Key="NavRadioButton" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="FontSize" Value="14"/>
+            <Setter Property="MinHeight" Value="40"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Margin" Value="8,2"/>
             <Setter Property="Padding" Value="14,0"/>
@@ -127,12 +132,14 @@
             <EventSetter Event="Checked" Handler="Nav_Checked"/>
         </Style>
 
-        <!-- 总览页左侧子导航：外观与左侧大导航一致，但
+        <!-- 总览页左侧子导航：外观与左侧大导航一致，但**层级更轻** ——
+             条目 32 高、字号 13（大导航是 40 / 14），让人一眼看出这是二级导航。
              ⚠️ **不能**带 Nav_Checked —— 那个处理器是切页面的，套上就会把整个窗口切走；
              缩进也小一点（0,2 / 12,0），因为它贴在卡片 Padding 之内。 -->
         <Style x:Key="SubNavRadioButton" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
-            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="MinHeight" Value="32"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Margin" Value="0,2"/>
             <Setter Property="Padding" Value="12,0"/>

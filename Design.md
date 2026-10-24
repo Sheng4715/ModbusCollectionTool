@@ -1555,6 +1555,8 @@ drawio 里那段结构是：外层圆角容器 → 左侧一列竖排胶囊（�
 
 | | `NavRadioButton`（大导航） | `SubNavRadioButton`（总览子导航） |
 |---|---|---|
+| MinHeight | 40 | **32**（更矮，体现二级层级） |
+| FontSize | 14 | **13** |
 | Margin | `8,2` | `0,2`（贴卡片 Padding 之内） |
 | Padding | `14,0` | `12,0` |
 | `Nav_Checked` 事件 | **有**（切页面） | **无**（否则一选就把窗口切走） |
@@ -1568,6 +1570,11 @@ drawio 里那段结构是：外层圆角容器 → 左侧一列竖排胶囊（�
    `MinWidth` 的唯一作用是让选中态高亮成为**整行条**（贴近大导航的观感），
    用 Min 而非 `Width`，日后换更长文案不会被裁。
 3. 灰底轨道整块删掉，分隔线由 `Brush.Divider` 换成 `Brush.Nav.Border` —— 与大导航右边框同色。
+4. **高度也一并从模板挪到 Style**，且用 `MinHeight` 而不是 `Height`。
+   用户后来要求「两者高度不同，小导航栏项高度改低一些、字体也小一些」——
+   模板若写死 `Height="40"`，两个导航就只能同高。同时 `Height` 是死值，
+   字号一旦调大，文字会被直接裁掉；`MinHeight` 是「至少这么高、内容更高时自己撑开」。
+   模板里现在是 `MinHeight="{TemplateBinding MinHeight}"`。
 
 #### 验证
 

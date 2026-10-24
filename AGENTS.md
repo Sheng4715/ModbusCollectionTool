@@ -532,12 +532,22 @@ Window
 分段**竖排在左侧**（不再横在卡片顶上），外观是**左侧大导航那一套**（`SubNavRadioButton`）。「生产数据」目前只有一句「规划中」占位。
 
 - 样式来自共享模板 `NavItemTemplate`：无灰底轨道、选中态 `Brush.Overlay.Medium` +
-  SemiBold、悬停 `Overlay.Subtle`、按下 `Overlay.Strong`、条目高 40、圆角 4、
+  SemiBold、悬停 `Overlay.Subtle`、按下 `Overlay.Strong`、圆角 4、
   **文字水平左对齐 + 垂直居中**（与大导航逐项一致）。
+- **高度与字号是「分级」的**，都在各自的 Style 上，模板不写死：
+
+  | | MinHeight | FontSize | Margin | Padding |
+  |---|---|---|---|---|
+  | 大导航 `NavRadioButton` | 40 | 14 | `8,2` | `14,0` |
+  | 子导航 `SubNavRadioButton` | 32 | 13 | `0,2` | `12,0` |
+
+  用 `MinHeight` 而非 `Height`：`Height` 是固定高度，字号调大后文字会被裁；
+  `MinHeight` 让「至少这么高、内容更高时自己撑开」。模板里是
+  `MinHeight="{TemplateBinding MinHeight}"`。
 - ⚠️ **不能直接用 `NavRadioButton`**：它带 `<EventSetter Event="Checked" Handler="Nav_Checked"/>`，
   套到子导航上会**顺手把整个窗口切走**。因此单独一个 `SubNavRadioButton`，共用模板、不挂该事件。
-- ⚠️ 改模板时注意：外距（`Margin`）是**放在 Style 上**而不是模板的 `Border` 里 ——
-  大导航要 `8,2`、子导航要 `0,2`，模板写死就只能各写一份。
+- ⚠️ 改模板时注意：外距（`Margin`）与高度都是**放在 Style 上**而不是模板的 `Border` 里 ——
+  两个导航的缩进和高矮不同，模板写死就只能各写一份，而复制正是样式日后走样的根源。
 - 宽度用 `MinWidth="112"` 而不是 `Width`：竖排 `StackPanel` 自身宽度取「最宽那项」、
   子项横向 Stretch，所以两个条目**自动等宽**（实测均 112 DIP）；`MinWidth` 只是把选中态
   那条高亮拉成**整行条**（像大导航），用 Min 而非固定值则日后换更长文案也不会被裁。
