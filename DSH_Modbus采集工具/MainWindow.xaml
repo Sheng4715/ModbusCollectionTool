@@ -135,7 +135,11 @@
         <!-- 总览页左侧子导航：外观与左侧大导航一致，但**层级更轻**（大导航 40 / 14），
              让人一眼看出这是二级导航。
              ⚠️ **不能**带 Nav_Checked —— 那个处理器是切页面的，套上就会把整个窗口切走；
-             缩进也小一点（0,2 / 12,0），因为它贴在卡片 Padding 之内。
+             缩进也小一点（0,2 / 10,0），因为它贴在卡片 Padding 之内。
+
+             左内距 10 而不是大导航的 14：按「内距 / 条目高」的比例配，
+             大导航 14/40 = 0.35，子导航 10/30 = 0.33，视觉重量才对得上；
+             早先用 12 时比例是 0.40，文字离高亮块左边明显偏空。
 
              高度 30 DIP、宽度 106 DIP（见下方 StackPanel 的 MinWidth），取整数便于维护；
              @150% 下渲染为 45×159 px。用 DIP 而不是像素值写，是因为 WPF 按 DIP 布局，
@@ -146,7 +150,7 @@
             <Setter Property="MinHeight" Value="30"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Margin" Value="0,2"/>
-            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Padding" Value="10,0"/>
             <Setter Property="Template" Value="{StaticResource NavItemTemplate}"/>
         </Style>
 
