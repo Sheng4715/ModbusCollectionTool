@@ -82,38 +82,61 @@
             </Setter>
         </Style>
 
-        <!-- 左侧导航（NavigationView 风格，带指示条） -->
+        <!--
+            导航项外观（左侧大导航 + 总览页左侧子导航**共用**这一份模板）：
+            没有灰底轨道，选中态用叠加色 + 加粗，文字**水平左对齐、垂直居中**。
+
+            抽成共享模板的原因：总览页的子导航要求「和大导航一个样式」，
+            若各写一份，日后调颜色/圆角/高度必然只改一处，两个地方就慢慢走样了。
+
+            外距（Margin）从模板里挪到了控件的 Style 上：大导航要 8,2 的缩进，
+            子导航贴在卡片里要 0,2，模板写死就只能各写一份。
+        -->
+        <ControlTemplate x:Key="NavItemTemplate" TargetType="RadioButton">
+            <Border x:Name="Backplate"
+                    Height="40"
+                    Padding="{TemplateBinding Padding}"
+                    CornerRadius="4"
+                    Background="Transparent"
+                    HorizontalAlignment="Stretch">
+                <ContentPresenter VerticalAlignment="Center"
+                                  HorizontalAlignment="Left"/>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Subtle}"/>
+                </Trigger>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Medium}"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Strong}"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <!-- 左侧大导航 -->
         <Style x:Key="NavRadioButton" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="8,2"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="Template" Value="{StaticResource NavItemTemplate}"/>
             <EventSetter Event="Checked" Handler="Nav_Checked"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="Backplate"
-                                Height="40" Margin="8,2" Padding="14,0"
-                                CornerRadius="4"
-                                Background="Transparent"
-                                HorizontalAlignment="Stretch">
-                            <ContentPresenter VerticalAlignment="Center"
-                                              HorizontalAlignment="Left"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Subtle}"/>
-                            </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Medium}"/>
-                                <Setter Property="FontWeight" Value="SemiBold"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Strong}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
+        </Style>
+
+        <!-- 总览页左侧子导航：外观与左侧大导航一致，但
+             ⚠️ **不能**带 Nav_Checked —— 那个处理器是切页面的，套上就会把整个窗口切走；
+             缩进也小一点（0,2 / 12,0），因为它贴在卡片 Padding 之内。 -->
+        <Style x:Key="SubNavRadioButton" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,2"/>
+            <Setter Property="Padding" Value="12,0"/>
+            <Setter Property="Template" Value="{StaticResource NavItemTemplate}"/>
         </Style>
 
         <!-- IO 元件区分段切换（输入X / 输出Y）：灰底胶囊轨道 + 选中白底浮起 -->
@@ -1404,10 +1427,14 @@
                                     分段切换**竖排在卡片左侧**（与 drawio 示意图一致），
                                     右侧用一条竖分隔线把「导航」和「内容」分开。
 
-                                    为什么竖排还要给轨道定宽（SegmentTrackWidth）：
-                                    StackPanel 竖排时子项横向是 Stretch，但轨道自身会缩到最宽那项的文字宽度，
-                                    「PLC状态机」和「生产数据」字数不同 → 两个胶囊宽度不等，看着像没对齐。
-                                    定宽 + 文字居中，两个胶囊就一样宽。
+                                    外观走 SubNavRadioButton —— 与左侧大导航同一套观感
+                                    （无灰底轨道、选中叠加色 + 加粗、文字左对齐）。
+
+                                    宽度用 MinWidth 而不是 Width：竖排 StackPanel 自身宽度取
+                                    「最宽那项」，子项横向 Stretch，所以两个条目**自动等宽**；
+                                    MinWidth 只是把选中态那条高亮拉成**整行条**（像大导航那样），
+                                    否则高亮会紧贴文字、看着像个 chip。用 Min 而非固定值，
+                                    日后加更长的文案也不会被裁。
                                 -->
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -1416,29 +1443,24 @@
                                         <ColumnDefinition Width="*"/>      <!-- 内容 -->
                                     </Grid.ColumnDefinitions>
 
-                                    <Border Grid.Column="0"
-                                            Background="{DynamicResource Brush.Control.Background}"
-                                            CornerRadius="6" Padding="2"
-                                            Width="96" VerticalAlignment="Top"
-                                            Margin="0,0,14,0">
-                                        <StackPanel Orientation="Vertical">
-                                            <RadioButton x:Name="MachineStateSegment"
-                                                         Content="PLC状态机"
-                                                         GroupName="OverviewView" IsChecked="True"
-                                                         HorizontalAlignment="Stretch"
-                                                         Style="{StaticResource IoSegmentRadioButton}"
-                                                         Checked="OverviewView_Checked"/>
-                                            <RadioButton x:Name="ProductionDataSegment"
-                                                         Content="生产数据"
-                                                         GroupName="OverviewView"
-                                                         HorizontalAlignment="Stretch"
-                                                         Style="{StaticResource IoSegmentRadioButton}"
-                                                         Checked="OverviewView_Checked"/>
-                                        </StackPanel>
-                                    </Border>
+                                    <StackPanel Grid.Column="0" Orientation="Vertical"
+                                                VerticalAlignment="Top"
+                                                MinWidth="112"
+                                                Margin="0,0,10,0">
+                                        <RadioButton x:Name="MachineStateSegment"
+                                                     Content="PLC状态机"
+                                                     GroupName="OverviewView" IsChecked="True"
+                                                     Style="{StaticResource SubNavRadioButton}"
+                                                     Checked="OverviewView_Checked"/>
+                                        <RadioButton x:Name="ProductionDataSegment"
+                                                     Content="生产数据"
+                                                     GroupName="OverviewView"
+                                                     Style="{StaticResource SubNavRadioButton}"
+                                                     Checked="OverviewView_Checked"/>
+                                    </StackPanel>
 
-                                    <Border Grid.Column="1" Width="1" Margin="0,0,14,0"
-                                            Background="{DynamicResource Brush.Divider}"/>
+                                    <Border Grid.Column="1" Width="1" Margin="0,0,10,0"
+                                            Background="{DynamicResource Brush.Nav.Border}"/>
 
                                     <Grid Grid.Column="2">
                                         <ui:MachineStateView x:Name="MachineStateViewControl"/>
