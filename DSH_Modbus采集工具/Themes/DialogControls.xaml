@@ -308,6 +308,59 @@
   </Style>
 
   <!--
+    单选框（对话框专用）。
+
+    **为什么要自己画**：WPF 默认的 RadioButton 圆点是系统绘制的，不吃主题 ——
+    深色主题下是一个亮白圆圈，和 Dialog.* 那套完全不是一回事（与 ComboBox 同一个病）。
+
+    观感跟 WinUI 走：16 的圆圈、选中时整圈填主色、里面压一个 6 的白点。
+    文字在**右侧**（与 ToggleSwitch 的文字在左侧相反 —— 那个是「开关名 + 状态」，
+    这个是「选项名」，读的方向本来就不同）。
+  -->
+  <Style x:Key="Dialog.RadioButton" TargetType="RadioButton">
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RadioButton">
+          <StackPanel Orientation="Horizontal" Background="Transparent">
+            <Grid Width="16" Height="16" VerticalAlignment="Center">
+              <Ellipse x:Name="Ring"
+                       Stroke="{DynamicResource Brush.Input.Border}"
+                       StrokeThickness="1"
+                       Fill="Transparent" />
+              <Ellipse x:Name="Dot"
+                       Width="6" Height="6"
+                       Fill="{DynamicResource Brush.Text.OnAccent}"
+                       Visibility="Collapsed" />
+            </Grid>
+            <ContentPresenter VerticalAlignment="Center"
+                              Margin="8,0,0,0"
+                              RecognizesAccessKey="True" />
+          </StackPanel>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Ring" Property="Fill" Value="{DynamicResource Brush.Accent.Fill}" />
+              <Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource Brush.Accent.Fill}" />
+              <Setter TargetName="Dot" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource Brush.Input.Border.Hover}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+              <Setter TargetName="Ring" Property="Opacity" Value="0.5" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!--
     隐式滚动条样式：只为了让 ComboBox 弹层里那个由 ScrollViewer **内部创建**的 ScrollBar
     自动套上主题皮肤（内部创建的控件拿不到 keyed 样式，只能靠隐式样式）。
     MainWindow 自己的 Window.Resources 里有同名隐式样式，作用域更近，不会被这条盖掉。

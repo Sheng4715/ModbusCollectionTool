@@ -176,6 +176,14 @@ namespace DSH_Modbus采集工具
         private readonly GlobalVarItemSet _globalVarSet = new();
 
         /// <summary>
+        /// 采集任务组（P3.1）。<para>
+        /// ⚠️ **在构造函数里赋值**而不是字段初始化：它要拿 <c>_globalVarSet.FindByName</c>
+        /// 当变量查找器，字段初始化顺序靠写在前后来保证太脆，直接在构造函数里排在全局变量之后更明确。
+        /// </para>
+        /// </summary>
+        private readonly AcquisitionTaskItemSet _acqTaskSet;
+
+        /// <summary>
         /// 系统变量的**运行时长起点**（单调时钟，P2.3）。
         /// <para>
         /// 用 <see cref="Stopwatch"/> 而不是 `DateTime.Now - 启动时刻`：系统校时会把后者
@@ -381,7 +389,15 @@ namespace DSH_Modbus采集工具
             _globalVarSet.SetDriver(_currentDriver);
             _globalVarSet.Load();
             GlobalVarItemsControl.ItemsSource = _globalVarSet.Items;
+
+            // 采集任务组（P3.1）：结构落在 acquisition-tasks.json。
+            // ⚠️ 必须排在全局变量之后 —— 数据项那列「数据类型」是按变量表反推的
+            _acqTaskSet = new AcquisitionTaskItemSet(name => _globalVarSet.FindByName(name));
+            _acqTaskSet.Load();
+            AcquisitionTaskItemsControl.ItemsSource = _acqTaskSet.Items;
+
             RefreshGlobalVarView();
+            RefreshAcquisitionView();
 
             // 自由监控：载入持久化项 + 绑定列表（解析失败项保留并标红）
             _monitorSet.SetDriver(_currentDriver);
@@ -2298,6 +2314,244 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        // ---------- 采集任务组（P3.1，本版只做 UI） ----------
+
+        /// <summary>刷新任务组计数、空提示与「全部删除」可用性。</summary>
+        private void RefreshAcquisitionView()
+        {
+            if (AcquisitionTaskItemsControl == null)
+            {
+                return;
+            }
+
+            int n = _acqTaskSet.Items.Count;
+
+            // 表头不随空列表隐藏 —— 它是列说明，也是「+」的落点
+            if (AcquisitionEmptyHint != null)
+            {
+                AcquisitionEmptyHint.Visibility = n == 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            if (ClearAcquisitionTasksButton != null)
+            {
+                ClearAcquisitionTasksButton.IsEnabled = n > 0;
+            }
+
+            if (AcquisitionTaskCountText != null)
+            {
+                AcquisitionTaskCountText.Text = n == 0 ? string.Empty : $"共 {n} 组";
+            }
+        }
+
+        private void AddAcquisitionTask_Click(object sender, RoutedEventArgs e)
+        {
+            _acqTaskSet.Add();
+            RefreshAcquisitionView();
+            AcquisitionTaskItemsControl?.UpdateLayout();
+        }
+
+        private void ClearAcquisitionTasks_Click(object sender, RoutedEventArgs e)
+        {
+            if (_acqTaskSet.Items.Count == 0)
+            {
+                return;
+            }
+
+            if (MessageBox.Show(this, $"确定删除全部 {_acqTaskSet.Items.Count} 个任务组？",
+                    "删除全部任务组", MessageBoxButton.OKCancel, MessageBoxImage.Question)
+                != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            _acqTaskSet.Clear();
+            RefreshAcquisitionView();
+        }
+
+        /// <summary>
+        /// 删除单个任务组（行内 ×，在「…」与「↑↓」之间）。
+        /// <para>
+        /// 只有**含数据项**的组才弹确认：空组删了没有损失，每次都问只是噪音；
+        /// 有数据项时删掉就连子表一起没了，值得拦一下。
+        /// （全局变量行、监控行的行尾 × 都是直接删 —— 那两处一行只丢一条，
+        /// 这里丢的可能是一整张子表，故差别对待。）
+        /// </para>
+        /// </summary>
+        private void RemoveAcquisitionTask_Click(object sender, RoutedEventArgs e)
+        {
+            if (TaskOfRow(sender) is not AcquisitionTaskItem task)
+            {
+                return;
+            }
+
+            if (task.Items.Count > 0
+                && MessageBox.Show(this, $"确定删除任务组「{task.Name}」及其 {task.Items.Count} 个数据项？",
+                    "删除任务组", MessageBoxButton.OKCancel, MessageBoxImage.Question)
+                != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            // Remove 内部已重排序号并落盘
+            _acqTaskSet.Remove(task);
+            RefreshAcquisitionView();
+        }
+
+        private void AddAcquisitionItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (TaskOfRow(sender) is not AcquisitionTaskItem task)
+            {
+                return;
+            }
+
+            task.AddItem();
+            _acqTaskSet.Save();
+            AcquisitionTaskItemsControl?.UpdateLayout();
+        }
+
+        private void ClearAcquisitionItems_Click(object sender, RoutedEventArgs e)
+        {
+            if (TaskOfRow(sender) is not AcquisitionTaskItem task || task.Items.Count == 0)
+            {
+                return;
+            }
+
+            // 破坏性操作一律先问一句（同「删除全部任务组」「删除全部变量」）
+            if (MessageBox.Show(this, $"确定清空任务组「{task.Name}」的 {task.Items.Count} 个数据项？",
+                    "清空数据项", MessageBoxButton.OKCancel, MessageBoxImage.Question)
+                != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            task.ClearItems();
+            _acqTaskSet.Save();
+        }
+
+        private void RemoveAcquisitionItem_Click(object sender, RoutedEventArgs e)
+        {
+            // 按钮的 DataContext 是**数据项**，而增删入口在任务组对象上 —— 故要往上找一层
+            if (sender is not FrameworkElement fe || fe.DataContext is not AcquisitionItemRow row)
+            {
+                return;
+            }
+
+            if (TaskOfRow(fe) is not AcquisitionTaskItem task)
+            {
+                return;
+            }
+
+            task.RemoveItem(row);
+            _acqTaskSet.Save();
+        }
+
+        private void ToggleAcquisitionTaskExpand_Click(object sender, RoutedEventArgs e)
+        {
+            if (TaskOfRow(sender) is not AcquisitionTaskItem task)
+            {
+                return;
+            }
+
+            task.IsExpanded = !task.IsExpanded;
+        }
+
+        private void AcquisitionTaskEnable_Click(object sender, RoutedEventArgs e)
+        {
+            // IsChecked 已双向绑定到 Enabled，这里只负责落盘
+            _acqTaskSet.Save();
+        }
+
+        private void OpenAcquisitionTaskDialog_Click(object sender, RoutedEventArgs e)
+        {
+            if (TaskOfRow(sender) is not AcquisitionTaskItem task)
+            {
+                return;
+            }
+
+            Ui.AcquisitionTaskDialog? dialog = Ui.AcquisitionTaskDialog.Ask(
+                this,
+                task.Model,
+                name => IsTaskNameTaken(task, name),
+                ExpressionNameExists,
+                () => CompletionSource.ForExpression(GlobalVarModels));
+
+            if (dialog == null)
+            {
+                return;
+            }
+
+            // 改名走集合的唯一入口（含重名校验），其余四项走包装的方法（含刷新）
+            _acqTaskSet.Rename(task, dialog.TaskName, out _);
+            task.ApplyDialogResult(
+                dialog.KindValue, dialog.TriggerValue, dialog.PeriodSecondsValue, dialog.ExpressionText);
+
+            _acqTaskSet.Save();
+        }
+
+        /// <summary>任务名是否已被人占用（把「自己」排除掉，否则改别的字段也会被自己挡下来）。</summary>
+        private bool IsTaskNameTaken(AcquisitionTaskItem self, string name) =>
+            _acqTaskSet.Items.Any(x => !ReferenceEquals(x, self)
+                                       && string.Equals(x.Name, name, StringComparison.Ordinal));
+
+        /// <summary>
+        /// 数据项「变量名称」框加载：挂变量名补全（P6.5）。
+        /// <para>
+        /// 需求写的是「能填变量名的地方」都要有 —— 这里就是新增的第三处。
+        /// 去重仍用 <see cref="_nameCompletions"/> 那张弱表：模板复用会让同一个框多次 Loaded，
+        /// 重复挂载会让一次按键被处理两遍。
+        /// </para>
+        /// </summary>
+        private void AcquisitionItemVariableBox_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox tb || _nameCompletions.TryGetValue(tb, out _))
+            {
+                return;
+            }
+
+            var popup = Ui.CompletionPopup.Attach(tb, () => CompletionSource.ForMonitorName(GlobalVarModels));
+            _nameCompletions.Add(tb, popup);
+        }
+
+        /// <summary>
+        /// 数据项输入框失焦：落盘。
+        /// <para>
+        /// 项名称与变量名称都是<b>逐字符进模型</b>的（否则右列「数据类型」不会跟着变），
+        /// 但**写盘只在失焦** —— 逐字符写文件没有意义。
+        /// </para>
+        /// </summary>
+        private void AcquisitionItemField_LostFocus(object sender, RoutedEventArgs e)
+        {
+            _acqTaskSet.Save();
+        }
+
+        /// <summary>
+        /// 从行内控件往上找所属的<b>任务组</b>。
+        /// <para>
+        /// 任务组行的模板根 DataContext 就是 <see cref="AcquisitionTaskItem"/>；
+        /// 数据项行里按钮的 DataContext 是 <c>AcquisitionItemRow</c>，
+        /// 再往上一层（子表 ItemsControl）才拿到任务组 —— 故统一走可视树上溯。
+        /// </para>
+        /// </summary>
+        private static AcquisitionTaskItem? TaskOfRow(object sender)
+        {
+            if (sender is not DependencyObject node)
+            {
+                return null;
+            }
+
+            while (node != null)
+            {
+                if (node is FrameworkElement fe && fe.DataContext is AcquisitionTaskItem task)
+                {
+                    return task;
+                }
+
+                node = VisualTreeHelper.GetParent(node);
+            }
+
+            return null;
+        }
+
         // ---------- 全局变量（P3.3） ----------
 
         /// <summary>
@@ -2575,8 +2829,11 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private void RefreshAfterVariableChange()
         {
-            // 放在下面的早退之前：没有监控行时也要更新状态机的清单
+            // 放在下面的早退之前：没有监控行时也要更新状态机的清单与采集项的类型列
             RefreshMachineGlobals();
+
+            // 采集数据项的「数据类型」是从变量表反推的，变量改名/换类型后这里会变成旧值
+            _acqTaskSet.RefreshVariables();
 
             if (_monitorSet.Items.Count == 0)
             {

@@ -32,6 +32,9 @@
         <!-- 枚举 → 大写名（显示格式 BIN/DEC/HEX/ASCII） -->
         <local:EnumUpperConverter x:Key="EnumUpperConverter"/>
 
+        <!-- 布尔 → 可见性（采集任务组「展开/收起」用，见 AcquisitionTaskRowTemplate） -->
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
         <!-- 标题栏按钮 -->
         <Style x:Key="CaptionButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
@@ -419,6 +422,92 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <!--
+            采集任务表的**行内**图标按钮（− + … ↑↓）。
+
+            为什么不用上面那两个：MonitorIconButton 悬停是**红色**（删除语义），
+            MonitorHeaderIconButton 悬停是**主色**（新增语义）。这一行里有四个按钮，
+            其中「…」和「↑↓」是纯视图操作 —— 套红色会让人以为点下去要删东西，
+            套主色又和「+」混在一起分不清。故另起一套**中性**悬停（灰底 + 深字），
+            语义靠图标本身和 ToolTip 表达。
+
+            尺寸 22 而非 26：一行里要塞四个，26 会把「共 N 项」挤没。
+        -->
+        <Style x:Key="AcqRowIconButton" TargetType="Button">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Overlay.Medium}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Overlay.Strong}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled.Faint}"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+            任务组行的「删除本组」按钮。尺寸继承 AcqRowIconButton（22×22，与 … ↑↓ 同高），
+            只换悬停配色：**悬停变红**表明破坏性 —— 与全局变量行、监控行的行尾删除一致。
+            中性灰悬停的 AcqRowIconButton 留给「…」和「↑↓」，那两个都不删东西。
+        -->
+        <Style x:Key="AcqRowDeleteButton" TargetType="Button" BasedOn="{StaticResource AcqRowIconButton}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Danger.Fill.Hover}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Danger.Fill.Hover}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+            采集任务组行上的「启用」开关。继承 ToggleSwitch，只补一件事：**文案随状态变**。
+
+            ⚠️ 必须在 Style.Triggers 里换 Content，不能写进 ControlTemplate 的触发器 ——
+            模板触发器是模板优先级，赢不过控件上的局部 Content（ToggleSwitch 样式里
+            已经踩过一次，注释写在那边）。这里不给局部值，Style 的 Setter 才压得住。
+        -->
+        <Style x:Key="AcqEnableSwitch" TargetType="CheckBox" BasedOn="{StaticResource ToggleSwitch}">
+            <Setter Property="Content" Value="关"/>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Content" Value="开"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <!-- 「全部删除」：悬停浅红底 + 深红字，与「新增」的主色底区分破坏性语义 -->
@@ -1149,6 +1238,261 @@
                                VerticalAlignment="Center"/>
                 </Grid>
             </Border>
+        </DataTemplate>
+
+        <!-- ================= 采集任务（P3.1）：数据项行 =================
+             子表的一行：序号 | 项名称[] | 变量名称[] | 数据类型（只读）| 删除。
+             · **数据类型只读**（需求）：它由被引用的全局变量反推，故是 TextBlock 不是下拉框 ——
+               与旁边两个输入框底色不同，这个视觉差异本身就在说「这列不可选」。
+             · 变量名称是**能填变量名的地方**，按 P6.5 接全局变量补全（Loaded 里挂）。
+             · 变量名填了但表里没有 → 类型列标红（DataTrigger 绑 HasVariableError）。 -->
+        <DataTemplate x:Key="AcquisitionItemRowTemplate">
+            <Border Height="30" Margin="0,0,0,2"
+                    Background="Transparent"
+                    BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
+                <Grid>
+                    <!-- 列定义必须与子表表头完全一致 -->
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                        <ColumnDefinition Width="150"/>  <!-- 项名称 -->
+                        <ColumnDefinition Width="180"/>  <!-- 变量名称 -->
+                        <ColumnDefinition Width="*"/>    <!-- 数据类型（只读） -->
+                        <ColumnDefinition Width="30"/>   <!-- 删除 -->
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="{Binding Index}"
+                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                               VerticalAlignment="Center"/>
+
+                    <TextBox Grid.Column="1"
+                             Style="{StaticResource MonitorInlineTextBox}"
+                             Margin="0,0,6,0"
+                             Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                             LostFocus="AcquisitionItemField_LostFocus"/>
+
+                    <TextBox Grid.Column="2" x:Name="ItemVarBox"
+                             Style="{StaticResource MonitorInlineTextBox}"
+                             Margin="0,0,6,0"
+                             Text="{Binding VariableName, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="{Binding VariableHint}"
+                             Loaded="AcquisitionItemVariableBox_Loaded"
+                             LostFocus="AcquisitionItemField_LostFocus"/>
+
+                    <TextBlock Grid.Column="3" Text="{Binding TypeDisplayName}"
+                               Margin="6,0,6,0"
+                               FontSize="12" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding VariableHint}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasVariableError}" Value="True">
+                                        <Setter Property="Foreground" Value="{DynamicResource Brush.Danger}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <Button Grid.Column="4"
+                            Content="&#xE711;"
+                            AutomationProperties.Name="删除本数据项"
+                            ToolTip="删除本数据项"
+                            Style="{StaticResource MonitorIconButton}"
+                            Click="RemoveAcquisitionItem_Click"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
+
+        <!-- ================= 采集任务（P3.1）：任务组行 =================
+             上层一行是任务组，展开后是它的数据项子表。
+
+             列：# | 任务名称 | 任务类型 | 执行方式 | 启用 | 共N项 | … ↑↓
+             · 任务名称 / 任务类型 / 执行方式 都是**只读文本**，改它们走「…」对话框 ——
+               需求样例里这三个位置写的是 {任务组1} / {任务类型} / {执行方式}（花括号＝关联值），
+               不是输入框。
+             · 增删数据项**不在本行**：+ 在展开后的子表表头右端、删除在每行行尾，
+               本行只报「共 N 项」。
+             · 展开状态 IsExpanded 是**界面态**，不落盘（见 AcquisitionTaskItem）。 -->
+        <DataTemplate x:Key="AcquisitionTaskRowTemplate">
+            <Grid Margin="0,0,0,2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>   <!-- 任务组行 -->
+                    <RowDefinition Height="Auto"/>   <!-- 数据项子表（展开时） -->
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Height="42"
+                        Background="Transparent"
+                        BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
+                    <Grid>
+                        <!-- 列定义必须与 AcquisitionDataPanel 的表头完全一致（含最左的 # 列） -->
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="34"/>   <!-- # -->
+                            <ColumnDefinition Width="*" MinWidth="120"/>  <!-- 任务名称 -->
+                            <ColumnDefinition Width="90"/>   <!-- 任务类型 -->
+                            <ColumnDefinition Width="140"/>  <!-- 执行方式 -->
+                            <ColumnDefinition Width="110"/>  <!-- 启用 -->
+                            <ColumnDefinition Width="150"/>  <!-- 共N项 -->
+                            <ColumnDefinition Width="120"/>  <!-- … ↑↓ -->
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" Text="{Binding Index}"
+                                   FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                                   VerticalAlignment="Center"/>
+
+                        <TextBlock Grid.Column="1" Text="{Binding Name}"
+                                   Margin="0,0,12,0"
+                                   FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
+
+                        <TextBlock Grid.Column="2" Text="{Binding KindDisplay}"
+                                   FontSize="12" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                   VerticalAlignment="Center"/>
+
+                        <TextBlock Grid.Column="3" Text="{Binding ScheduleDisplay}"
+                                   FontSize="12" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                   VerticalAlignment="Center"/>
+
+                        <CheckBox Grid.Column="4"
+                                  HorizontalAlignment="Left"
+                                  Style="{StaticResource AcqEnableSwitch}"
+                                  IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                  Click="AcquisitionTaskEnable_Click"/>
+
+                        <!-- 只报数量，**不放按钮**：增删数据项都在子表里（+ 在子表表头右侧、
+                             删除在每行行尾），这里再放一套就成两个入口做同一件事 -->
+                        <TextBlock Grid.Column="5" Text="{Binding ItemCountText}"
+                                   FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                                   VerticalAlignment="Center"/>
+
+                        <StackPanel Grid.Column="6" Orientation="Horizontal"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Content="&#xE712;"
+                                    AutomationProperties.Name="任务选项"
+                                    ToolTip="任务选项…"
+                                    Style="{StaticResource AcqRowIconButton}"
+                                    Click="OpenAcquisitionTaskDialog_Click"/>
+                            <Button Content="&#xE711;"
+                                    AutomationProperties.Name="删除本任务组"
+                                    ToolTip="删除本任务组"
+                                    Style="{StaticResource AcqRowDeleteButton}"
+                                    Margin="2,0,0,0"
+                                    Click="RemoveAcquisitionTask_Click"/>
+                            <Button Content="{Binding ExpandGlyph}"
+                                    AutomationProperties.Name="展开或收起数据项"
+                                    ToolTip="{Binding ExpandToolTip}"
+                                    Style="{StaticResource AcqRowIconButton}"
+                                    Margin="2,0,0,0"
+                                    Click="ToggleAcquisitionTaskExpand_Click"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!--
+                    展开后的数据项子表：整块套一层**浅底 + 1px 边框 + 圆角**。
+                    用户要求「一眼看出这些行属于哪个任务组」—— 只靠缩进不够：
+                    缩进只说明了「不在最左」，说不清是哪一组。**成块的底色**才是分组信号，
+                    多组同时展开时每块各自成块，边界一眼可见。
+                    底色比卡片深一档（深色主题则更深一档），两套主题都是「凹进去」的观感。
+                -->
+                <!--
+                    左边距 0：底色块与「任务名称」表头左对齐（用户定案）。
+                    原先这里缩进 34 去对「序号」列，结果底色块比表头窄一截、左边缘参差 ——
+                    底色块是**容器**，容器对齐容器（表头）比对齐里面的某一列更自然。
+                    内边距 10 负责把序号列从边框上让开（数字压框线，截图一眼可见）。
+                -->
+                <Border Grid.Row="1" Margin="0,6,0,4"
+                        Padding="10,6,8,6"
+                        Background="{DynamicResource Brush.Acquisition.SubTable.Background}"
+                        BorderBrush="{DynamicResource Brush.Acquisition.SubTable.Border}"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>   <!-- 子表表头 -->
+                            <RowDefinition Height="Auto"/>   <!-- 数据项行 -->
+                        </Grid.RowDefinitions>
+
+                    <!-- 子表表头。右端那个 + 是**加本组的数据项**，位置照自由监控表头
+                         （新增按钮压在行尾 × 的正上方，同一列）—— 上下对得齐，一眼看出
+                         「这个 + 加的就是下面这些行」。
+                         ⚠️ 它与页面表头的 + 不是一回事：那个加的是**任务组**。故两者
+                         一个在表头（26×26 主色悬停），一个在子表表头，层级靠位置区分。 -->
+                        <Grid Grid.Row="0" Height="26">
+                            <Grid>
+                                <!-- 列定义必须与 AcquisitionItemRowTemplate 完全一致 -->
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                                    <ColumnDefinition Width="150"/>  <!-- 项名称 -->
+                                    <ColumnDefinition Width="180"/>  <!-- 变量名称 -->
+                                    <ColumnDefinition Width="*"/>    <!-- 数据类型 -->
+                                    <ColumnDefinition Width="30"/>   <!-- 行尾 × -->
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="#" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Text="项名称" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="变量名称" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="3" Text="数据类型" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <!--
+                                表头操作区：靠右**叠放**，不参与上面的列布局（同自由监控表头）。
+                                顺序按阅读方向：清空 → 新增。
+                                ⚠️ 右外边距 2 是算出来的，不是随手写的：行尾 × 那列宽 30、居中，
+                                中心在「右边缘 −15」；按钮 26 宽，右距 2 时中心也在「右边缘 −15」，
+                                于是 + 正好压在 × 的正上方（实测偏差 0.5px）。
+                            -->
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Margin="0,0,2,0">
+                                <Button Content="&#xE74D;"
+                                        AutomationProperties.Name="清空本组数据项"
+                                        ToolTip="清空本组数据项"
+                                        Style="{StaticResource MonitorClearAllButton}"
+                                        Click="ClearAcquisitionItems_Click"/>
+                                <Button Content="&#xE710;"
+                                        AutomationProperties.Name="新增数据项"
+                                        ToolTip="新增数据项"
+                                        Margin="2,0,0,0"
+                                        Style="{StaticResource MonitorHeaderIconButton}"
+                                        Click="AddAcquisitionItem_Click"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <ItemsControl Grid.Row="1"
+                                      ItemsSource="{Binding Items}"
+                                      ItemTemplate="{StaticResource AcquisitionItemRowTemplate}">
+                            <ItemsControl.ItemContainerStyle>
+                                <Style TargetType="ContentPresenter">
+                                    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                </Style>
+                            </ItemsControl.ItemContainerStyle>
+                        </ItemsControl>
+
+                        <!-- 空数据项提示。展开一个刚建的任务组时，子表只有表头一片空白，
+                             不写一句的话看不出「是空的」还是「没加载出来」。
+                             Items.Count 变化会经 ObservableCollection 的 INotifyPropertyChanged 冒上来。 -->
+                        <TextBlock Grid.Row="1" Margin="0,8,0,4"
+                                   Text="还没有数据项，点上方右侧的 + 添加"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource Brush.Text.Muted}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Items.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </Border>
+            </Grid>
         </DataTemplate>
 
         <!-- 系统变量监控行（P2.3）。与 SystemVarItemTemplate 同几何，多一列**当前值**：
@@ -1916,13 +2260,95 @@
                                 <Border Grid.Row="1" Height="1" Background="{DynamicResource Brush.Divider}" Margin="0,0,0,8"/>
 
                                 <Grid Grid.Row="2">
-                                    <!-- 采集数据（P3.1 占位） -->
+                                    <!-- 采集数据（P3.1）
+                                         表格式：表头 + 任务组（可展开成数据项子表），
+                                         与全局变量表同为「表头常驻、只让列表滚动」，故不写 MaxHeight。
+                                         ⚠️ 本版只做 UI：采集/CSV 落盘都还没接（见 Brief P3.1）。 -->
                                     <Grid x:Name="AcquisitionDataPanel">
-                                        <TextBlock Text="尚未实现"
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>   <!-- 表头（常驻） -->
+                                            <RowDefinition Height="*"/>      <!-- 列表（自身滚动）+ 空状态 -->
+                                        </Grid.RowDefinitions>
+
+                                        <Border Grid.Row="0"
+                                                Height="46"
+                                                Margin="0,0,0,2"
+                                                Background="Transparent"
+                                                BorderBrush="{DynamicResource Brush.Divider}"
+                                                BorderThickness="0,0,0,1">
+                                            <Grid>
+                                                <!-- 列定义必须与 AcquisitionTaskRowTemplate 完全一致 -->
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="34"/>   <!-- # -->
+                                                        <ColumnDefinition Width="*" MinWidth="120"/>  <!-- 任务名称 -->
+                                                        <ColumnDefinition Width="90"/>   <!-- 任务类型 -->
+                                                        <ColumnDefinition Width="140"/>  <!-- 执行方式 -->
+                                                        <ColumnDefinition Width="110"/>  <!-- 启用 -->
+                                                        <ColumnDefinition Width="150"/>  <!-- 数据项 -->
+                                                        <ColumnDefinition Width="120"/>  <!-- 操作（占位，见右侧按钮） -->
+                                                    </Grid.ColumnDefinitions>
+                                                    <!-- 表头写 "#" 而非「序号」：这一列只有 34 宽，两个字放不下；
+                                                         项目里所有表格的序号列都是这个写法，保持一致 -->
+                                                    <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="1" Text="任务名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="2" Text="任务类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="3" Text="执行方式" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="4" Text="启用" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="5" Text="数据项" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                </Grid>
+
+                                                <!-- 页面级操作：任务组计数 + 全部删除 + 新增。
+                                                     与全局变量表同款放在表头最右，**不能**塞进「数据项」列 ——
+                                                     那一列是行内的「共N项」，两套东西挨着会分不清是给谁的。 -->
+                                                <StackPanel Orientation="Horizontal"
+                                                            HorizontalAlignment="Right"
+                                                            Margin="0,0,7,0"
+                                                            VerticalAlignment="Center">
+                                                    <TextBlock x:Name="AcquisitionTaskCountText"
+                                                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                                                               VerticalAlignment="Center"
+                                                               Margin="0,0,8,0"/>
+                                                    <Button x:Name="ClearAcquisitionTasksButton"
+                                                            Content="&#xE74D;"
+                                                            AutomationProperties.Name="删除全部任务组"
+                                                            ToolTip="删除全部任务组"
+                                                            Style="{StaticResource MonitorClearAllButton}"
+                                                            Click="ClearAcquisitionTasks_Click"/>
+                                                    <Button x:Name="AddAcquisitionTaskButton"
+                                                            Content="&#xE710;"
+                                                            AutomationProperties.Name="新增任务组"
+                                                            ToolTip="新增任务组"
+                                                            Margin="6,0,0,0"
+                                                            Style="{StaticResource MonitorHeaderIconButton}"
+                                                            Click="AddAcquisitionTask_Click"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+
+                                        <!-- 列表：只在这里滚动 -->
+                                        <ScrollViewer Grid.Row="1"
+                                                      VerticalScrollBarVisibility="Auto"
+                                                      HorizontalScrollBarVisibility="Disabled">
+                                            <ItemsControl x:Name="AcquisitionTaskItemsControl"
+                                                          HorizontalContentAlignment="Stretch"
+                                                          ItemTemplate="{StaticResource AcquisitionTaskRowTemplate}">
+                                                <ItemsControl.ItemContainerStyle>
+                                                    <Style TargetType="ContentPresenter">
+                                                        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                                    </Style>
+                                                </ItemsControl.ItemContainerStyle>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+
+                                        <TextBlock x:Name="AcquisitionEmptyHint"
+                                                   Grid.Row="1"
+                                                   VerticalAlignment="Top"
+                                                   Text="尚未添加任务组，点击右上角 + 新增"
+                                                   Visibility="Collapsed"
                                                    FontSize="12"
                                                    Foreground="{DynamicResource Brush.Text.Muted}"
-                                                   Margin="0,4,0,0"
-                                                   VerticalAlignment="Top"/>
+                                                   Margin="0,10,0,6"/>
                                     </Grid>
 
                                     <!-- 全局变量（P3.3）

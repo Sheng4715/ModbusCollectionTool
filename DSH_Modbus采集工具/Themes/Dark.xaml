@@ -28,6 +28,10 @@
     <SolidColorBrush x:Key="Brush.Chip.Background" Color="#333333"/>
     <SolidColorBrush x:Key="Brush.Subtle.Background" Color="#333333"/>
     <SolidColorBrush x:Key="Brush.Subtle.Border" Color="#3F3F3F"/>
+    <!-- 采集数据子表：比卡片(#2B2B2B)**更深**一档（浅色主题是更浅），
+         两边都是「凹进去」的观感，方向相反但语义一致 -->
+    <SolidColorBrush x:Key="Brush.Acquisition.SubTable.Background" Color="#252525"/>
+    <SolidColorBrush x:Key="Brush.Acquisition.SubTable.Border" Color="#3A3A3A"/>
 
     <SolidColorBrush x:Key="Brush.TitleBar.Background" Color="#262626"/>
     <SolidColorBrush x:Key="Brush.TitleBar.Border" Color="#3A3A3A"/>

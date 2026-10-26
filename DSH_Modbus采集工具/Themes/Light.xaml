@@ -29,6 +29,11 @@
     <!-- IO 点位单元格（比卡片略深一点点） -->
     <SolidColorBrush x:Key="Brush.Subtle.Background" Color="#FAFAFA"/>
     <SolidColorBrush x:Key="Brush.Subtle.Border" Color="#EEEEEE"/>
+    <!-- 采集数据：任务组展开后的数据项子表。
+         比卡片(#FFFFFF)深一档 —— 用户要求「一眼看出这些行属于哪个任务组」，
+         光靠缩进不够，得有一块**成块**的底色把子表框起来。 -->
+    <SolidColorBrush x:Key="Brush.Acquisition.SubTable.Background" Color="#F4F4F4"/>
+    <SolidColorBrush x:Key="Brush.Acquisition.SubTable.Border" Color="#E0E0E0"/>
 
     <!-- 标题栏 / 底栏 -->
     <SolidColorBrush x:Key="Brush.TitleBar.Background" Color="#E7E7E7"/>

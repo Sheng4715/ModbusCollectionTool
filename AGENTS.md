@@ -148,6 +148,11 @@ Window
 | `MonitorInlineComboBox` / `MonitorTypeCombo` | 自由监控行内下拉框：胶囊，字号 12／高 22 |
 | `MonitorComboItem` | 行内下拉项容器 |
 | `MonitorInlineTextBox` / `MonitorValueTextBox` | 自由监控行内输入框：框线，字号 12／高 22 |
+| `AcqRowIconButton` | **采集任务组行内图标按钮**（… ↑↓）：22×22，悬停中性灰底 + 深字。**刻意不复用** `MonitorIconButton`（悬停红＝删除）和 `MonitorHeaderIconButton`（悬停主色＝新增）—— 同一行里混两种语义会读错 |
+| `AcqRowDeleteButton` | 任务组行「删除本组」×：`BasedOn` `AcqRowIconButton`（尺寸/字体全继承），**只把悬停换成实心红**（`Brush.Danger.Fill.Hover` + 白字），与全局变量行、监控行的行尾删除一致 |
+| `AcqEnableSwitch` | 采集任务组「启用」开关，`BasedOn` `ToggleSwitch`，只补「文案随 `IsChecked` 变」（开/关）。⚠️ 必须在 `Style.Triggers` 里换 `Content`，模板触发器压不过局部值 |
+| `AcquisitionTaskRowTemplate` | 采集任务组行（7 列：#/名称/类型/执行方式/启用/共N项/… × ↑↓）+ 展开的数据项子表（浅底块） |
+| `AcquisitionItemRowTemplate` | 采集数据项行（序号 / 项名称 / 变量名称 / **数据类型只读** / 删除） |
 | `LogClearButton` | 日志卡「清空」按钮 |
 | `DeviceLogItemTemplate` | 日志行（时间戳灰 + 消息按级别着色） |
 | `DeviceLogListStyle` | 日志列表（透明底/无边框/无选中底色） |
@@ -507,7 +512,7 @@ Window
 - ⚠️ `switch` **不写 `default`**，并用 `#pragma warning disable CS8524` 只压「未命名枚举值」那条噪声告警 ——
   **CS8509 必须留着**：新增一个 `Kind` 却忘了加分支时，它才是那个哨兵
 
-**离线断言**：`.tmp/SystemVarCheck`（**106 项**，未提交），改 `SystemVariable.cs` / `SystemVariableValues.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\svc-temp"`。
+**离线断言**：`.tmp/SystemVarCheck`（**124 项**，未提交），改 `SystemVariable.cs` / `SystemVariableValues.cs` 后跑它；跑前先 `$env:TEMP = "$PWD\.tmp\svc-temp"`。
 断言覆盖：16 项规模 / 序号 1..16 / 名称唯一且符合 `GlobalVariableRules` / 逐字名称表 / 类型与显示名 / 注释非空 /
 常量 / 三种脉冲的 0·49·50·99·100ms 相位 / 星期 1~7 连续七天 / 零点与年末边界 / 秒分时日的进位 /
 负数时长 / 脉冲与运行时长不受墙上时间影响 / 键集合与清单一致 / Kind 无重复且覆盖全部枚举值。
@@ -536,7 +541,7 @@ Window
   - 手工改过的 `data-points.json` 里若留着系统变量名，`ResolveVariable` 也给了同一句错误文案
   - `SystemVariable.Find` **区分大小写**（与变量名规则一致）：`sys_true` 不命中 `sys_True`
 
-**离线断言**：`.tmp/SystemVarCheck`（**118 项**）覆盖取值语义与 `SystemVarRow` 的通知行为（同值不通知、整表推送后与 `Capture` 一致）。
+**离线断言**：`.tmp/SystemVarCheck`（**124 项**）覆盖取值语义与 `SystemVarRow` 的通知行为（同值不通知、整表推送后与 `Capture` 一致）。
 
 ### 5.5 PLC 状态机（P1.2，总览页第一分段）
 
@@ -634,10 +639,10 @@ Window
 - 字号下拉若当前值不在预设里会**插进去**，不会悄悄改成别的值
 - 确定后写回模型 → `MachineStateSet.Save()` → 刷新画布
 
-**离线断言**：`.tmp/ExpressionCheck` **90 项**（表达式 56 + 状态机模型 34）；
+**离线断言**：`.tmp/ExpressionCheck` **101 项**（表达式 + 状态机模型）；
 系统变量名保留另在 `.tmp/SystemVarCheck` **124 项**里覆盖。
 
-### 5.6 变量名补全（P6.5，两处输入框共用一套）
+### 5.6 变量名补全（P6.5，三处输入框共用一套）
 
 打字即弹候选列表，像 IDE 那样联想变量名。**只联想变量名，不联想通讯地址**（用户定案）。
 
@@ -645,6 +650,7 @@ Window
 |---|---|---|
 | 自由监控「元件名称」框 | `MonitorName_Loaded`（模板里每行一个，走 `ConditionalWeakTable` 防重复挂载） | `CompletionSource.ForMonitorName` → **全局变量** |
 | 状态机编辑窗「表达式」框 | `MachineStateEditDialog` 构造时 | `CompletionSource.ForExpression` → **系统变量 + 全局变量** |
+| 采集数据「变量名称」框 | `AcquisitionItemVariableBox_Loaded`（同样每行一个，共用 `_nameCompletions` 弱表去重） | `CompletionSource.ForMonitorName` → **全局变量** |
 
 **分层**（照 `ValueCodec` 的老规矩）：
 
@@ -661,9 +667,62 @@ Window
   `Enter` 在这两个框里原本是「提交」、`Esc` 是「关窗」，不拦就会误操作
 - 弹窗用 `WS_EX_NOACTIVATE` **不抢焦点**：否则点候选会让文本框先失焦，
   触发「失焦即校验」弹出「不是有效软元件或变量」
-- ⚠️ **两处输入框都关掉了输入法**（`InputMethod.SetIsInputMethodEnabled(box, false)`）：
+- ⚠️ **三处输入框都关掉了输入法**（`InputMethod.SetIsInputMethodEnabled(box, false)`）：
   变量名是 C 标识符、表达式只有标识符/数字/运算符，中文输入法在这里没有任何用处，
-  却会挡住候选窗、吃掉回车。**这是本项目唯一这么做的两处**，别推广到普通文本框
+  却会挡住候选窗、吃掉回车。这行代码在 `CompletionPopup.Attach` 里，**凡是挂了补全的框都会自动关**，
+  所以新增挂载点时不用再写一遍；但**别推广到没挂补全的普通文本框**
+
+### 5.7 采集数据（P3.1，采集配置页第一分段）
+
+**本版只做 UI**：任务组与数据项可以增删改、落盘到 `acquisition-tasks.json`，
+但**采集与 CSV 落盘都还没接**（见 Brief P3.1 的后续阶段）。
+
+结构是**两层**：任务组（`AcquisitionTask`）下面挂数据项（`AcquisitionItem`）。
+
+| 列 | 内容 | 可编辑 |
+|---|---|---|
+| 任务名称 | `任务组N`（默认名，重名会被拒） | 走「…」对话框 |
+| 任务类型 | 数据读取 / 数据写入（默认**数据读取**） | 走「…」对话框 |
+| 执行方式 | `周期 5s` / `触发（上升沿）` | 走「…」对话框 |
+| 启用 | `AcqEnableSwitch` | 行内开关，即时落盘 |
+| # | 序号（1 起，**不落盘**） | 只读 |
+| 数据项 | `共 N 项`（只报数量，**不放按钮**） | 只读 |
+| 操作 | … ↑↓ | 行内 |
+
+子表（展开后）：序号 / 项名称 / 变量名称 / **数据类型** / 删除。
+
+**几条要点**（都是刻意的）：
+
+- **数据类型是只读的**，由「变量名称」指向的**全局变量**反推。填了不存在的名字 ⇒
+  这一格显示红色 `—`（`DataTrigger` 绑 `HasVariableError`），悬停给原因。
+  与相邻两个输入框底色不同，这个视觉差异本身就在说「这列不可选」
+- **增删数据项都在展开后的子表里**（用户定案）：`+` 与 🗑 在子表表头右侧、
+  删除在每行行尾 `×`，任务组行只报「共 N 项」。子表表头的 `+` 压在行尾 `×`
+  正上方（右距 2 DIP 算出来的，中心差 0.5px），一眼看出「这个 + 加的就是下面这些行」
+- ⚠️ **两个 `+` 不是一回事**：页面表头那个加的是**任务组**，子表表头那个加的是**数据项**。
+  靠位置区分（一个在页头、一个在组内），别把它们的 Click 接错
+- **任务组行的按钮顺序是 `… × ↑↓`**：设置 → 删除 → 展开。删除夹在两个非破坏性按钮中间，
+  悬停才变红；顺序别调，用户按「删除在展开左边」定位
+- **删任务组的确认框只对「有数据项」的组弹**：空组删了没有损失，每次都问只是噪音。
+  与全局变量行、监控行的行尾 `×`（一律直接删）不同 —— 那两处一行只丢一条，
+  这里丢的可能是一整张子表
+- **序号列的表头写 `#`**（任务组与数据项两处都是），不写「序号」：列宽只有 34，两个字放不下。
+  序号是**位置**不是数据：`Index` 不落盘，每次增删都调 `Reindex()` 重排 ——
+  否则删掉中间一组，界面会出现 1、2、4、5 这样的跳号
+- **展开后的子表整块套浅底 + 1px 边框 + 圆角**，底色比卡片深一档（深色主题更深一档），
+  让「这些行属于哪个任务组」一眼可见 —— 只靠缩进只能说明「不在最左」，说不清是哪一组。
+  底色块左边与「任务名称」表头**齐平**（容器对容器），序号列由 `Padding` 让开
+- **任务组级的增删在表头右侧**（共 N 组 / 删除全部 / ＋），与全局变量表、系统变量表同款位置
+- 展开态 `IsExpanded` 是**界面态，不落盘**：载入时首个任务组展开、其余收起，
+  新增的任务组默认展开（点「+」的下一步必然是往里加项）
+- 数据项的名称/变量名是**逐字符**写入模型的（否则右列类型不会跟着变），
+  但**写盘在失焦**（`AcquisitionItemField_LostFocus`）—— 逐字符写文件没有意义
+- `AcquisitionTaskSet`（纯逻辑，不引用 WPF）与 `AcquisitionTaskItemSet`（界面包装）**分开**，
+  照 `GlobalVarSet` / `GlobalVarItemSet` 的老规矩；前者能链接进离线断言
+- 表达式框接的是 P6.5 补全（系统变量 + 全局变量），校验口径与 PLC 状态机一致（编译 + 变量存在性）
+- ⚠️ 表达式里的名字**必须是变量**，所以对话框里有两个签名相同的委托：`taskNameExists`
+  （任务名重名检查）与 `variableExists`（表达式校验）。**别合并** —— 合并会写出
+  「表达式里填任务名也算合法」的 bug
 
 ## 6. 心跳与连接生命周期
 
@@ -950,6 +1009,7 @@ OrderProbe <ip> <port> <unitId> <localIp|-> <addr:count> [addr:count ...]
 | 标签 / 说明 / 红色错误 | `Dialog.Label` / `Dialog.Hint` / `Dialog.Error` |
 | 输入框 | `Dialog.TextBox` |
 | 下拉框 / 下拉项 | `Dialog.ComboBox` / `Dialog.ComboBoxItem` |
+| 单选框 | `Dialog.RadioButton`（16 圆圈，选中整圈填主色 + 6 白点，**文字在右**） |
 | 按钮（次色 / 主色） | `Dialog.Button.Secondary` / `Dialog.Button.Primary` |
 | 窗口外壳（字体、边框、底色、深色标题栏） | `Ui/DialogChrome.cs` 的 `DialogChrome.Apply(this)` |
 
@@ -977,7 +1037,7 @@ public sealed class MyDialog : Window
 }
 ```
 
-**四条容易踩的**：
+**七条容易踩的**：
 
 1. ⚠️ **样式取不到必须抛，不要静默用默认外观**。WPF 默认 ComboBox 模板把
    ToggleButton 画成**硬编码的浅色渐变、完全忽略 `Background`** —— 深色主题下
@@ -1001,6 +1061,11 @@ public sealed class MyDialog : Window
    **联动坑**：若校验失败后会**程序回填**输入框（如恢复上次有效值），`TextChanged`
    里那个「一改字就清错误」的逻辑会把刚显示的错误**立刻擦掉** —— 表现为
    「校验失败了但界面一个字都不显示」。加一个 `_reverting` 标志挡住程序回填。
+7. ⚠️ **一组单选按钮必须显式给 `GroupName`**。WPF 默认按**逻辑父容器**分组，
+   而对话框里常把某个选项和它的参数框放同一个 `StackPanel`（如「周期（s）」+ 秒数输入框），
+   于是几个单选按钮各自成组、**可以同时选中**。真机截图里就是两个蓝圈同亮，
+   读取处读到第一个为真就停了 —— 表现为「切到触发档，但表达式框仍是灰的」。
+   实测踩过一次，见 `AcquisitionTaskDialog`。
 
 ## 10. 任务速查
 
