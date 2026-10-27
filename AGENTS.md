@@ -674,8 +674,9 @@ Window
 
 ### 5.7 采集数据（P3.1，采集配置页第一分段）
 
-**本版只做 UI**：任务组与数据项可以增删改、落盘到 `acquisition-tasks.json`，
-但**采集与 CSV 落盘都还没接**（见 Brief P3.1 的后续阶段）。
+任务组与数据项可以增删改、落盘到 `acquisition-tasks.json`；
+**采集执行与 CSV 落盘已接**（2026-10-26，见本节末尾「执行与落盘」）。
+**未接**：数据写入的「写入值」真正下发到 PLC —— 当前写入类型也只读变量、只记表格。
 
 结构是**两层**：任务组（`AcquisitionTask`）下面挂数据项（`AcquisitionItem`）。
 
@@ -686,6 +687,7 @@ Window
 | 执行方式 | `周期 5s` / `触发（上升沿）` | 走「…」对话框 |
 | 启用 | `AcqEnableSwitch` | 行内开关，即时落盘 |
 | # | 序号（1 起，**不落盘**） | 只读 |
+| 数据记录 | 记录到文件的开关（与行内「启用」是**两件事**） | 对话框 |
 | 数据项 | `共 N 项`（只报数量，**不放按钮**） | 只读 |
 | 操作 | … ↑↓ | 行内 |
 
@@ -701,6 +703,14 @@ Window
   正上方（右距 2 DIP 算出来的，中心差 0.5px），一眼看出「这个 + 加的就是下面这些行」
 - ⚠️ **两个 `+` 不是一回事**：页面表头那个加的是**任务组**，子表表头那个加的是**数据项**。
   靠位置区分（一个在页头、一个在组内），别把它们的 Click 接错
+- **子表的列随任务类型变**：读取 4 列（#/项名称/读取变量/数据类型），
+  写入 5 列（#/项名称/**来源变量**/写入变量/数据类型）。⚠️ 来源列**不是**用
+  `Visibility` 藏的 —— 列宽由 `ColumnDefinition.Style` 的 DataTrigger 在 0 与 150 之间切；
+  用 Visibility 的话列宽仍占着，读取类型下会凭空空出一截。`Width` 只能写在 Style 里，
+  写成属性就是局部值，会压过触发器
+- **任务组名称要当文件夹名用**，故名称校验除长度/重名外还挡：非法字符 `\ / : * ? " < > |`、
+  结尾的空格与点（Windows 静默吃掉，两个名字会指向同一目录）、Windows 保留名
+  （CON/PRN/COM1…）。**漏掉这些的话名字一路绿灯存进 json，等写文件那步才炸**
 - **任务组行的按钮顺序是 `… × ↑↓`**：设置 → 删除 → 展开。删除夹在两个非破坏性按钮中间，
   悬停才变红；顺序别调，用户按「删除在展开左边」定位
 - **删任务组的确认框只对「有数据项」的组弹**：空组删了没有损失，每次都问只是噪音。
@@ -723,6 +733,162 @@ Window
 - ⚠️ 表达式里的名字**必须是变量**，所以对话框里有两个签名相同的委托：`taskNameExists`
   （任务名重名检查）与 `variableExists`（表达式校验）。**别合并** —— 合并会写出
   「表达式里填任务名也算合法」的 bug
+
+**执行与落盘**（2026-10-26，`Modeling/AcquisitionCsv.cs` + 窗口里的 `RunAcquisitionTick`）：
+
+- **任务组引用的变量常驻采集，不随页面可见性停**。这是与 IO / 自由监控 / 状态机**唯一相反**的一处：
+  那三个都是「可见才跑」，而采集任务一旦因为用户切页停掉，记录里会凭空缺一段 ——
+  文件里只有时间戳，**没有「这段没采」的标记**，事后完全看不出来。
+  实现上 `PollSnapshot.AcquisitionGlobals` 与 `MachineGlobals` 并列，但 poller 里
+  它排在 `if (!snap.IoPageActive) return;` **之前**
+- 常驻清单由 `RefreshAcquisitionGlobals()` 重算，**只收启用的组**（停用的组把变量拖上总线等于白读），
+  写入类型连「来源变量」一起收。调用点要跟着任务组/数据项/变量/启用的每一次变更走
+- **触发判定是纯函数**（`AcquisitionTrigger.ShouldFire`，不引用 WPF/Modbus，能离线断言）：
+  周期式记「下次该采的时刻」而不是「上次 + 间隔」，这样周期不随定时器抖动累积漂移；
+  触发式只认**上升沿**，持续为真不重复采
+- ⚠️ 周期式以**本次**为基准推下一次，不是以旧的下次时刻 —— 后者在长时间停采（断线重连）后
+  会连发一串补采，把文件写满重复数据。断言 ⑥ 专门锁这条
+- ⚠️ **首拍要延后一个周期**（`GetOrCreateRuntime` 里设 `NextFireLocal = Now + 周期`）：
+  记录定时器与采集引擎是两个独立的 `DispatcherTimer`，启动瞬间先后没有保证。
+  不延后的话首行会写进变量的**初始值**（0 / 空串），实测确实如此
+- ⚠️ **未连接时不记录**。断开期间 `GlobalVariable.Value` 停在最后一次读到的值，
+  照记的话 CSV 会连续出现同一个数，与「设备真的稳定输出这个值」**无法区分** ——
+  比缺一段更糟，因为它是假的
+- 触发式表达式可能引用**系统变量**，而 `_machineVariables` 的系统快照平时只由状态机定时器刷新
+  （那个定时器在别的页面是停的）。`RunAcquisitionTick` 里要先补一次 `UpdateSystemValues`，
+  否则切走页面后表达式拿**过期的值**求值
+- 落盘路径 `{SavePath}\{任务组名称}\{yyyy-MM-dd}.csv`：文件夹按**名称**（不是序号 —— 序号会重排），
+  文件按**日期**。时间列只有时分秒，故**跨天必须换文件**，否则第二天追加进同一份文件会丢日期信息
+- ⚠️ **列集合一变也要换文件**（用户定案），文件名接序号：`2026-10-26.csv` → `2026-10-26_2.csv`。
+  表头只在建文件时写一次，中途增删/改名数据项还往同一文件追加，表头与数据行就**列数不等** ——
+  Excel 打开不报错、只是列错位，属于「发现时已攒了一周脏数据」的那类问题。
+  判据是**表头那一行的原文**（`AcquisitionTaskState.RecordHeaderKey`），比逐个比项名简单且能覆盖改名
+- ⚠️ 换文件时只跟**当天最后一个文件**比表头，不回头找表头相同的老文件：
+  那样 `A,B` → `A,B,C` → `A,B` 会写回第一个文件，同一份文件里的时间戳出现**回跳**，
+  下游按时间排序直接乱掉。多一个文件是可见的代价，时间戳乱序是隐蔽的代价
+- 当前文件路径缓存在 `AcquisitionTaskState.RecordPath`（连同 `RecordDay`），
+  否则周期小到 0.1s 时每拍都要扫一遍目录
+- CSV **UTF-8 带 BOM**：不带的话 Excel 双击打开中文表头是乱码
+- 字段含逗号 / 引号 / 换行要**加引号、内部引号翻倍**。变量值里出现一个逗号就会把整行错位，
+  而且错得隐蔽 —— Excel 打开只是列对不上，不报错
+- 表头只在新文件（或空文件）时写一次；项名称**允许重复**（用户定案，CSV 本身允许同名列），
+  项名称为空时兜「项N」
+- **写入类型只记「写入变量」的值**，不记来源（用户定案）；读取类型记「读取变量」的值。
+  两档取的都是 `GlobalVariable.Value`（已按显示格式转好的文本）
+- ⚠️ **来源变量可以是系统变量**（用户定案 2026-10-26），写入变量**不行**。
+  两列口径不同，别为了"统一"把系统变量塞进写入变量 —— 它没有 PLC 地址，填了也写不出去。
+  解析统一走 `AcquisitionSource.Resolve`（`Modeling/AcquisitionSource.cs`，纯逻辑可断言）：
+  **先查系统变量、再查全局变量**，同名时以系统变量为准 —— 否则用户造一个叫 `sys_True`
+  的全局变量就能顶掉「sys_True 恒为真」这条对外承诺
+- 补全也是两套：来源变量走 `CompletionSource.ForSourceVariable`（系统 + 全局），
+  写入变量走 `ForMonitorName`（只有全局）。XAML 里是两个不同的 `Loaded` 处理器
+  （`AcquisitionSourceBox_Loaded` / `AcquisitionItemVariableBox_Loaded`），**别合并**
+- 来源变量的值有两个来源：全局变量取 `GlobalVariable.Value`，系统变量要传当时的快照
+  （`SystemVariableValues.Capture`）。`AcquisitionSource.ValueOf` 按名字自动分派
+- ⚠️ 来源变量填错了必须**字变红**（`AcquisitionSourceBox` 样式），不能只留 ToolTip：
+  用户不知道它错就不会去悬停，等于没有任何反馈。与「数据类型」列的红字同一套语义
+
+**写入变量的编辑规则**（2026-10-27，用户定案：填对来源才能编辑、类型必须相同、地址可以以后补）：
+
+- **来源变量填对之前，写入变量一律置灰不可编辑**（`CanEditVariable`）。只绑 `IsEnabled` 就够 ——
+  `MonitorInlineTextBox` 模板自带 `IsEnabled=False` 触发器，会把底色切成
+  `Brush.Input.Background.Disabled`。但必须同时加 `ToolTipService.ShowOnDisabled="True"`：
+  禁用控件默认不弹 ToolTip，而提示恰恰只在禁用态才有用（说了「先填来源」，却看不见）
+- 类型必须**完全相同**（`AcquisitionTaskRules.WriteTypesMatch` 用 `==`，不做隐式转换）。
+  不符时输入框变红（`AcquisitionTargetBox` 样式，绑 `HasVariableError`），**并且「数据类型」列同时变红** ——
+  类型列的文本取自写入变量，只红输入框的话说不清「错在这一列的取值」
+- **允许未映射地址**（用户定案）：`HasVariableError` 故意**不看** `HasAddress`，
+  只在提示尾缀「未映射地址（数据不会下发到设备）」。拦下的话用户连第一版数据都填不进去 ——
+  地址是等 PLC 点位确认后才补的事
+- ⚠️ 「先填来源」这句提示要**跟着来源改口**：判据是 `_isWriteTask && SourceVariable == null`。
+  首版写成 `_isWriteTask ? …`，实机里来源填好后置灰解除了、提示还在催「先填写来源变量」，等于骗人
+- ⚠️ **行自己看不出所属任务是读还是写**（读取类型下来源列宽为 0，行上没有那个信号），
+  所以 `SetWriteTask` 由**父行注入**，三处都要：构造函数、`AddItem()`、`RefreshFromModel()`。
+  漏掉 `RefreshFromModel` 的话，读写类型互切后整张子表还留着上一档的置灰状态
+- 样式顺序同 10.27 的坑：`AcquisitionTargetBox` 的 `BasedOn` 指向 `MonitorInlineTextBox`，
+  必须定义在它**之后**
+- 变量没填 / 找不到 ⇒ **空单元格**，不写占位符：表格是给下游（Excel、MES）读的，
+  混进「—」会变成脏数据
+- 写盘失败**不弹窗**（50ms 一拍会弹到用户崩溃），只写一条 `DeviceLogLevel.Warning` 日志
+- **每次执行都写一条运行日志**（用户定案），文案由 `AcquisitionTaskRules.DescribeLogSuccess` /
+  `DescribeLogFailure` 生成，形如 `任务组1（压力采集）：触发读取任务执行完成`。
+  三个要点：短词（`读取`/`写入`，不是界面上的 `数据读取`）、**成功不带原因也不带冒号**、
+  序号给当下定位而名称给事后可读（名称是写日志那刻的快照，改名不回溯）
+- ⚠️ **未连接时一条任务组日志都不写**（用户定案：不执行任何任务组）。断线期间
+  `Value` 停在最后读到的值，记日志或记 CSV 都是在记录**假数据**
+- **日志上限从 200 提到 1000**：5s 周期下 200 条只够 16 分钟，「连接失败」那行早被挤掉了。
+  ⚠️ 这个上限只管**界面**，落盘文件按天写、不受它约束
+- ⚠️ **日志自动滚动要区分「用户翻上去」与「面板被折叠」**：`ScrollChanged` 在面板折叠时
+  也会触发，且 `ViewportHeight` 变 0，用「此刻在底部吗」当场判定必然得 false ——
+  切个页面就把跟随关掉了，切回来停在最老一条。故用显式的 `_logFollowTail` 状态，
+  且在 `!IsVisible` 时直接 return 不碰它
+- ⚠️ 切回总览页补滚动时，`ScrollIntoView` 在「刚可见」那一帧对虚拟化列表**不生效**。
+  要排到 `DispatcherPriority.Loaded`、先 `UpdateLayout()`、再直接 `ScrollViewer.ScrollToEnd()`。
+  三步缺一不可（前两步各漏一次都实测复现过）
+- 运行态（`AcquisitionTaskState`：下次该采的时刻、表达式上一拍的值、编译缓存）**只在内存**，
+  不落盘；键用 `AcquisitionTask` 的**实例引用**而不是名称 —— 名称可变，改名会丢计时状态
+
+**配置错误（`Modeling/AcquisitionTaskCheck.cs`，2026-10-27 用户定案）**：
+
+- 判据全在纯逻辑里（不碰 WPF）：`Describe(task, findVariable)` 返回问题清单，
+  `ErrorText = "配置错误"`。读取类型查读取变量；
+  写入类型**按填写先后短路只报第一处**（来源空 → 来源查不到 → 写入变量空 → 写入变量查不到 → 类型不符），
+  否则一项没填会对用户刷三条
+- ⚠️ **未映射地址不算配置错误**：用户定案允许（见上）
+- 呈现：**不弹窗、不阻止编辑、不用徽标**。只在行上「启用」开关右侧放一句琥珀色「配置错误」
+  （`TextBlock` + `Brush.Warning`，`Visibility` 绑 `HasConfigError`）。
+  只给这四个字、不列明细 —— 用户定「只提示配置错误就可以了不用这么详细」。
+  色义不变：**红 = 这个格子填错了，琥珀 = 这东西现在不可用**
+- **关掉并锁住开关，合并成一个门**：`EffectiveEnabled => Model.Enabled && !HasConfigError`，
+  开关 `IsChecked` 双向绑它、`IsEnabled` 绑 `CanToggleEnabled => !HasConfigError`。
+  这样「配置错误」与「用户停用」走同一条不采集路径，执行侧只判 `EffectiveEnabled` 一处
+- ⚠️ **`EffectiveEnabled` 必须可写**（`set => Enabled = value;`）：`CheckBox.IsChecked` 默认 TwoWay，
+  绑到只读属性会让行模板一实例化就抛 `XamlParseException`（「无法对只读属性进行 TwoWay 绑定」），
+  整个采集页直接打不开，而编译期 0 警告 0 错误 —— 完全看不出来
+- ⚠️ **`Model.Enabled` 存用户意图，程序绝不改写它**：采集配置边输边存，清空变量名重打的那一瞬间
+  就是配置错误，据此落盘会让组永久静默停采且无痕迹；新组默认 `Enabled = true` 且 0 项，
+  一创建就被关等于默认值作废；改写后也分不出「我关的」与「它自己关的」。
+  因此开关显示为关、点不动，修好配置后自己回到「开」
+- 拦截只判 `EffectiveEnabled` 一处：`RefreshAcquisitionGlobals()` 跳过（不把变量拖上总线）+
+  `RunAcquisitionTick()` 在 `GetOrCreateRuntime` **之前** `continue`。
+  顺序关键：不建 runtime 就不会推进 `NextFireLocal`，配置修好后从「现在 + 一个周期」开始重新计，
+  不会补偿式补写一串陈年时间戳
+- ⚠️ **行看不出父组**，开关与提示的新鲜度靠父 `AcquisitionTaskItem` 订阅子行 `PropertyChanged`
+  （`AttachItem` 订阅 / `RemoveItem`·`ClearItems` 必须退订，否则删掉的行还挂在父的事件上）。
+  只在 `VariableName`·`SourceVariableName` 变化时刷新；`RaiseCount()` 与
+  `RefreshFromModel()`·`RefreshVariables()` 末尾也要刷（读写互切、变量表改名删变量都会改判据），
+  `Enabled` setter 末尾还要 raise `EffectiveEnabled`
+- 项名前缀 `项3（压力）：`，但项名空白或恰好等于默认名「项N」时**只给序号**，
+  否则出现「项1（项1）：」，像 bug。现在明细只进断言消息、不上界面，但这规则别丢
+- 列宽：**「启用」列必须 ≥170** —— 开关实测 96×30（不是按模板算的 64，`ContentPresenter`+`Track`
+  之外还有 32 的额外宽度），提示 66×22，加 8 间距。现定 `启用 180 / 数据项 80`
+  （与原 150+110 等宽，总宽不变）。**行模板与表头两处 `ColumnDefinitions` 必须同改**，
+  只改一处会表头与行错位（实测过）
+
+
+**写入任务真正下发（`Modeling/AcquisitionWrite.cs`，2026-10-27）**：
+
+- 链路接在采集节拍里，不新建通道：`RunAcquisitionTick` 对 Write 任务分叉到 `BeginWriteTask`
+  fire-and-forget `RunWriteTaskAsync`，逐项 `AcquisitionWrite.TryBuild` →
+  `WriteToDeviceAsync`（与自由监控同一个写函数）
+- ⚠️ **重入守卫 `WriteInFlight` 必须放在 `ShouldFire` 之前**，否则一次慢写入会把整个周期往后挤；
+  **`BeginWriteTask` 里不能 await**（50ms 定时器回调里 await 会卡节拍）；
+  fire-and-forget 的异常没人接，`RunWriteTaskAsync` 必须 try/catch/finally 兜底
+- `TryBuild` 判定顺序：变量不存在 → 无地址 **Skipped**（静默跳过、不算错误）→
+  `ResolvedAddress < 0` → 只读区 → `CoilOnly` 文本须 `0`/`1` → `TryEncodeRegisters`。
+  **Skipped 与 Failed 必须分开**：前者是允许的常态，不能污染失败日志
+- ⚠️ **编码规则（最易写错）**：用**来源变量的 `Format`** 解析文本，用**写入变量的 `Type`/`Length`**
+  定字宽与范围（两者 Type 已被 `WriteTypesMatch` 强制相同，只有 Format 可能不同；
+  来源 INT/Hex 的 `"2A"` 按目标的 Dec 解析会失败）。因此 `AcquisitionSource` 必须带 `Format`，
+  系统变量取 `DefaultFormat`
+- 一项失败**不短路**（Modbus 无事务，短路换不来原子性）；失败文案 `DescribeFailure` 拼成
+  `2/3 项写入失败：项1（压力）：…`，项名前缀**复用 `AcquisitionTaskCheck.DescribeItemPrefix`**
+  （故它是 public，两处各写一份必然走样）
+- CSV **一行不改**：它记写入变量的回读值，来源变量从不进文件；写通后该列自然变成真值
+- 只读区拦截（用户定「在全局变量表映射地址时限制」）：`GlobalVariableStore.TryResolve` 先判只读
+  再赋地址，命中 `AddressErrorKind.ReadOnlyArea`。⚠️ **代价：全局变量表从此不能映射 X**
+  （X 仍可在自由监控直接读；将来要读 X 得改成「仅警告」）。⚠️ 测试要用 BOOL 变量，
+  INT 填 X0 会先在 `CanMapTo` 报「类型不符」走不到这里
 
 ## 6. 心跳与连接生命周期
 
@@ -1097,6 +1263,9 @@ public sealed class MyDialog : Window
 | **PLC 状态机（P1.2，总览页）** | `Expressions/`（表达式引擎）+ `Modeling/MachineState.cs`（布局/模型/持久化）+ `Ui/MachineStateView.xaml(.cs)`（画布）+ 窗口 `RefreshMachineStates` / `SyncMachineTimer`（见 **§5.5**） |
 | **系统变量监控（P2.3，第四分段）** | `SystemVarRow.cs` + `SystemVariableValues.cs` + 窗口 `RefreshSystemVarValues` / `SyncSystemVarTimer` / `IoView_Checked`（见 **§5.4**） |
 | **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化）+ `GlobalVarItem.cs`（界面包装）+ 窗口 `GlobalVar*` 处理器（见 **§5.2**；不读不写） |
+| **采集数据（P3.1，任务组/数据项/执行/CSV）** | 模型 `Modeling/AcquisitionTask.cs`（+ `AcquisitionTaskRules` 文案与类型规则）+ 行包装 `AcquisitionTaskItem.cs` + 对话框 `Ui/AcquisitionTaskDialog.cs`；执行与落盘 `Modeling/AcquisitionCsv.cs` + 窗口 `RunAcquisitionTick` / `RefreshAcquisitionGlobals`（50ms 常驻定时器，**不随页面可见性停**，见 **§5.7**） |
+| **采集任务「配置错误」关开关/拦截** | 判据 `Modeling/AcquisitionTaskCheck.cs`（纯逻辑）+ 行属性 `HasConfigError` / `EffectiveEnabled` / `CanToggleEnabled`；提示在 `AcquisitionTaskRowTemplate` 第 4 列开关右侧；执行侧只判 `EffectiveEnabled`（`RefreshAcquisitionGlobals` 与 `RunAcquisitionTick`，见 **§5.7**） |
+| **采集「写入任务」真正下发** | `Modeling/AcquisitionWrite.cs`（TryBuild / DescribeFailure）+ `RunWriteTaskAsync`；Skipped=无地址静默跳过、失败不短路；CSV 只记写入变量回读值；只读区在 `GlobalVariableStore.TryResolve` 拦（X 从此不能映射）（见 §5.7） |
 | **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | **自由监控写入（FC05/06/16）** | `MonitorItemSet.TryBuildWrite`（文本 → `WritePlan`）+ `ValueCodec.TryEncodeRegisters` / `EncodeStringFixed`；`MainWindow.xaml.cs` 的 `CommitMonitorValueAsync` → `WriteToDeviceAsync`；报文层 `ModbusTcpClient.WriteSingleCoilAsync` / `WriteSingleRegisterAsync` / `WriteMultipleRegistersAsync` |
 | **写入的文本解析与范围校验** | `ValueCodec.TryParseIntegerLiteral`（DEC 支持 `0x`/`0b` 前缀与负号）+ `CheckIntegerRange`；**校验必须在位宽截断前**（`-32769` 截成 `0x7FFF` 会变成合法值） |

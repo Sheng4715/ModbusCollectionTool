@@ -100,8 +100,18 @@ namespace DSH_Modbus采集工具.Ui
     /// </summary>
     public sealed class DeviceLogPresenter
     {
-        /// <summary>默认内存条数上限（超出后丢弃最旧一条，仅内存、不落盘）。</summary>
-        public const int DefaultMaxEntries = 200;
+        /// <summary>
+        /// 默认内存条数上限（超出后丢弃最旧一条，仅内存、不落盘）。
+        /// <para>
+        /// 从 200 提到 1000（用户定案，2026-10-26）：采集任务每执行一次就记一条日志，
+        /// 5s 周期下 200 条只够 16 分钟，真出事时「连接失败」那行早被挤掉了。
+        /// 1000 条在 5s 周期下约 83 分钟、1s 周期下约 16 分钟。
+        /// </para>
+        /// <para>
+        /// ⚠️ 只影响**界面**，不影响落盘：日志文件按天写，不受这个上限约束。
+        /// </para>
+        /// </summary>
+        public const int DefaultMaxEntries = 1000;
 
         private readonly int _maxEntries;
 

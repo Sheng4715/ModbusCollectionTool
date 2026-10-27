@@ -31,10 +31,19 @@ namespace DSH_Modbus采集工具.Polling;
 /// 状态机表达式**实际引用到**的全局变量（已去重、已剔除系统变量与不存在的名字）。
 /// 由 UI 线程在表达式或变量定义变动时重算一次，本字段只是交引用，不在采集线程里算。
 /// </param>
+/// <param name="AcquisitionGlobals">
+/// 采集任务组引用的全局变量 —— **常驻读取，与页面可见性无关**。
+/// <para>
+/// ⚠️ 这是本快照里唯一**不看可见性**的一项，与上面几个正好相反，理由见
+/// <see cref="ModbusPoller.PollAcquisitionGlobalsAsync"/>：用户切到设备配置页调参数时，
+/// 采集任务不能跟着停 —— 停了记录里会凭空缺一段，事后完全看不出来。
+/// </para>
+/// </param>
 internal readonly record struct PollSnapshot(
     bool IoPageActive,
     bool FreeViewActive,
     IoPoint[] VisiblePage,
     int PollIntervalMs,
     bool MachineViewActive,
-    IReadOnlyList<GlobalVariable> MachineGlobals);
+    IReadOnlyList<GlobalVariable> MachineGlobals,
+    IReadOnlyList<GlobalVariable> AcquisitionGlobals);

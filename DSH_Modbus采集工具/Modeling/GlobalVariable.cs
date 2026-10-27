@@ -95,8 +95,38 @@ namespace DSH_Modbus采集工具.Modeling
             : DataTypes.Get(Type).DisplayName;
     }
 
-    /// <summary>变量名与初始值的规则（纯函数，可独立断言）。</summary>
-    /// <summary>    /// 映射地址解析失败的原因类别 —— 决定界面弹哪一句提示。    /// <para>    /// 分成两类是因为**用户的改法完全不同**：类型不符要改数据类型或换元件，    /// 软元件无效要改地址本身。笼统报一句「地址无效」会把人引向错误方向。    /// </para>    /// </summary>    public enum AddressErrorKind    {        /// <summary>解析通过（或空地址 = 内存变量）。</summary>        None,        /// <summary>软元件与当前数据类型不符（如 BOOL 配 D100、INT 配 M10）。</summary>        TypeMismatch,        /// <summary>软元件无效：符号不存在、编号越界、格式不对、超出地址范围。</summary>        InvalidElement,        /// <summary>与地址无关的配置问题（显示格式、STRING 长度、未选设备类型）。</summary>        Configuration,    }
+    /// <summary>
+    /// 映射地址解析失败的原因类别 —— 决定界面弹哪一句提示。
+    /// <para>
+    /// 分类的原因是**用户的改法完全不同**：类型不符要改数据类型或换元件，
+    /// 软元件无效要改地址本身，只读区要换一个可写的元件。笼统报一句「地址无效」
+    /// 会把人引向错误方向。
+    /// </para>
+    /// </summary>
+    public enum AddressErrorKind
+    {
+        /// <summary>解析通过（或空地址 = 内存变量）。</summary>
+        None,
+
+        /// <summary>软元件与当前数据类型不符（如 BOOL 配 D100、INT 配 M10）。</summary>
+        TypeMismatch,
+
+        /// <summary>软元件无效：符号不存在、编号越界、格式不对、超出地址范围。</summary>
+        InvalidElement,
+
+        /// <summary>
+        /// 软元件属于**只读区**（X 等输入元件 / 离散输入 / 输入寄存器）。
+        /// <para>
+        /// 读得到、写不了 —— 见 <c>GlobalVariable.IsReadOnly</c>。
+        /// </para>
+        /// </summary>
+        ReadOnlyArea,
+
+        /// <summary>与地址无关的配置问题（显示格式、STRING 长度、未选设备类型）。</summary>
+        Configuration,
+    }
+
+    /// <summary>变量名与初始值、映射地址的规则（纯函数，可独立断言）。</summary>
     public static class GlobalVariableRules
     {
         /// <summary>变量名最大长度（需求：限制 32 个字符）。</summary>
@@ -231,6 +261,14 @@ namespace DSH_Modbus采集工具.Modeling
                     // 与另两处名称弹窗同一排版：正文最前面是**用户刚输入的内容**（外加双引号）
                     title = "软元件无效";
                     body = input.Length == 0 ? "不是有效软元件" : $"“{input}”不是有效软元件";
+                    return;
+
+                case AddressErrorKind.ReadOnlyArea:
+                    // 说清「为什么不行」+「还能怎么用」，否则用户只会反复换编号重试
+                    title = "只读区";
+                    body = input.Length == 0
+                        ? "该元件属于只读区，不能作为映射地址。"
+                        : $"“{input}”属于只读区（输入元件），读得到但写不了，不能作为全局变量的映射地址。";
                     return;
 
                 default:
@@ -405,9 +443,26 @@ namespace DSH_Modbus采集工具.Modeling
                 return false;
             }
 
+            // 只读区（X 等输入元件 / 离散输入 / 输入寄存器）：读得到、写不了。
+            //
+            // 用户定案（2026-10-27）：在**映射地址这一步**就拦住，而不是等采集配置里再报错 ——
+            // 一个注定写不进去的地址，配进来只会让写入任务在运行期失败，还查不出为什么。
+            //
+            // ⚠️ 代价：全局变量表里**不能再映射 X**。X 仍然可以在自由监控里直接读
+            // （那条路不走全局变量）；若将来需要把 X 读进变量，得把这条拦法改成「仅警告」。
+            if (IsReadOnlyElement(driver, element, matched.Value))
+            {
+                v.IsReadOnly = true;
+                v.ResolvedAddress = -1;
+                error = $"{v.Address} 属于只读区（输入元件），不能作为全局变量的映射地址";
+                kind = AddressErrorKind.ReadOnlyArea;
+                v.ResolveError = error;
+                return false;
+            }
+
+            v.IsReadOnly = false;
             v.ResolvedAddress = address;
             v.Area = matched.Value;
-            v.IsReadOnly = IsReadOnlyElement(driver, element, matched.Value);
             return true;
         }
 

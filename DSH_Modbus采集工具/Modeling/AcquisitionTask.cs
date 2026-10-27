@@ -56,8 +56,19 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>
         /// 变量名称 —— 引用一条**全局变量**（P3.3）。
         /// <para>空串 = 还没选变量；此时数据类型列显示占位符、不会反推出类型。</para>
+        /// <para>
+        /// **读取类型**：这是「读取变量」（从哪读）。
+        /// **写入类型**：这是「写入变量」（写到哪），来源另存 <see cref="SourceVariableName"/>。
+        /// 两档共用这一个字段，是因为数据类型列跟着它走 —— 写入时该看的是目标 PLC 的类型。
+        /// </para>
         /// </summary>
         public string VariableName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 来源变量（**仅写入类型有意义**）：值从哪个全局变量取。
+        /// <para>读取类型恒为空串 —— 那时数据来自设备，没有「来源」一说。</para>
+        /// </summary>
+        public string SourceVariableName { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -91,8 +102,25 @@ namespace DSH_Modbus采集工具.Modeling
         /// </summary>
         public string Expression { get; set; } = string.Empty;
 
-        /// <summary>是否启用</summary>
+        /// <summary>
+        /// 是否启用（**任务跑不跑**）。
+        /// <para>⚠️ 与 <see cref="RecordEnabled"/> 是两件事：这个管「采不采 / 写不写」，
+        /// 那个管「采到之后记不记文件」。停采集不影响已有记录文件。</para>
+        /// </summary>
         public bool Enabled { get; set; } = true;
+
+        /// <summary>
+        /// 数据记录启用（**采到之后写不写 CSV**）。
+        /// <para>默认关闭：没配路径就闷头写文件，比不写更糟。</para>
+        /// </summary>
+        public bool RecordEnabled { get; set; }
+
+        /// <summary>
+        /// 数据记录保存路径 —— **父目录**，任务组自己的子文件夹建在它下面。
+        /// <para>空串 = 用默认的 <see cref="AcquisitionTaskRules.DefaultSavePath"/>；
+        /// 存量数据（本字段加入之前保存的）都是空串，靠这个兜住。</para>
+        /// </summary>
+        public string SavePath { get; set; } = string.Empty;
 
         /// <summary>数据项（可为空 —— 刚建出来的任务组还没有项）</summary>
         public List<AcquisitionItem> Items { get; set; } = new List<AcquisitionItem>();
@@ -119,6 +147,112 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>周期上限（1 天）。再大就不是「采集」了，属误输入。</summary>
         public const double MaxPeriodSeconds = 86400;
 
+        /// <summary>默认保存根目录名（建在 exe 旁边，与三份 json 同一层）</summary>
+        public const string DefaultSaveFolderName = "DeviceData";
+
+        /// <summary>记录文件扩展名（本版只做 CSV，xlsx 已从需求里去掉）</summary>
+        public const string RecordExtension = ".csv";
+
+        /// <summary>
+        /// 任务名称里**不允许**出现的字符 —— 因为任务名称要直接当文件夹名用。
+        /// <para>
+        /// ⚠️ 这不是洁癖：名称当路径用之后，<c>a/b</c> 会在磁盘上凭空多出一层目录，
+        /// <c>a:b</c> 在 NTFS 上会写进备用数据流，两者都**不报错**、只是行为诡异。
+        /// </para>
+        /// </summary>
+        public static readonly char[] InvalidNameChars =
+            { '\\', '/', ':', '*', '?', '"', '<', '>', '|' };
+
+        /// <summary>Windows 保留设备名。做成文件夹会失败或行为异常，提前挡掉。</summary>
+        private static readonly string[] ReservedNames =
+        {
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        };
+
+        /// <summary>默认保存根目录（<c>exe 旁\DeviceData</c>）</summary>
+        public static string DefaultSavePath =>
+            Path.Combine(AppContext.BaseDirectory, DefaultSaveFolderName);
+
+        /// <summary>
+        /// 记录文件的完整路径：<c>{父目录}\{任务组名称}\{当天日期}.csv</c>。
+        /// <para>
+        /// ⚠️ 文件夹按**任务组名称**建（用户定案），不是序号 —— 序号会随增删重排，
+        /// 用它当目录名会让两组的数据混进同一个文件夹。
+        /// </para>
+        /// <para>
+        /// ⚠️ 但名称**可变**：改名后新数据写进新文件夹，旧文件夹原地保留。
+        /// 这是「改名不搬家」的有意选择（不搬不会丢数据，最多多一个旧目录）。
+        /// </para>
+        /// </summary>
+        public static string ResolveRecordFolder(AcquisitionTask task, DateTime date) =>
+            Path.Combine(ResolveRecordDirectory(task), DateStem(date) + RecordExtension);
+
+        /// <summary>
+        /// 该任务组的**记录目录**：<c>{保存路径}\{任务组名称}</c>。
+        /// <para>
+        /// ⚠️ 文件夹按**任务组名称**建（用户定案），不是序号 —— 序号会随增删重排，
+        /// 用它当目录名会让两组的数据混进同一个文件夹。
+        /// </para>
+        /// </summary>
+        public static string ResolveRecordDirectory(AcquisitionTask task)
+        {
+            string parent = string.IsNullOrWhiteSpace(task?.SavePath) ? DefaultSavePath : task.SavePath!;
+            return Path.Combine(parent, task?.Name ?? string.Empty);
+        }
+
+        /// <summary>记录文件的日期主干（<c>2026-10-26</c>）。日期在**文件名**里，因为时间列只有时分秒。</summary>
+        public static string DateStem(DateTime date) =>
+            date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        /// <summary>
+        /// 同一天的第 <paramref name="index"/> 个记录文件：1 → <c>2026-10-26.csv</c>，
+        /// 2 → <c>2026-10-26_2.csv</c>，依次往后。
+        /// <para>
+        /// ⚠️ **列集合一变就换新文件**（用户定案）。表头只在建文件时写一次，
+        /// 若中途增删/改名数据项还往同一文件追加，表头与数据行就**列数不等** ——
+        /// Excel 打开不报错，只是列错位，等发现时已经攒了一周脏数据。
+        /// </para>
+        /// </summary>
+        public static string RecordFileName(DateTime date, int index)
+        {
+            string stem = DateStem(date);
+            return index <= 1
+                ? stem + RecordExtension
+                : stem + "_" + index.ToString(CultureInfo.InvariantCulture) + RecordExtension;
+        }
+
+        /// <summary>
+        /// 从文件名反解出「当天第几个」；不是本组当天的文件返回 0。
+        /// 与 <see cref="RecordFileName"/> 严格互逆。
+        /// </summary>
+        public static int ParseRecordFileIndex(string stem, string? fileName)
+        {
+            if (string.IsNullOrEmpty(fileName))
+            {
+                return 0;
+            }
+
+            string name = Path.GetFileNameWithoutExtension(fileName);
+
+            if (string.Equals(name, stem, StringComparison.Ordinal))
+            {
+                return 1;
+            }
+
+            string prefix = stem + "_";
+            if (!name.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return 0;
+            }
+
+            return int.TryParse(name.AsSpan(prefix.Length), NumberStyles.None,
+                CultureInfo.InvariantCulture, out int index) && index >= 2
+                ? index
+                : 0;
+        }
+
         /// <summary>任务类型显示名</summary>
         public static string DescribeKind(AcquisitionTaskKind kind) =>
             kind == AcquisitionTaskKind.Write ? "数据写入" : "数据读取";
@@ -143,11 +277,62 @@ namespace DSH_Modbus采集工具.Modeling
                 : "周期 " + FormatSeconds(task.PeriodSeconds) + "s";
         }
 
+        /// <summary>
+        /// 运行日志里的**短词**版任务类型（<c>读取</c> / <c>写入</c>）。
+        /// <para>
+        /// ⚠️ 与 <see cref="DescribeKind"/>（<c>数据读取</c>）**不是同一套**：
+        /// 界面上单列一格，写全称更清楚；日志里跟在「任务」前面，
+        /// 拼成「触发读取任务」比「触发数据读取任务」顺口（用户定案）。
+        /// </para>
+        /// </summary>
+        public static string DescribeShortKind(AcquisitionTaskKind kind) =>
+            kind == AcquisitionTaskKind.Write ? "写入" : "读取";
+
+        /// <summary>运行日志里的**短词**版执行方式（<c>周期</c> / <c>触发</c>）。</summary>
+        public static string DescribeShortTrigger(AcquisitionTriggerMode mode) =>
+            mode == AcquisitionTriggerMode.Edge ? "触发" : "周期";
+
+        /// <summary>
+        /// 运行日志的行首：<c>任务组1（压力采集）：触发读取任务</c>。
+        /// <para>
+        /// 序号给**当下定位**，名称给**事后可读**（用户定案）。名称是写日志那一刻的快照，
+        /// 之后改名历史行不跟着改 —— 那是历史，改了就查不清当时是哪个组了。
+        /// </para>
+        /// </summary>
+        public static string DescribeLogPrefix(AcquisitionTask task, int index)
+        {
+            if (task == null)
+            {
+                return string.Empty;
+            }
+
+            return "任务组" + index.ToString(CultureInfo.InvariantCulture)
+                + "（" + (task.Name ?? string.Empty) + "）："
+                + DescribeShortTrigger(task.Trigger) + DescribeShortKind(task.Kind) + "任务";
+        }
+
+        /// <summary>执行成功的日志。成功**不带原因**（用户定案），也就不留冒号。</summary>
+        public static string DescribeLogSuccess(AcquisitionTask task, int index) =>
+            DescribeLogPrefix(task, index) + (task != null && task.RecordEnabled
+                ? "执行完成"
+                : "执行完成（未启用数据记录）");
+
+        /// <summary>执行失败的日志。失败**必带原因** —— 只说「失败」等于没说。</summary>
+        public static string DescribeLogFailure(AcquisitionTask task, int index, string reason) =>
+            DescribeLogPrefix(task, index) + "执行失败：" + (reason ?? string.Empty);
+
         /// <summary>秒数格式化：整数不带小数点（5 而不是 5.0），小数最多三位。</summary>
         public static string FormatSeconds(double seconds) =>
             seconds.ToString("0.###", CultureInfo.InvariantCulture);
 
-        /// <summary>任务名称校验：非空、不超长。</summary>
+        /// <summary>
+        /// 任务名称校验：非空、不超长、**能当文件夹名**。
+        /// <para>
+        /// 后三条（非法字符 / 结尾空格或点 / Windows 保留名）是名称兼作文件夹名之后补的：
+        /// 只查长度的话，名字一路绿灯存进 json，等到写文件那步才炸，
+        /// 而那时用户早就忘了自己填过什么。
+        /// </para>
+        /// </summary>
         public static bool TryValidateName(string? name, out string error)
         {
             error = string.Empty;
@@ -162,6 +347,27 @@ namespace DSH_Modbus采集工具.Modeling
             if (name.Length > MaxNameLength)
             {
                 error = "任务名称最多 " + MaxNameLength + " 个字符（当前 " + name.Length + "）";
+                return false;
+            }
+
+            int badIndex = name.IndexOfAny(InvalidNameChars);
+            if (badIndex >= 0)
+            {
+                error = "任务名称不能包含 " + name[badIndex] + "（要当文件夹名用）";
+                return false;
+            }
+
+            // Windows 会静默吃掉结尾的空格和点，于是「压力」和「压力.」指向同一个目录 ——
+            // 界面上却是两个不同的任务组，落盘后互相覆盖
+            if (name.EndsWith(" ", StringComparison.Ordinal) || name.EndsWith(".", StringComparison.Ordinal))
+            {
+                error = "任务名称不能以空格或点结尾（要当文件夹名用）";
+                return false;
+            }
+
+            if (Array.IndexOf(ReservedNames, name.Trim().ToUpperInvariant()) >= 0)
+            {
+                error = "任务名称 " + name + " 是 Windows 保留名，请换一个";
                 return false;
             }
 
@@ -213,6 +419,24 @@ namespace DSH_Modbus采集工具.Modeling
             seconds = parsed;
             return true;
         }
+
+        /// <summary>
+        /// 写入变量的数据类型必须与**来源变量完全相同**（用户定案 2026-10-27）。
+        /// <para>
+        /// ⚠️ 不做隐式转换、不做「兼容放宽」：写入是**改变设备状态**的动作。
+        /// INT → REAL 看着无损，但寄存器宽度、字节序、值域一起变，
+        /// 配错的后果是往 PLC 里丢一个完全不同的数，事后极难追。
+        /// </para>
+        /// </summary>
+        public static bool WriteTypesMatch(DataType sourceType, DataType targetType) =>
+            sourceType == targetType;
+
+        /// <summary>数据类型不一致时的提示文案（进 ToolTip，与红字配套）。</summary>
+        public static string DescribeTypeMismatch(
+            string sourceName, DataType sourceType, string targetName, DataType targetType) =>
+            "数据类型必须与来源变量相同：来源「" + sourceName + "」是 "
+            + DataTypes.Get(sourceType).DisplayName + "，写入变量「" + targetName + "」是 "
+            + DataTypes.Get(targetType).DisplayName;
 
         /// <summary>新建任务组时的默认名称（<c>任务组1</c>、<c>任务组2</c> …）</summary>
         public static string NextTaskName(IEnumerable<AcquisitionTask>? existing)

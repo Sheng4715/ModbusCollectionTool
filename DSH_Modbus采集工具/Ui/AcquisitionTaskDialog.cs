@@ -38,6 +38,10 @@ namespace DSH_Modbus采集工具.Ui
         private readonly TextBox _periodBox;
         private readonly TextBlock _periodSuffix;
         private readonly TextBox _expressionBox;
+        private readonly RadioButton _recordOffRadio;
+        private readonly RadioButton _recordOnRadio;
+        private readonly TextBox _pathBox;
+        private readonly Button _browseButton;
         private readonly TextBlock _error;
 
         private AcquisitionTaskDialog(
@@ -63,7 +67,9 @@ namespace DSH_Modbus采集工具.Ui
             var root = new Grid { Margin = new Thickness(16) };
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            for (int i = 0; i < 8; i++)
+            // 名称 / 类型 / 数据记录 / 保存路径 / 执行方式 / 表达式 / 错误 / 按钮 = 8 行，
+            // 但单选与路径各自可能换行，留足 10 行余量
+            for (int i = 0; i < 10; i++)
             {
                 root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             }
@@ -84,6 +90,68 @@ namespace DSH_Modbus采集工具.Ui
             SelectKind(task.Kind);
             Place(root, _kindCombo, row++, new Thickness(0, 0, 0, 10));
 
+            AddLabel(root, "数据记录", row);
+
+            // 「记录不记录」用两个单选而不是一个开关：与下面「执行方式」的形态一致，
+            // 用户扫一眼就是一组二选一，不用先判断这个开关是「开」还是「关」。
+            _recordOffRadio = MakeRadio("不启用", "AcqTaskRecord");
+            _recordOnRadio = MakeRadio("启用", "AcqTaskRecord");
+
+            var recordLine = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            recordLine.Children.Add(_recordOffRadio);
+            _recordOnRadio.Margin = new Thickness(20, 0, 0, 0);
+            recordLine.Children.Add(_recordOnRadio);
+
+            Place(root, recordLine, row++, new Thickness(0, 0, 0, 10), stretch: true);
+
+            // 路径单独一行：路径本身很长，和单选挤在一行会把路径框压得只剩几十像素
+            AddLabel(root, "保存路径", row);
+
+            var pathLine = new Grid();
+            pathLine.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            pathLine.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            _pathBox = MakeTextBox(task.SavePath);
+            _pathBox.ToolTip =
+                "留空 = " + AcquisitionTaskRules.DefaultSavePath
+                + "\n记录文件写在该目录下、以任务组名称命名的子文件夹里";
+            Grid.SetColumn(_pathBox, 0);
+            pathLine.Children.Add(_pathBox);
+
+            // 空路径时给一句浅色占位：框里空空如也、又看不出默认值存到哪儿，
+            // 用户只能去悬停猜。占位文字不参与取值（SavePathValue 读的是 Text）。
+            var pathPlaceholder = new TextBlock
+            {
+                Text = "留空则存到 " + AcquisitionTaskRules.DefaultSavePath,
+                Margin = new Thickness(10, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+                Visibility = task.SavePath.Length == 0 ? Visibility.Visible : Visibility.Collapsed,
+            };
+            pathPlaceholder.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
+            pathPlaceholder.SetResourceReference(TextBlock.FontSizeProperty, 12.0);
+            Grid.SetColumn(pathPlaceholder, 0);
+            pathLine.Children.Add(pathPlaceholder);
+
+            _pathBox.TextChanged += (_, _) =>
+            {
+                pathPlaceholder.Visibility = _pathBox.Text.Length == 0
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            };
+
+            _browseButton = MakeButton("浏览…", primary: false);
+            _browseButton.Margin = new Thickness(8, 0, 0, 0);
+            _browseButton.Click += Browse_Click;
+            Grid.SetColumn(_browseButton, 1);
+            pathLine.Children.Add(_browseButton);
+
+            Place(root, pathLine, row++, new Thickness(0, 0, 0, 10), stretch: true);
+
             AddLabel(root, "执行方式", row);
 
             // 周期秒数输入框**贴着周期单选框**放：需求样例里「周期（s）」的「(s)」本身就是
@@ -103,8 +171,8 @@ namespace DSH_Modbus采集工具.Ui
             _periodSuffix.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
             _periodSuffix.SetResourceReference(TextBlock.FontSizeProperty, 12.0);
 
-            _periodRadio = MakeRadio("周期（s）");
-            _edgeRadio = MakeRadio("触发（上升沿有效）");
+            _periodRadio = MakeRadio("周期（s）", "AcqTaskTrigger");
+            _edgeRadio = MakeRadio("触发（上升沿有效）", "AcqTaskTrigger");
 
             var periodLine = new StackPanel
             {
@@ -180,6 +248,9 @@ namespace DSH_Modbus采集工具.Ui
 
             Content = root;
 
+            _recordOnRadio.Checked += (_, _) => SyncRecordEnabled();
+            _recordOffRadio.Checked += (_, _) => SyncRecordEnabled();
+
             if (task.Trigger == AcquisitionTriggerMode.Edge)
             {
                 _edgeRadio.IsChecked = true;
@@ -189,7 +260,17 @@ namespace DSH_Modbus采集工具.Ui
                 _periodRadio.IsChecked = true;
             }
 
+            if (task.RecordEnabled)
+            {
+                _recordOnRadio.IsChecked = true;
+            }
+            else
+            {
+                _recordOffRadio.IsChecked = true;
+            }
+
             SyncModeEnabled();
+            SyncRecordEnabled();
         }
 
         public string TaskName => _nameBox.Text;
@@ -208,6 +289,12 @@ namespace DSH_Modbus采集工具.Ui
                 : AcquisitionTaskRules.DefaultPeriodSeconds;
 
         public string ExpressionText => _expressionBox.Text;
+
+        /// <summary>数据记录是否启用</summary>
+        public bool RecordEnabledValue => _recordOnRadio.IsChecked == true;
+
+        /// <summary>保存路径（父目录）。空串 = 用默认的 DeviceData。</summary>
+        public string SavePathValue => _pathBox.Text.Trim();
 
         /// <summary>弹出对话框；用户取消返回 <c>null</c>。</summary>
         public static AcquisitionTaskDialog? Ask(
@@ -237,6 +324,43 @@ namespace DSH_Modbus采集工具.Ui
             };
 
             return dlg.ShowDialog() == true ? dlg : null;
+        }
+
+        /// <summary>
+        /// 「不启用」时置灰路径框与浏览按钮。
+        /// <para>置灰而非隐藏：与「执行方式」同一处理，避免对话框高度忽高忽低。</para>
+        /// </summary>
+        private void SyncRecordEnabled()
+        {
+            bool on = _recordOnRadio.IsChecked == true;
+
+            _pathBox.IsEnabled = on;
+            _browseButton.IsEnabled = on;
+            _pathBox.Opacity = on ? 1.0 : 0.45;
+        }
+
+        /// <summary>
+        /// 选保存目录。用 .NET 8 自带的 <see cref="Microsoft.Win32.OpenFolderDialog"/>，
+        /// **不引 NuGet** —— 项目零依赖的约束对文件对话框同样成立。
+        /// </summary>
+        private void Browse_Click(object sender, RoutedEventArgs e)
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "选择数据记录保存目录",
+                Multiselect = false,
+            };
+
+            string current = _pathBox.Text.Trim();
+            if (current.Length > 0 && System.IO.Directory.Exists(current))
+            {
+                dialog.InitialDirectory = current;
+            }
+
+            if (dialog.ShowDialog(this) == true)
+            {
+                _pathBox.Text = dialog.FolderName;
+            }
         }
 
         /// <summary>按当前执行方式置灰另一档的参数框。</summary>
@@ -283,8 +407,66 @@ namespace DSH_Modbus采集工具.Ui
                 return;
             }
 
+            // 路径留空是合法的（走默认 DeviceData），但填了就得是个能用的路径 ——
+            // 等点「启用」之后才发现写不进去，那时人已经离开这个对话框了
+            if (RecordEnabledValue)
+            {
+                string path = SavePathValue;
+                if (path.Length > 0 && !IsUsableFolder(path, out string pathError))
+                {
+                    ShowError(pathError);
+                    _pathBox.Focus();
+                    _pathBox.SelectAll();
+                    return;
+                }
+            }
+
             ShowError(null);
             DialogResult = true;
+        }
+
+        /// <summary>
+        /// 路径能不能当保存目录用：非法字符、已存在但不是目录、父目录不存在且无法创建。
+        /// <para>⚠️ 只**探测**不创建 —— 对话框里点「取消」不该在磁盘上留下空文件夹。</para>
+        /// </summary>
+        private static bool IsUsableFolder(string path, out string error)
+        {
+            error = string.Empty;
+
+            try
+            {
+                if (path.IndexOfAny(System.IO.Path.GetInvalidPathChars()) >= 0)
+                {
+                    error = "保存路径含有非法字符";
+                    return false;
+                }
+
+                if (System.IO.File.Exists(path))
+                {
+                    error = "保存路径指向的是一个文件，不是文件夹";
+                    return false;
+                }
+
+                if (System.IO.Directory.Exists(path))
+                {
+                    return true;
+                }
+
+                // 不存在：看它的父目录在不在（父目录也不在就不再往下追，直接让人自己建）
+                string? parent = System.IO.Path.GetDirectoryName(path);
+                if (string.IsNullOrEmpty(parent) || !System.IO.Directory.Exists(parent))
+                {
+                    error = "保存路径的上级目录不存在：" + (parent ?? path);
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = "保存路径无效：" + ex.Message;
+                return false;
+            }
         }
 
         /// <summary>编译 + 变量存在性检查（口径与 PLC 状态机一致）。</summary>
@@ -376,16 +558,21 @@ namespace DSH_Modbus采集工具.Ui
             Style = RequireStyle("Dialog.ComboBox"),
         };
 
-        private RadioButton MakeRadio(string text) => new RadioButton
+        /// <summary>
+        /// 造一个对话框单选按钮。
+        /// <para>
+        /// ⚠️ <paramref name="groupName"/> **必须显式给**：单选按钮分别装在不同的 StackPanel 里
+        /// （「周期」那档还要跟着一个秒数输入框），而 WPF 默认按**逻辑父容器**分组 ——
+        /// 不给名字它们就各成一伙，可以同时是选中的（真机截图里两个蓝圈同亮，实测踩到）。
+        /// 组名还必须**各组互不相同**，否则「数据记录」和「执行方式」会串成一组。
+        /// </para>
+        /// </summary>
+        private RadioButton MakeRadio(string text, string groupName) => new RadioButton
         {
             Content = text,
             Style = RequireStyle("Dialog.RadioButton"),
             VerticalAlignment = VerticalAlignment.Center,
-
-            // ⚠️ **GroupName 必须显式给**：两个单选按钮分别装在两个 StackPanel 里
-            // （「周期」那档还要跟着一个秒数输入框），而 WPF 默认按**逻辑父容器**分组 ——
-            // 不给名字它们就各成一伙，可以同时是选中的（真机截图里两个蓝圈同亮，实测踩到）。
-            GroupName = "AcqTaskTrigger",
+            GroupName = groupName,
         };
 
         private Button MakeButton(string text, bool primary) => new Button

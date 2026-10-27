@@ -103,6 +103,13 @@ internal sealed class ModbusPoller
             await PollMachineGlobalsAsync(modbus, snap.MachineGlobals, token);
         }
 
+        // 采集任务组引用的变量：**不看可见性，每拍都读**。
+        // 放在 return 之前 —— 用户切走页面时下面的 IO / 自由监控全停，唯独这里要继续。
+        if (snap.AcquisitionGlobals.Count > 0)
+        {
+            await PollAcquisitionGlobalsAsync(modbus, snap.AcquisitionGlobals, token);
+        }
+
         // 离开状态信息页仅停采；独立心跳继续工作，各分段保留上次采集数据。
         if (!snap.IoPageActive)
         {
@@ -321,15 +328,92 @@ internal sealed class ModbusPoller
             return;
         }
 
+        // 逐块复查可见性：用户切走后立即停发剩余报文
+        var results = await ReadGlobalBlocksAsync(
+            modbus, plan, token, () => _host.CaptureSnapshot().MachineViewActive);
+
+        if (results.Count == 0)
+        {
+            return;
+        }
+
+        await _host.RunOnUiAsync(() =>
+        {
+            if (!_host.IsCurrentConnection(modbus, token))
+            {
+                return;
+            }
+
+            // 复查可见性：本拍可能跨越了用户的切换动作，已切走就丢弃本拍结果
+            PollSnapshot after = _host.CaptureSnapshot();
+            if (!after.MachineViewActive)
+            {
+                return;
+            }
+
+            ApplyGlobalBlocks(results);
+        });
+    }
+
+    /// <summary>
+    /// 读采集任务组引用的全局变量，写回 <c>GlobalVariable.Value</c>（P3.1）。
+    /// <para>
+    /// ⚠️ **与上面那个最大的区别：不看页面可见性**。用户切到设备配置页调参数时，
+    /// 采集任务照样要跑 —— 一停记录里就会凭空缺一段，而缺的那段事后完全看不出来
+    /// （文件里只有「11:04:22」这样的时间戳，没有「这段没采」的标记）。
+    /// </para>
+    /// <para>
+    /// 代价是只要有任何启用的采集任务，这条连接就一直在读那几个变量，不再有
+    /// 「切走即静默」的省电效果。这是采集功能本身的语义，不是实现疏忽。
+    /// </para>
+    /// </summary>
+    public async Task PollAcquisitionGlobalsAsync(
+        ModbusTcpClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
+    {
+        List<GlobalReadBlock> plan = GlobalReadPlan.Build(variables);
+        if (plan.Count == 0)
+        {
+            return;
+        }
+
+        // stillWanted 恒为 true：唯一的退出条件是最外层的 token 取消
+        var results = await ReadGlobalBlocksAsync(modbus, plan, token, () => true);
+
+        if (results.Count == 0)
+        {
+            return;
+        }
+
+        await _host.RunOnUiAsync(() =>
+        {
+            if (!_host.IsCurrentConnection(modbus, token))
+            {
+                return;
+            }
+
+            ApplyGlobalBlocks(results);
+        });
+    }
+
+    /// <summary>
+    /// 逐块读报文。两个「按可见性采全局变量」的入口共用，差异只在
+    /// <paramref name="stillWanted"/>：状态机那路要每块复查页面，采集那路不用。
+    /// </summary>
+    private async Task<List<(GlobalReadBlock Block, bool[]? Coils, ushort[]? Registers, string? Error)>>
+        ReadGlobalBlocksAsync(
+            ModbusTcpClient modbus,
+            List<GlobalReadBlock> plan,
+            CancellationToken token,
+            Func<bool> stillWanted)
+    {
         var results = new List<(GlobalReadBlock Block, bool[]? Coils, ushort[]? Registers, string? Error)>();
 
         foreach (GlobalReadBlock block in plan)
         {
-            // 逐块复查可见性：用户切走后立即停发剩余报文
-            PollSnapshot mid = _host.CaptureSnapshot();
-            if (!mid.MachineViewActive)
+            if (!stillWanted())
             {
-                return;
+                // 返回已读到的部分：已经发出去的报文不必白读，但不再继续发新的
+                return results;
             }
 
             try
@@ -369,31 +453,22 @@ internal sealed class ModbusPoller
             }
         }
 
-        await _host.RunOnUiAsync(() =>
+        return results;
+    }
+
+    /// <summary>回填已读到的块。出错的那块跳过 —— 保留上次值，见 <see cref="PollMachineGlobalsAsync"/>。</summary>
+    private void ApplyGlobalBlocks(
+        List<(GlobalReadBlock Block, bool[]? Coils, ushort[]? Registers, string? Error)> results)
+    {
+        foreach (var (block, coils, regs, error) in results)
         {
-            if (!_host.IsCurrentConnection(modbus, token))
+            if (error != null)
             {
-                return;
+                continue;
             }
 
-            // 复查可见性：本拍可能跨越了用户的切换动作，已切走就丢弃本拍结果
-            PollSnapshot after = _host.CaptureSnapshot();
-            if (!after.MachineViewActive)
-            {
-                return;
-            }
-
-            foreach (var (block, coils, regs, error) in results)
-            {
-                if (error != null)
-                {
-                    // 保留上次值（见方法注释）
-                    continue;
-                }
-
-                GlobalReadPlan.Apply(block, coils, regs, _host.MonitorSet.ByteOrders);
-            }
-        });
+            GlobalReadPlan.Apply(block, coils, regs, _host.MonitorSet.ByteOrders);
+        }
     }
 
     /// <summary>

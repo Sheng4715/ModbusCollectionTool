@@ -248,6 +248,41 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private IReadOnlyList<GlobalVariable> _machineGlobals = Array.Empty<GlobalVariable>();
 
+        /// <summary>
+        /// 采集任务组引用的全局变量（P3.1）—— **常驻采集，与页面可见性无关**。
+        /// <para>
+        /// 与 <see cref="_machineGlobals"/> 的区别只在于「什么时候采」：那份跟着可见性，
+        /// 这份每拍都采。原因见 <see cref="ModbusPoller.PollAcquisitionGlobalsAsync"/>。
+        /// </para>
+        /// </summary>
+        private IReadOnlyList<GlobalVariable> _acquisitionGlobals = Array.Empty<GlobalVariable>();
+
+        /// <summary>
+        /// 每个任务组的运行时状态（下次该采的时刻、表达式上一拍的值）。
+        /// <para>
+        /// 键用 <see cref="AcquisitionTask"/> 的**实例引用**而不是名称 —— 名称可变，
+        /// 改一次名就会丢失全部计时状态，周期式会立刻多采一拍。
+        /// </para>
+        /// </summary>
+        private readonly Dictionary<AcquisitionTask, AcquisitionTaskState> _acqRuntime =
+            new Dictionary<AcquisitionTask, AcquisitionTaskState>();
+
+        /// <summary>
+        /// 采集执行节拍（P3.1）。50ms 一拍，与状态机同频。
+        /// <para>
+        /// ⚠️ **不看页面可见性**：采集任务要一直跑，用户切到别的页面也得继续记。
+        /// 这与 IO / 自由监控 / 状态机那三个「可见才跑」的定时器正好相反。
+        /// </para>
+        /// <para>
+        /// 同样用 <see cref="DispatcherPriority.Background"/>：它只是记账与写文件，
+        /// 没有理由抢渲染优先级。
+        /// </para>
+        /// </summary>
+        private readonly DispatcherTimer _acqTimer = new(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(50),
+        };
+
         /// <summary>是否停在状态信息页的「系统变量」分段（决定定时器启停）。</summary>
         private bool _sysViewActive;
 
@@ -427,6 +462,11 @@ namespace DSH_Modbus采集工具
             SystemVarMonitorItemsControl.ItemsSource = _sysVarRows;
             SystemVarMonitorCountText.Text = $"共 {_sysVarRows.Count} 个";
             _sysVarTimer.Tick += (_, _) => RefreshSystemVarValues();
+
+            // 采集执行（P3.1）：与上面三个定时器不同，这个**不随页面可见性启停**，
+            // 启动即常驻（见 _acqTimer 的注释）
+            _acqTimer.Tick += (_, _) => RunAcquisitionTick();
+            _acqTimer.Start();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -611,6 +651,12 @@ namespace DSH_Modbus采集工具
                 OverviewPanel.Visibility = ReferenceEquals(sender, OverviewNav)
                     ? Visibility.Visible
                     : Visibility.Collapsed;
+
+                // 切回总览时把日志滚回最新一行（折叠期间追加的行没有滚动过）
+                if (OverviewPanel.Visibility == Visibility.Visible)
+                {
+                    RestoreLogScrollPosition();
+                }
             }
 
             if (StatusInfoPanel != null)
@@ -1473,7 +1519,15 @@ namespace DSH_Modbus采集工具
         {
             LogEntry entry = _logPresenter.Append(message, level, _logWriter);
 
-            DeviceLogList.ScrollIntoView(entry);
+            // 只在用户没往上翻时才自动跟随。他往上翻（想读某条历史）时每来一拍
+            // 就把视图拽回底部，那是**主动打断**，比刷屏更让人恼火。
+            // 滑回底部即自动恢复跟随，不需要额外按钮（聊天窗口的通行做法）。
+            // ⚠️ 判定用「用户是否翻上去」这个**显式状态**，不用「此刻是否在底部」——
+            // 后者在日志面板被折叠（停在别的页面）时必然为假，切回来就再也不跟随了
+            if (_logFollowTail)
+            {
+                DeviceLogList.ScrollIntoView(entry);
+            }
 
             // 设置页可见时刷新失败提示（失败 → 显示，自愈后 → 自动隐藏）。不可见就不刷 ——
             // 日志是高频旁路，让它去更新一个没人看的 TextBlock 没有必要。
@@ -1481,6 +1535,113 @@ namespace DSH_Modbus采集工具
             {
                 RefreshLogSaveStatus();
             }
+        }
+
+        /// <summary>
+        /// 日志是否跟随最新一行。默认跟随；用户把日志往上翻时置 false，滑回底部自动恢复。
+        /// <para>
+        /// ⚠️ 不用「此刻是否在底部」当场判定：日志面板只在总览页可见，
+        /// 停在别的页面时它是折叠的、量不到高度，判定必然是「不在底部」——
+        /// 切回总览后就再也不跟随了（实测踩到：切回来停在最老的那几条上）。
+        /// </para>
+        /// </summary>
+        private bool _logFollowTail = true;
+
+        /// <summary>
+        /// 用户滚动日志时更新跟随状态。**只认用户滚动**：内容增长也会触发 ScrollChanged，
+        /// 那种情况下 <see cref="ScrollChangedEventArgs.ExtentHeightChange"/> 不为 0，
+        /// 说明是我们在追加、不是用户在翻，不能据此关掉跟随。
+        /// </summary>
+        private void DeviceLogList_ScrollChanged(object sender, ScrollChangedEventArgs e)
+        {
+            // ⚠️ 面板折叠/展开也会触发 ScrollChanged，而且此时 ViewportHeight 会变成 0，
+            // 下面的「到底了吗」必然判成「没到底」—— 于是**切个页面就把跟随关掉了**，
+            // 切回来停在最老一条（实测踩到）。不可见时一律不碰状态。
+            if (!DeviceLogList.IsVisible)
+            {
+                return;
+            }
+
+            // 内容增长也会触发 ScrollChanged，但那是**我们**在追加、不是用户在翻。
+            // 只有高度没变、偏移变了，才是用户真的滚了一下
+            if (Math.Abs(e.ExtentHeightChange) > 0.5)
+            {
+                return;
+            }
+
+            // 差一行以内都算「在底部」：ScrollIntoView 之后常差零点几像素，
+            // 严格相等会把「刚滚到底」误判成「还差一点」
+            _logFollowTail = e.VerticalOffset >= e.ExtentHeight - e.ViewportHeight - 1.0;
+        }
+
+        /// <summary>
+        /// 切回总览页时，若仍在跟随就补一次滚动 —— 折叠期间追加的行没有滚动过，
+        /// 展开后列表停在顶部。
+        /// <para>
+        /// ⚠️ 必须排到 <see cref="DispatcherPriority.Loaded"/>：可见性刚变的那一帧
+        /// 列表还没重新布局，此时 <c>ScrollIntoView</c> 是空操作（实测：切回来仍停在最老一条）。
+        /// 等布局完成再滚，才真的落到最新一行。
+        /// </para>
+        /// </summary>
+        private void RestoreLogScrollPosition()
+        {
+            if (!_logFollowTail || _logPresenter.Entries.Count == 0)
+            {
+                return;
+            }
+
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Loaded,
+                new Action(() =>
+                {
+                    if (!_logFollowTail || _logPresenter.Entries.Count == 0)
+                    {
+                        return;
+                    }
+
+                    // 先把刚展开的布局跑完：此刻 ScrollViewer 的 ExtentHeight 还是 0，
+                    // 不 UpdateLayout 直接滚，滚多远都是「已经到底」，等于没滚
+                    DeviceLogList.UpdateLayout();
+
+                    // 直接操作 ScrollViewer 而不是 ScrollIntoView：后者对虚拟化列表
+                    // 在「刚可见」这一帧不生效（实测：切回来仍停在最老一条）
+                    ScrollViewer? viewer = FindScrollViewer(DeviceLogList);
+                    if (viewer != null)
+                    {
+                        viewer.ScrollToEnd();
+                    }
+                    else
+                    {
+                        DeviceLogList.ScrollIntoView(_logPresenter.Entries[^1]);
+                    }
+                }));
+        }
+
+        /// <summary>在视觉树里找第一个 <see cref="ScrollViewer"/>。</summary>
+        private static ScrollViewer? FindScrollViewer(DependencyObject? root)
+        {
+            if (root == null)
+            {
+                return null;
+            }
+
+            int count = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(root, i);
+                if (child is ScrollViewer viewer)
+                {
+                    return viewer;
+                }
+
+                ScrollViewer? nested = FindScrollViewer(child);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+
+            return null;
         }
 
         private void ClearDeviceLogButton_Click(object sender, RoutedEventArgs e)
@@ -1802,7 +1963,8 @@ namespace DSH_Modbus采集工具
             VisiblePage: _visiblePage,
             PollIntervalMs: _pollIntervalMs,
             MachineViewActive: _machineViewActive,
-            MachineGlobals: _machineGlobals);
+            MachineGlobals: _machineGlobals,
+            AcquisitionGlobals: _acquisitionGlobals);
 
         bool ICollectorHost.IsCurrentConnection(ModbusTcpClient client, CancellationToken token) =>
             IsCurrentConnection(client, token);
@@ -2044,6 +2206,64 @@ namespace DSH_Modbus采集工具
             }
 
             _machineGlobals = needed;
+        }
+
+        /// <summary>
+        /// 重算「采集任务组引用了哪些全局变量」（P3.1）。
+        /// <para>
+        /// 只算**启用**的组：停用的组不采，把它的变量也拖上总线等于白读。
+        /// </para>
+        /// <para>
+        /// 写入类型的「来源变量」也要收进来 —— 写的时候要从它取值；
+        /// 「写入变量」同样收，因为记录表格里要写它的值。
+        /// </para>
+        /// <para>
+        /// 调用时机与 <see cref="RefreshMachineGlobals"/> 一致（表达式 / 变量 / 任务改动时），
+        /// 同样**不放进每拍** —— <see cref="ICollectorHost.CaptureSnapshot"/> 必须便宜。
+        /// </para>
+        /// </summary>
+        private void RefreshAcquisitionGlobals()
+        {
+            var needed = new List<GlobalVariable>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            // 只收**全局变量**：系统变量是程序算出来的，不上总线、不需要采集。
+            // 来源变量允许填系统变量（用户定案 2026-10-26），这里查不到就自然跳过 ——
+            // 不是漏写，别在这里给它补一条"查系统变量"的分支
+            void Take(string? name)
+            {
+                if (string.IsNullOrWhiteSpace(name) || !seen.Add(name))
+                {
+                    return;
+                }
+
+                if (_globalVarSet.FindByName(name) is { } variable)
+                {
+                    needed.Add(variable);
+                }
+            }
+
+            foreach (AcquisitionTaskItem task in _acqTaskSet.Items)
+            {
+                // 停用的组不采。配置错误的组走同一条路径：它的「有效启用」就是 false
+                // （用户定案 2026-10-27），所以这里不必再单独判配置
+                if (!task.EffectiveEnabled)
+                {
+                    continue;
+                }
+
+                foreach (AcquisitionItemRow row in task.Items)
+                {
+                    Take(row.VariableName);
+
+                    if (task.IsWrite)
+                    {
+                        Take(row.SourceVariableName);
+                    }
+                }
+            }
+
+            _acquisitionGlobals = needed;
         }
 
         /// <summary>当前是否停在「PLC状态机」视图（页头下拉框第 0 项）。</summary>
@@ -2341,6 +2561,10 @@ namespace DSH_Modbus采集工具
             {
                 AcquisitionTaskCountText.Text = n == 0 ? string.Empty : $"共 {n} 组";
             }
+
+            // 任务组增删后要重算「哪些变量需要常驻采集」—— 漏掉这里的话，
+            // 新加的组要等到下次改表达式才真正开始采
+            RefreshAcquisitionGlobals();
         }
 
         private void AddAcquisitionTask_Click(object sender, RoutedEventArgs e)
@@ -2406,6 +2630,7 @@ namespace DSH_Modbus采集工具
 
             task.AddItem();
             _acqTaskSet.Save();
+            RefreshAcquisitionGlobals();
             AcquisitionTaskItemsControl?.UpdateLayout();
         }
 
@@ -2426,6 +2651,7 @@ namespace DSH_Modbus采集工具
 
             task.ClearItems();
             _acqTaskSet.Save();
+            RefreshAcquisitionGlobals();
         }
 
         private void RemoveAcquisitionItem_Click(object sender, RoutedEventArgs e)
@@ -2443,6 +2669,7 @@ namespace DSH_Modbus采集工具
 
             task.RemoveItem(row);
             _acqTaskSet.Save();
+            RefreshAcquisitionGlobals();
         }
 
         private void ToggleAcquisitionTaskExpand_Click(object sender, RoutedEventArgs e)
@@ -2457,8 +2684,13 @@ namespace DSH_Modbus采集工具
 
         private void AcquisitionTaskEnable_Click(object sender, RoutedEventArgs e)
         {
-            // IsChecked 已双向绑定到 Enabled，这里只负责落盘
+            // IsChecked 双向绑定到 EffectiveEnabled（它的 setter 把用户意图写回 Model.Enabled），
+            // 这里只负责落盘。配置错误时开关 IsEnabled=false，Click 根本不会触发，
+            // 所以落盘的永远是用户的真实意图，不会被「配置错误自动关」污染。
             _acqTaskSet.Save();
+
+            // 启停会改变「要不要采这个组引用的变量」，必须重算
+            RefreshAcquisitionGlobals();
         }
 
         private void OpenAcquisitionTaskDialog_Click(object sender, RoutedEventArgs e)
@@ -2480,12 +2712,346 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 改名走集合的唯一入口（含重名校验），其余四项走包装的方法（含刷新）
+            // 改名走集合的唯一入口（含重名校验），其余各项走包装的方法（含刷新）
+            string oldName = task.Name;
             _acqTaskSet.Rename(task, dialog.TaskName, out _);
             task.ApplyDialogResult(
-                dialog.KindValue, dialog.TriggerValue, dialog.PeriodSecondsValue, dialog.ExpressionText);
+                dialog.KindValue, dialog.TriggerValue, dialog.PeriodSecondsValue, dialog.ExpressionText,
+                dialog.RecordEnabledValue, dialog.SavePathValue);
+
+            // 改名不搬家：文件夹按名称建，改完新数据进新文件夹，旧的原样留着。
+            // 不提示一句的话，用户会以为历史数据也跟着过去了
+            if (!string.Equals(oldName, task.Name, StringComparison.Ordinal)
+                && task.Model.RecordEnabled)
+            {
+                MessageBox.Show(this,
+                    $"任务组已改名为「{task.Name}」。\n\n"
+                    + $"新数据将写入新文件夹：{task.Name}\\n"
+                    + $"原文件夹「{oldName}」保持不动，历史数据仍在里面。",
+                    "改名提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
 
             _acqTaskSet.Save();
+
+            // 类型 / 启用 / 表达式 / 数据项引用都可能变，常驻清单与运行态都要重算
+            RefreshAcquisitionGlobals();
+            _acqRuntime.Clear();
+        }
+
+        // ---------- 采集执行（P3.1） ----------
+
+        /// <summary>
+        /// 采集执行的一拍：逐个启用的任务组判定该不该采，该采的写一行 CSV。
+        /// <para>
+        /// ⚠️ 这里只做**判定与记录**，不负责取值 —— 变量的值由采集引擎每拍
+        /// 常驻读进 <see cref="GlobalVariable.Value"/>（见 <see cref="RefreshAcquisitionGlobals"/>），
+        /// 本方法直接拿来用。这样切换页面不会影响记录，也不会为了记录多发一遍报文。
+        /// </para>
+        /// </summary>
+        private void RunAcquisitionTick()
+        {
+            if (_windowClosed || _acqTaskSet.Items.Count == 0)
+            {
+                return;
+            }
+
+            // ⚠️ 未连接时**不记录**。断开期间 GlobalVariable.Value 停在最后一次读到的值，
+            // 照记的话 CSV 会连续出现同一个数（甚至初始值 0），事后看与「设备真的稳定输出 0」
+            // 完全无法区分 —— 这比缺一段记录更糟，因为它是**假的**。
+            // 断线本身另有日志与底栏提示，用户知道没在采。
+            if (!_session.IsConnected)
+            {
+                return;
+            }
+
+            DateTime now = DateTime.Now;
+
+            // 触发式表达式可能引用系统变量（如 SysRun），而 _machineVariables 里的系统快照
+            // 平时只由状态机定时器刷新 —— 那个定时器在别的页面是停的。不在这里补一次，
+            // 切走页面后表达式就会拿**过期的值**求值，触发沿永远等不到（或乱触发）。
+            // 只在确实有触发式任务时才付这份开销。
+            if (_acqTaskSet.Items.Any(x => x.Model.Enabled
+                                           && x.Model.Trigger == AcquisitionTriggerMode.Edge))
+            {
+                _machineVariables.UpdateSystemValues(
+                    SystemVariableValues.Capture(now, _runClock.Elapsed));
+            }
+
+            foreach (AcquisitionTaskItem item in _acqTaskSet.Items)
+            {
+                AcquisitionTask task = item.Model;
+
+                // 一个门：停用与「配置错误」都算不启用（用户定案 2026-10-27）。
+                // 位置刻意在 GetOrCreateRuntime **之前**：调度不推进，等配置修好后仍从
+                // 「现在 + 一个周期」开始，不会立刻补写一拍本该早就采过的数据。
+                if (!item.EffectiveEnabled)
+                {
+                    continue;
+                }
+
+                AcquisitionTaskState state = GetOrCreateRuntime(task);
+
+                // 写入任务：上一笔还没回来就不排队（节拍 50ms，一次 Modbus 往返可能更久）。
+                // 位置在 ShouldFire **之前** —— 挡掉这一拍不能顺手把调度推后，
+                // 否则一次慢写入会把整个周期往后挤。
+                if (task.Kind == AcquisitionTaskKind.Write && state.WriteInFlight)
+                {
+                    continue;
+                }
+
+                bool conditionTrue = EvaluateTrigger(task, state);
+
+                if (!AcquisitionTrigger.ShouldFire(task, state, now, conditionTrue))
+                {
+                    continue;
+                }
+
+                // 写入任务的记录开关只决定**记不记文件**，下发本身照跑，
+                // 所以这个分支必须在下面的 RecordEnabled 判断之前。
+                if (task.Kind == AcquisitionTaskKind.Write)
+                {
+                    BeginWriteTask(item, task, state, now);
+                    continue;
+                }
+
+                // 没开记录 = 只跑不记。仍要推进 state（上面已经推进过），
+                // 否则一旦打开记录会立刻补采一拍，那一拍的时间戳是打开那一刻、不是本该采的时刻。
+                // 但日志照样记一条 —— 「任务在跑、只是不落文件」与「任务没跑」是两回事，
+                // 日志里必须分得开（用户定案：写成「执行完成（未启用数据记录）」）
+                if (!task.RecordEnabled)
+                {
+                    AppendDeviceLog(
+                        AcquisitionTaskRules.DescribeLogSuccess(task, item.Index),
+                        DeviceLogLevel.Neutral);
+                    continue;
+                }
+
+                string error = AcquisitionCsv.Append(task, state, now, _globalVarSet.FindByName);
+
+                // 每次执行都记一条（用户定案 C）：成功不带原因、失败必带。
+                // 写盘失败不弹窗（50ms 一拍会弹到用户崩溃），只走日志
+                AppendDeviceLog(
+                    error.Length == 0
+                        ? AcquisitionTaskRules.DescribeLogSuccess(task, item.Index)
+                        : AcquisitionTaskRules.DescribeLogFailure(task, item.Index, error),
+                    error.Length == 0 ? DeviceLogLevel.Neutral : DeviceLogLevel.Warning);
+            }
+        }
+
+        /// <summary>
+        /// 起一次写入任务的下发（fire-and-forget）。
+        /// <para>
+        /// ⚠️ **不能在这里 await**：本方法是 50ms 定时器的回调，一 await 就把整个采集节拍
+        /// 卡在一次 Modbus 往返上，别的任务组跟着停。改用「起一个后台流程 + 用
+        /// <see cref="AcquisitionTaskState.WriteInFlight"/> 挡住重入」。
+        /// </para>
+        /// </summary>
+        private void BeginWriteTask(
+            AcquisitionTaskItem item, AcquisitionTask task, AcquisitionTaskState state, DateTime now)
+        {
+            state.WriteInFlight = true;
+            _ = RunWriteTaskAsync(item, task, state, now);
+        }
+
+        /// <summary>
+        /// 执行一次写入任务：把每个数据项的**来源变量值**编码后写到**写入变量**的地址上。
+        /// <para>
+        /// 口径（用户定案 2026-10-27）：
+        /// 一项失败**不短路**，其余项照写 —— Modbus 本来就没有事务，停下来也换不来原子性，
+        /// 只会让「5 项里坏了 1 项」变成「5 项一项都没写」。
+        /// 没有映射地址的项**静默跳过**（用户定案：不算配置错误）。
+        /// </para>
+        /// <para>
+        /// 未连接时**什么都不做**：重连后也不补发（陈年的一笔写下去比不写更危险）。
+        /// </para>
+        /// </summary>
+        private async Task RunWriteTaskAsync(
+            AcquisitionTaskItem item, AcquisitionTask task, AcquisitionTaskState state, DateTime now)
+        {
+            try
+            {
+                ModbusTcpClient? modbus = _session.Client;
+                if (modbus == null || !_session.IsConnected)
+                {
+                    return;
+                }
+
+                int total = task.Items.Count;
+                if (total == 0)
+                {
+                    return;
+                }
+
+                // 来源变量可能是系统变量（如 sys_True / sys_DateTime_Second），
+                // 它的值要现算。只在真的遇到系统变量时才付这份开销。
+                IReadOnlyDictionary<string, string>? systemValues = null;
+
+                List<string> failures = new List<string>();
+
+                for (int i = 0; i < total; i++)
+                {
+                    AcquisitionItem row = task.Items[i];
+                    int index = i + 1;
+
+                    AcquisitionSource? source =
+                        AcquisitionSource.Resolve(row.SourceVariableName, _globalVarSet.FindByName);
+                    if (source == null)
+                    {
+                        // 正常情况下走不到：配置错误已经被开关挡在门外了
+                        failures.Add(AcquisitionWrite.DescribeItemFailure(
+                            index, row.Name, "来源变量「" + row.SourceVariableName + "」不存在"));
+                        continue;
+                    }
+
+                    if (source.IsSystemVariable && systemValues == null)
+                    {
+                        systemValues = SystemVariableValues.Capture(now, _runClock.Elapsed);
+                    }
+
+                    string? sourceText = AcquisitionSource.ValueOf(
+                        row.SourceVariableName,
+                        _globalVarSet.FindByName,
+                        systemValues);
+
+                    if (sourceText == null)
+                    {
+                        failures.Add(AcquisitionWrite.DescribeItemFailure(
+                            index, row.Name, "取不到来源变量的值"));
+                        continue;
+                    }
+
+                    AcquisitionWriteStatus status = AcquisitionWrite.TryBuild(
+                        _globalVarSet.FindByName(row.VariableName),
+                        sourceText,
+                        source.Format,
+                        _byteOrders,
+                        out WritePlan plan,
+                        out string buildError);
+
+                    if (status == AcquisitionWriteStatus.Skipped)
+                    {
+                        continue; // 没有映射地址：不写、不报错
+                    }
+
+                    if (status == AcquisitionWriteStatus.Failed)
+                    {
+                        failures.Add(AcquisitionWrite.DescribeItemFailure(index, row.Name, buildError));
+                        continue;
+                    }
+
+                    try
+                    {
+                        await WriteToDeviceAsync(modbus, plan).ConfigureAwait(true);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        failures.Add(AcquisitionWrite.DescribeItemFailure(index, row.Name, "写入已取消"));
+                        if (!_session.IsConnected)
+                        {
+                            break; // 已经断了，后面的项没必要再试
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add(AcquisitionWrite.DescribeItemFailure(index, row.Name, ClassifyWriteError(ex)));
+                        if (!_session.IsConnected)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                string reason = AcquisitionWrite.DescribeFailure(failures, total);
+
+                // 记录口径不变：记的是**写入变量的回读值**（来源变量不记，用户定案）。
+                // 写失败也照记 —— 文件反映的是 PLC 上的真实状态，读回值本身就是真的。
+                if (task.RecordEnabled)
+                {
+                    string csvError = AcquisitionCsv.Append(task, state, now, _globalVarSet.FindByName);
+                    if (csvError.Length > 0)
+                    {
+                        reason = reason.Length == 0 ? csvError : reason + "；" + csvError;
+                    }
+                }
+
+                AppendDeviceLog(
+                    reason.Length == 0
+                        ? AcquisitionTaskRules.DescribeLogSuccess(task, item.Index)
+                        : AcquisitionTaskRules.DescribeLogFailure(task, item.Index, reason),
+                    reason.Length == 0 ? DeviceLogLevel.Neutral : DeviceLogLevel.Warning);
+            }
+            catch (Exception ex)
+            {
+                // fire-and-forget 里漏出来的异常没人接，必须自己收掉，否则进程会静默炸掉
+                AppendDeviceLog(
+                    AcquisitionTaskRules.DescribeLogFailure(task, item.Index, ex.Message),
+                    DeviceLogLevel.Warning);
+            }
+            finally
+            {
+                state.WriteInFlight = false;
+            }
+        }
+
+        /// <summary>取该组的运行态；没有就建一个。</summary>
+        private AcquisitionTaskState GetOrCreateRuntime(AcquisitionTask task)
+        {
+            if (!_acqRuntime.TryGetValue(task, out AcquisitionTaskState? state))
+            {
+                state = new AcquisitionTaskState();
+
+                // 首拍**延后一个周期**：本定时器与采集引擎是两个独立的 DispatcherTimer，
+                // 启动瞬间的先后没有保证。若首拍立刻记，多半会赶在第一次轮询之前，
+                // 把变量的**初始值**（0 / 空串）写进文件第一行 —— 实测确实如此。
+                // 延后一拍，第一行就是真值了。
+                double seconds = task.PeriodSeconds;
+                if (double.IsNaN(seconds) || seconds < AcquisitionTaskRules.MinPeriodSeconds)
+                {
+                    seconds = AcquisitionTaskRules.DefaultPeriodSeconds;
+                }
+
+                state.NextFireLocal = DateTime.Now.AddSeconds(seconds);
+                _acqRuntime[task] = state;
+            }
+
+            return state;
+        }
+
+        /// <summary>
+        /// 求触发表达式的本拍取值。
+        /// <para>
+        /// 周期式不需要表达式，直接返回 <c>false</c>（那个值只有触发式才看）。
+        /// </para>
+        /// <para>
+        /// 表达式**编译结果缓存**在运行态里：50ms 一拍，每拍重新词法+语法分析纯属浪费。
+        /// 原文变了才重编 —— 用户在对话框里改了表达式，下一拍就生效。
+        /// </para>
+        /// </summary>
+        private bool EvaluateTrigger(AcquisitionTask task, AcquisitionTaskState state)
+        {
+            if (task.Trigger != AcquisitionTriggerMode.Edge)
+            {
+                return false;
+            }
+
+            string source = task.Expression ?? string.Empty;
+
+            if (!string.Equals(state.CompiledSource, source, StringComparison.Ordinal)
+                || state.Compiled == null)
+            {
+                state.CompiledSource = source;
+                state.Compiled = CompiledExpression.TryParse(source, out CompiledExpression? compiled, out _)
+                    ? compiled ?? CompiledExpression.Empty
+                    : CompiledExpression.Empty;
+            }
+
+            if (state.Compiled.IsEmpty)
+            {
+                // 空表达式恒为假 —— 与状态机同一口径，等于「永不触发」
+                return false;
+            }
+
+            return state.Compiled.TryEvaluate(_machineVariables, out bool value, out _) && value;
         }
 
         /// <summary>任务名是否已被人占用（把「自己」排除掉，否则改别的字段也会被自己挡下来）。</summary>
@@ -2513,6 +3079,25 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
+        /// 数据项「来源变量」框加载：挂**系统变量 + 全局变量**补全。
+        /// <para>
+        /// ⚠️ 与旁边的「写入变量」框**不共用**候选清单：来源变量只是「值从哪来」，
+        /// 系统变量完全可用；写入变量要落到 PLC 地址上，系统变量没有地址，
+        /// 混进候选等于让人填完才发现写不出去。
+        /// </para>
+        /// </summary>
+        private void AcquisitionSourceBox_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox tb || _nameCompletions.TryGetValue(tb, out _))
+            {
+                return;
+            }
+
+            var popup = Ui.CompletionPopup.Attach(tb, () => CompletionSource.ForSourceVariable(GlobalVarModels));
+            _nameCompletions.Add(tb, popup);
+        }
+
+        /// <summary>
         /// 数据项输入框失焦：落盘。
         /// <para>
         /// 项名称与变量名称都是<b>逐字符进模型</b>的（否则右列「数据类型」不会跟着变），
@@ -2522,6 +3107,9 @@ namespace DSH_Modbus采集工具
         private void AcquisitionItemField_LostFocus(object sender, RoutedEventArgs e)
         {
             _acqTaskSet.Save();
+
+            // 变量名改了 → 该组引用的变量集合变了 → 常驻采集清单要跟着变
+            RefreshAcquisitionGlobals();
         }
 
         /// <summary>

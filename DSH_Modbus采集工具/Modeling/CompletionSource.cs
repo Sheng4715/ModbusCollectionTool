@@ -160,6 +160,21 @@ namespace DSH_Modbus采集工具.Modeling
         }
 
         /// <summary>
+        /// 采集数据「来源变量」框的候选：**系统变量 + 全局变量**。
+        /// <para>
+        /// 与 <see cref="ForExpression"/> 同一口径，而不是 <see cref="ForMonitorName"/>：
+        /// 来源变量只是「值从哪来」，不落 PLC 地址，系统变量（<c>sys_True</c>、
+        /// <c>sys_DateTime_Second</c>…）完全可用（用户定案，2026-10-26）。
+        /// </para>
+        /// <para>
+        /// ⚠️ **写入变量**那一列不能共用这个 —— 它要映射到 PLC 地址，
+        /// 系统变量没有地址，混进去只会让人填了才发现写不出去。
+        /// </para>
+        /// </summary>
+        public static List<CompletionCandidate> ForSourceVariable(IEnumerable<GlobalVariable>? globals) =>
+            ForExpression(globals);
+
+        /// <summary>
         /// 自由监控「元件名称」框的候选：**只有全局变量**。
         /// <para>
         /// 系统变量不进这里：它们是程序算出来的只读值，不映射任何 PLC 地址，

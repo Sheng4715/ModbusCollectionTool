@@ -581,6 +581,37 @@
         </Style>
 
         <!--
+            采集数据「来源变量」框：名字查不到时**字变红**。
+            ⚠️ 不能只靠 ToolTip 提示 —— 用户不知道它错，就不会去悬停，等于没有任何反馈。
+            与右侧「数据类型」列的红字同一套语义。
+            ⚠️ 必须定义在 MonitorInlineTextBox **之后**：BasedOn 走 StaticResource，
+            资源字典按顺序解析，放前面会找不到（解析期就抛）。
+        -->
+        <Style x:Key="AcquisitionSourceBox" TargetType="TextBox" BasedOn="{StaticResource MonitorInlineTextBox}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasSourceError}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Danger}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!--
+            采集数据「写入变量」框：两种状态都要看得见。
+            · **不可编辑**（写入类型下还没填来源变量）：靠 MonitorInlineTextBox 模板自带的
+              IsEnabled=False 触发器变灰（底色 Brush.Input.Background.Disabled + 字色 Muted），
+              这里不必再补一套；
+            · **不合法**（变量查不到 / 数据类型与来源变量不同）：字变红，与「来源变量」同一套语义。
+            ⚠️ 同样必须定义在 MonitorInlineTextBox 之后（BasedOn 走 StaticResource，按顺序解析）。
+        -->
+        <Style x:Key="AcquisitionTargetBox" TargetType="TextBox" BasedOn="{StaticResource MonitorInlineTextBox}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasVariableError}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource Brush.Danger}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!--
             「当前值」输入框：**框线风格**（白底 + 细边框 + 小圆角），
             与设备配置页的表单输入框一致 —— 行内下拉框是胶囊、这一格是输入框，
             两者本来就不该长得一样。
@@ -1241,11 +1272,19 @@
         </DataTemplate>
 
         <!-- ================= 采集任务（P3.1）：数据项行 =================
-             子表的一行：序号 | 项名称[] | 变量名称[] | 数据类型（只读）| 删除。
+             子表的一行，**列随任务类型变**：
+               · 读取类型：序号 | 项名称[] | 读取变量[] | 数据类型（只读）| 删除
+               · 写入类型：序号 | 项名称[] | 来源变量[] | 写入变量[] | 数据类型（只读）| 删除
              · **数据类型只读**（需求）：它由被引用的全局变量反推，故是 TextBlock 不是下拉框 ——
                与旁边两个输入框底色不同，这个视觉差异本身就在说「这列不可选」。
-             · 变量名称是**能填变量名的地方**，按 P6.5 接全局变量补全（Loaded 里挂）。
-             · 变量名填了但表里没有 → 类型列标红（DataTrigger 绑 HasVariableError）。 -->
+             · 两个变量框都是**能填变量名的地方**，按 P6.5 接全局变量补全（Loaded 里挂）。
+             · 变量名填了但表里没有 → 类型列标红（DataTrigger 绑 HasVariableError）。
+             · 写入类型下三条硬规则（用户定案 2026-10-27）：
+               ① 来源变量没填对之前，**写入变量置灰不可编辑**（IsEnabled 绑 CanEditVariable）；
+               ② 写入变量的数据类型必须与来源变量**完全相同**，不同则输入框与类型列同时标红；
+               ③ 写入变量**允许未映射地址**（纯内存变量），不算错误 —— 地址是以后补的事。
+             ⚠️ 「来源变量」那一列**不是**用 Visibility 藏起来的：列宽由 Style 的 DataTrigger
+                在 0 与 150 之间切。用 Visibility 的话列宽仍占着，读取类型下会凭空空出一截。 -->
         <DataTemplate x:Key="AcquisitionItemRowTemplate">
             <Border Height="30" Margin="0,0,0,2"
                     Background="Transparent"
@@ -1255,7 +1294,24 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
                         <ColumnDefinition Width="150"/>  <!-- 项名称 -->
-                        <ColumnDefinition Width="180"/>  <!-- 变量名称 -->
+
+                        <!-- 来源变量：仅写入类型占位。Width 只在 Style 里给，不写属性 ——
+                             属性值是局部值，会压过 Style 触发器，列宽就切不动了 -->
+                        <ColumnDefinition>
+                            <ColumnDefinition.Style>
+                                <Style TargetType="ColumnDefinition">
+                                    <Setter Property="Width" Value="0"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DataContext.IsWrite,
+                                                       RelativeSource={RelativeSource AncestorType=ItemsControl}}" Value="True">
+                                            <Setter Property="Width" Value="150"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ColumnDefinition.Style>
+                        </ColumnDefinition>
+
+                        <ColumnDefinition Width="180"/>  <!-- 读取变量 / 写入变量 -->
                         <ColumnDefinition Width="*"/>    <!-- 数据类型（只读） -->
                         <ColumnDefinition Width="30"/>   <!-- 删除 -->
                     </Grid.ColumnDefinitions>
@@ -1270,15 +1326,32 @@
                              Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
                              LostFocus="AcquisitionItemField_LostFocus"/>
 
-                    <TextBox Grid.Column="2" x:Name="ItemVarBox"
-                             Style="{StaticResource MonitorInlineTextBox}"
+                    <!-- 来源变量（仅写入类型可见，列宽为 0 时它自然被挤没）
+                         ⚠️ 补全挂的是**另一个**处理器：来源变量可以是系统变量，
+                         写入变量不行（要落 PLC 地址） -->
+                    <TextBox Grid.Column="2"
+                             Style="{StaticResource AcquisitionSourceBox}"
                              Margin="0,0,6,0"
+                             Text="{Binding SourceVariableName, UpdateSourceTrigger=PropertyChanged}"
+                             ToolTip="{Binding SourceHint}"
+                             Loaded="AcquisitionSourceBox_Loaded"
+                             LostFocus="AcquisitionItemField_LostFocus"/>
+
+                    <!-- 读取变量 / 写入变量：同一个字段，标题随类型变。
+                         · 写入类型下**来源变量填对之前置灰不可编辑**（IsEnabled 绑 CanEditVariable）；
+                         · ToolTipService.ShowOnDisabled 必须为真：禁用的控件默认不弹 ToolTip，
+                           而「先填来源变量」这句话恰恰只在禁用状态才需要看见。 -->
+                    <TextBox Grid.Column="3"
+                             Style="{StaticResource AcquisitionTargetBox}"
+                             Margin="0,0,6,0"
+                             IsEnabled="{Binding CanEditVariable}"
+                             ToolTipService.ShowOnDisabled="True"
                              Text="{Binding VariableName, UpdateSourceTrigger=PropertyChanged}"
                              ToolTip="{Binding VariableHint}"
                              Loaded="AcquisitionItemVariableBox_Loaded"
                              LostFocus="AcquisitionItemField_LostFocus"/>
 
-                    <TextBlock Grid.Column="3" Text="{Binding TypeDisplayName}"
+                    <TextBlock Grid.Column="4" Text="{Binding TypeDisplayName}"
                                Margin="6,0,6,0"
                                FontSize="12" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"
@@ -1295,7 +1368,7 @@
                         </TextBlock.Style>
                     </TextBlock>
 
-                    <Button Grid.Column="4"
+                    <Button Grid.Column="5"
                             Content="&#xE711;"
                             AutomationProperties.Name="删除本数据项"
                             ToolTip="删除本数据项"
@@ -1332,8 +1405,8 @@
                             <ColumnDefinition Width="*" MinWidth="120"/>  <!-- 任务名称 -->
                             <ColumnDefinition Width="90"/>   <!-- 任务类型 -->
                             <ColumnDefinition Width="140"/>  <!-- 执行方式 -->
-                            <ColumnDefinition Width="110"/>  <!-- 启用 -->
-                            <ColumnDefinition Width="150"/>  <!-- 共N项 -->
+                            <ColumnDefinition Width="180"/>  <!-- 启用（开关 96 + 提示 66，见下） -->
+                            <ColumnDefinition Width="80"/>   <!-- 共N项 -->
                             <ColumnDefinition Width="120"/>  <!-- … ↑↓ -->
                         </Grid.ColumnDefinitions>
 
@@ -1355,11 +1428,26 @@
                                    FontSize="12" Foreground="{DynamicResource Brush.Text.Secondary}"
                                    VerticalAlignment="Center"/>
 
-                        <CheckBox Grid.Column="4"
-                                  HorizontalAlignment="Left"
-                                  Style="{StaticResource AcqEnableSwitch}"
-                                  IsChecked="{Binding Enabled, Mode=TwoWay}"
-                                  Click="AcquisitionTaskEnable_Click"/>
+                        <!-- 启用开关 + 配置错误提示（用户定案 2026-10-27）：
+                             配置错误时开关显示为「关」**并且灰掉点不动**，右侧琥珀色文字说明原因。
+                             提示只给四个字、不列明细 —— 明细看子表：填错的变量列本来就各自标红了。
+                             ⚠️ IsChecked 绑的是 EffectiveEnabled（= 用户意图 && 没有配置错误），
+                             不是 Model.Enabled。真去改写模型会把「这个组用户是想启用的」抹掉，
+                             而采集配置是边输边存：清空变量名重打的那一瞬间也算配置错误，
+                             一旦据此落盘，打完字这组就永久停采了，且没留任何痕迹。 -->
+                        <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                            <CheckBox Style="{StaticResource AcqEnableSwitch}"
+                                      IsChecked="{Binding EffectiveEnabled, Mode=TwoWay}"
+                                      IsEnabled="{Binding CanToggleEnabled}"
+                                      Click="AcquisitionTaskEnable_Click"/>
+
+                            <TextBlock Margin="8,0,0,0"
+                                       Text="{Binding ConfigErrorText}"
+                                       FontSize="11"
+                                       Foreground="{DynamicResource Brush.Warning}"
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding HasConfigError, Converter={StaticResource BoolToVis}}"/>
+                        </StackPanel>
 
                         <!-- 只报数量，**不放按钮**：增删数据项都在子表里（+ 在子表表头右侧、
                              删除在每行行尾），这里再放一套就成两个入口做同一件事 -->
@@ -1423,18 +1511,45 @@
                          一个在表头（26×26 主色悬停），一个在子表表头，层级靠位置区分。 -->
                         <Grid Grid.Row="0" Height="26">
                             <Grid>
-                                <!-- 列定义必须与 AcquisitionItemRowTemplate 完全一致 -->
+                                <!-- 列定义必须与 AcquisitionItemRowTemplate 完全一致（含随类型变的来源列） -->
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="34"/>   <!-- 序号 -->
                                     <ColumnDefinition Width="150"/>  <!-- 项名称 -->
-                                    <ColumnDefinition Width="180"/>  <!-- 变量名称 -->
+
+                                    <!-- 来源变量：仅写入类型占位，Width 只由 Style 给 -->
+                                    <ColumnDefinition>
+                                        <ColumnDefinition.Style>
+                                            <Style TargetType="ColumnDefinition">
+                                                <Setter Property="Width" Value="0"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsWrite}" Value="True">
+                                                        <Setter Property="Width" Value="150"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ColumnDefinition.Style>
+                                    </ColumnDefinition>
+
+                                    <ColumnDefinition Width="180"/>  <!-- 读取变量 / 写入变量 -->
                                     <ColumnDefinition Width="*"/>    <!-- 数据类型 -->
                                     <ColumnDefinition Width="30"/>   <!-- 行尾 × -->
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="#" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                 <TextBlock Grid.Column="1" Text="项名称" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="2" Text="变量名称" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="3" Text="数据类型" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="来源变量" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="3" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="读取变量"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsWrite}" Value="True">
+                                                    <Setter Property="Text" Value="写入变量"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Grid.Column="4" Text="数据类型" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" Margin="6,0,0,0" VerticalAlignment="Center"/>
                             </Grid>
 
                             <!--
@@ -1828,6 +1943,7 @@
                                     <ListBox x:Name="DeviceLogList"
                                              Grid.IsSharedSizeScope="True"
                                              Style="{StaticResource DeviceLogListStyle}"
+                                             ScrollViewer.ScrollChanged="DeviceLogList_ScrollChanged"
                                              ItemTemplate="{StaticResource DeviceLogItemTemplate}" d:ItemsSource="{d:SampleData ItemCount=5}"/>
                                 </Border>
                             </Grid>
@@ -2284,8 +2400,8 @@
                                                         <ColumnDefinition Width="*" MinWidth="120"/>  <!-- 任务名称 -->
                                                         <ColumnDefinition Width="90"/>   <!-- 任务类型 -->
                                                         <ColumnDefinition Width="140"/>  <!-- 执行方式 -->
-                                                        <ColumnDefinition Width="110"/>  <!-- 启用 -->
-                                                        <ColumnDefinition Width="150"/>  <!-- 数据项 -->
+                                                        <ColumnDefinition Width="180"/>  <!-- 启用 -->
+                                                        <ColumnDefinition Width="80"/>   <!-- 数据项 -->
                                                         <ColumnDefinition Width="120"/>  <!-- 操作（占位，见右侧按钮） -->
                                                     </Grid.ColumnDefinitions>
                                                     <!-- 表头写 "#" 而非「序号」：这一列只有 34 宽，两个字放不下；
