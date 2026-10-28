@@ -428,16 +428,24 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>
         /// 2 个指示灯的位置与尺寸，键是稳定键。
         /// <para>
-        /// 位置落在灰底容器**下面**那条空白带、Manual Control 与 Aborted 之间
-        /// （用户在截图上圈的就是这里）。宽度与状态框一致（150），两个灯之间留 16，
-        /// 合计 316，正好居中于 489–879 这段空隙。
+        /// 位置落在灰底容器**下面**那条空白带、Manual Control 与 Aborted 之间，
+        /// 两灯隔得更开 —— 用户 2026-10-28 在截图上用两条红线标的就是这两处。
+        /// 红线是手绘马克笔粗线（6~10 px、端点有抗锯齿），按 Manual Control 的紫色填充标定过比例
+        /// （scale = 1.1156、offset = 241.1），量出来 **Error 587–673、Fault 755–835**（设计坐标），
+        /// 所以两灯左边缘取 587 / 754。用户的原话是「大概」，±3 都算对。
+        /// </para>
+        /// <para>
+        /// ⚠️ 宽度只有 120 而不是与状态框一致的 150：灯的可点区域就是这个 Border，
+        /// 给 150 的话 Fault 的右边缘会压到 Aborted（879）上，双击 Aborted 会打开灯的编辑窗。
+        /// 120 收在 874，留 5 的安全边。灯内容（圆点 14 + 间距 8 + 文字）实际只有 60 出头，
+        /// 120 已经够宽，多出来的部分是空白命中区。
         /// </para>
         /// </summary>
         public static IReadOnlyDictionary<string, DesignRect> Lamps { get; } =
             new Dictionary<string, DesignRect>(StringComparer.Ordinal)
             {
-                ["Error"] = new(526, 368, 150, 30),
-                ["Fault"] = new(692, 368, 150, 30),
+                ["Error"] = new(600, 368, 120, 30),
+                ["Fault"] = new(700, 368, 120, 30),
             };
 
         /// <summary>2 个指示灯的出厂值：稳定键 → 灯右边的文字。</summary>

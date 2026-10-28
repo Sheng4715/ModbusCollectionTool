@@ -641,8 +641,12 @@ Window
 
 **指示灯 Error / Fault**（2026-10-28，用户「风格直接复用 IO 监控里的」）：
 
-- 位置写死在 `MachineStateLayout.Lamps`：`Error` = (526, 368, 150, 30)、`Fault` = (692, 368, 150, 30)，
-  两灯间距 16，整体居中在 ManualControl 右边（489）与 Aborted 左边（879）之间的空白带
+- 位置写死在 `MachineStateLayout.Lamps`：`Error` = (587, 368, 120, 30)、`Fault` = (754, 368, 120, 30)，
+  落在 ManualControl 右边（489）与 Aborted 左边（879）之间的空白带，间距 47。
+  （2026-10-28 用户画红线指定位置后从「居中 526/692 + 宽 150」改到现在这组；换算与取证见 `Design.md` §10.33）
+  - **宽度 120 不是 150**：灯的可点区域就是这个 Border，150 会让 Fault 右边缘压到 Aborted(879) 上，
+    双击 Aborted 会弹出灯的编辑窗。120 收在 874，留 5 的安全边
+
 - 视觉照抄 IO 监控那颗圆点：`Border` 直径 × 直径、`CornerRadius = 直径/2`，
   **亮 = 模型色、灭 = `Io.Off`**（灭态复用主题键，没有新键）；文字走 `Brush.Text.Primary`
 - 模型是 `MachineStateLamp`（Id / Text / Expression / IsOn / **Color / DotSize / FontSize**），`Expression` 空串恒为假
