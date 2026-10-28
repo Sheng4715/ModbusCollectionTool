@@ -97,7 +97,7 @@ internal sealed class ModbusPoller
         PollSnapshot snap = _host.CaptureSnapshot();
 
         // 总览页「PLC状态机」：表达式引用的全局变量跟随可见性采集。
-        // 与下面的 IO / 自由监控**互斥**（总览与状态信息是两个页面），故各走各的、不叠加。
+        // 与下面的 IO / 自由监控**互斥**（总览与设备监控是两个页面），故各走各的、不叠加。
         if (snap.MachineViewActive)
         {
             await PollMachineGlobalsAsync(modbus, snap.MachineGlobals, token);
@@ -110,13 +110,13 @@ internal sealed class ModbusPoller
             await PollAcquisitionGlobalsAsync(modbus, snap.AcquisitionGlobals, token);
         }
 
-        // 离开状态信息页仅停采；独立心跳继续工作，各分段保留上次采集数据。
+        // 离开设备监控页仅停采；独立心跳继续工作，各分段保留上次采集数据。
         if (!snap.IoPageActive)
         {
             return;
         }
 
-        // 状态信息页的三个分段**都跟随可见性**：输入 X / 输出 Y 走 IO 点位集，
+        // 设备监控页的三个分段**都跟随可见性**：输入 X / 输出 Y 走 IO 点位集，
         // 自由监控走 _monitorSet —— 只有当前显示的那一个才读，其余不读也不清值。
         if (snap.FreeViewActive)
         {
@@ -211,7 +211,7 @@ internal sealed class ModbusPoller
     /// 一个配错的地址不该拖垮整条连接（与心跳遇异常码保持连接的做法一致）。</item>
     /// </list>
     /// <para>
-    /// 字节顺序不从这里传：它由用户在设备配置页改，跟着 <see cref="ICollectorHost.MonitorSet"/>
+    /// 字节顺序不从这里传：它由用户在设备连接页改，跟着 <see cref="ICollectorHost.MonitorSet"/>
     /// 上的 <c>ByteOrders</c> 走，回填时直接取那份快照。
     /// </para>
     /// </summary>
@@ -358,7 +358,7 @@ internal sealed class ModbusPoller
     /// <summary>
     /// 读采集任务组引用的全局变量，写回 <c>GlobalVariable.Value</c>（P3.1）。
     /// <para>
-    /// ⚠️ **与上面那个最大的区别：不看页面可见性**。用户切到设备配置页调参数时，
+    /// ⚠️ **与上面那个最大的区别：不看页面可见性**。用户切到设备连接页调参数时，
     /// 采集任务照样要跑 —— 一停记录里就会凭空缺一段，而缺的那段事后完全看不出来
     /// （文件里只有「11:04:22」这样的时间戳，没有「这段没采」的标记）。
     /// </para>

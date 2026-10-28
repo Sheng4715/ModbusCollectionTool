@@ -113,9 +113,9 @@ namespace DSH_Modbus采集工具
     }
 
 
-    // ---------- 辅助类型：地址表元件（设备配置页展示用） ----------
+    // ---------- 辅助类型：地址表元件（设备连接页展示用） ----------
 
-    /// <summary>设备配置页展示用：地址表中的一个元件（同名元件的多段地址区合并为一项）。</summary>
+    /// <summary>设备连接页展示用：地址表中的一个元件（同名元件的多段地址区合并为一项）。</summary>
     public sealed class AreaElement
     {
         /// <summary>元件符号，如 M、X、SD</summary>
@@ -283,10 +283,10 @@ namespace DSH_Modbus采集工具
             Interval = TimeSpan.FromMilliseconds(50),
         };
 
-        /// <summary>是否停在状态信息页的「系统变量」分段（决定定时器启停）。</summary>
+        /// <summary>是否停在设备监控页的「系统变量」分段（决定定时器启停）。</summary>
         private bool _sysViewActive;
 
-        /// <summary>是否停在采集配置页的「全局变量」分段（跨线程读，故 volatile）。</summary>
+        /// <summary>是否停在数据管理页的「全局变量」分段（跨线程读，故 volatile）。</summary>
 
         /// <summary>STRING 长度的允许范围（选 STRING 时弹框校验用）。</summary>
         private const int StringLengthMin = 1;
@@ -343,7 +343,7 @@ namespace DSH_Modbus采集工具
         /// <summary>构造期结束标志：此后切换设备类型才需要按新驱动重建点位地址。</summary>
         private bool _ioInitialized;
 
-        /// <summary>状态信息页可见时才发起采集；离开页面停止报文，灯保持上次数据（UI 线程写、后台只读）。</summary>
+        /// <summary>设备监控页可见时才发起采集；离开页面停止报文，灯保持上次数据（UI 线程写、后台只读）。</summary>
         private volatile bool _ioPageActive;
 
         /// <summary>当前显示的分段：true=输出 Y，false=输入 X；只读可见区（UI 线程写、后台只读）。</summary>
@@ -452,8 +452,9 @@ namespace DSH_Modbus采集工具
             _machineSet.Load(ExpressionNameExists);
             _machineSet.RecompileAll(ExpressionNameExists);
             RefreshMachineGlobals();
-            MachineStateViewControl.Bind(_machineSet.Items, _machineSet.EdgeLabels);
+            MachineStateViewControl.Bind(_machineSet.Items, _machineSet.EdgeLabels, _machineSet.Lamps);
             MachineStateViewControl.StateDoubleClicked += MachineStateView_StateDoubleClicked;
+            MachineStateViewControl.LampDoubleClicked += MachineStateView_LampDoubleClicked;
             MachineStateViewControl.EdgeLabelCommitted += (_, _) => _machineSet.Save();
             _machineTimer.Tick += (_, _) => RefreshMachineStates();
 
@@ -638,7 +639,7 @@ namespace DSH_Modbus采集工具
 
         private void Nav_Checked(object sender, RoutedEventArgs e)
         {
-            // 采集跟随页面可见性：离开状态信息页即停采（零报文，灯保留上次数据）
+            // 采集跟随页面可见性：离开设备监控页即停采（零报文，灯保留上次数据）
             _ioPageActive = ReferenceEquals(sender, StatusInfoNav);
             SyncSystemVarTimer();
 
@@ -1658,7 +1659,7 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private static string ClassifyDisconnectReason(string raw) => DisconnectReasonClassifier.Classify(raw);
 
-        // ---------- 设备配置表单（驱动 / 字节序 / 采集周期） ----------
+        // ---------- 设备连接表单（驱动 / 字节序 / 采集周期） ----------
 
         private void RefreshNicButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1779,7 +1780,7 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 刷新设备配置页的地址表元件展示：按当前驱动分「线圈区 / 寄存器区」两行列出元件，
+        /// 刷新设备连接页的地址表元件展示：按当前驱动分「线圈区 / 寄存器区」两行列出元件，
         /// 同名元件的多段地址区合并为一项（悬停提示列出各段编号范围与点数）。
         /// </summary>
         private void RefreshDriverAreas()
@@ -2178,14 +2179,14 @@ namespace DSH_Modbus采集工具
             var needed = new List<GlobalVariable>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
 
-            foreach (MachineStateItem item in _machineSet.Items)
+            void Collect(CompiledExpression? compiled)
             {
-                if (item.Compiled == null)
+                if (compiled == null)
                 {
-                    continue;
+                    return;
                 }
 
-                foreach (var (name, _) in item.Compiled.UsedNames)
+                foreach (var (name, _) in compiled.UsedNames)
                 {
                     if (!seen.Add(name))
                     {
@@ -2203,6 +2204,17 @@ namespace DSH_Modbus采集工具
                         needed.Add(variable);
                     }
                 }
+            }
+
+            foreach (MachineStateItem item in _machineSet.Items)
+            {
+                Collect(item.Compiled);
+            }
+
+            // 指示灯（Error / Fault）也由表达式驱动，引用的全局变量同样要上总线
+            foreach (MachineStateLamp lamp in _machineSet.Lamps)
+            {
+                Collect(lamp.Compiled);
             }
 
             _machineGlobals = needed;
@@ -2312,6 +2324,11 @@ namespace DSH_Modbus采集工具
             {
                 MachineStateViewControl.ApplyVisualState(item);
             }
+
+            foreach (MachineStateLamp lamp in _machineSet.Lamps)
+            {
+                MachineStateViewControl.ApplyLampState(lamp);
+            }
         }
 
         /// <summary>
@@ -2339,6 +2356,38 @@ namespace DSH_Modbus采集工具
                 RefreshMachineGlobals();
 
                 MachineStateViewControl.ApplyVisualState(item);
+                RefreshMachineStates();
+            }
+
+            // 编辑期间定时器可能停过（弹窗是模态的，但页面仍可见），这里顺手校一次
+            SyncMachineTimer();
+        }
+
+        /// <summary>
+        /// 双击指示灯：弹编辑窗（文字 + 文字大小 + 灯大小 + 灯颜色 + 表达式五项）。
+        /// <para>确定后写回模型并落盘，规则与状态框完全一致。</para>
+        /// </summary>
+        private void MachineStateView_LampDoubleClicked(object? sender, MachineStateLamp lamp)
+        {
+            Ui.MachineLampEditDialog? dialog =
+                Ui.MachineLampEditDialog.Ask(
+                this, lamp, ExpressionNameExists, () => CompletionSource.ForExpression(GlobalVarModels));
+
+            if (dialog != null)
+            {
+                lamp.Text = dialog.LampText;
+                lamp.FontSize = dialog.FontSizeValue;
+                lamp.DotSize = dialog.DotSizeValue;
+                lamp.Color = dialog.LampColor;
+
+                // 走集合的唯一入口：编译 + 变量存在性校验 + 清掉旧的错误态
+                _machineSet.TrySetExpression(lamp, dialog.ExpressionText, ExpressionNameExists, out _);
+                _machineSet.Save();
+
+                // 表达式换了 = 引用的变量可能换了，采集清单要跟着重算
+                RefreshMachineGlobals();
+
+                MachineStateViewControl.ApplyLampState(lamp);
                 RefreshMachineStates();
             }
 
@@ -2480,7 +2529,7 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 系统变量定时器启停：**本分段可见 且 状态信息页可见** 才跑。
+        /// 系统变量定时器启停：**本分段可见 且 设备监控页可见** 才跑。
         /// <para>
         /// 与 X/Y、自由监控「采集跟随可见分段」同一套规矩 ——
         /// 用户在看别的页面时，没有理由每 100ms 算一遍 16 个变量。
@@ -2506,9 +2555,9 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        // ---------- 采集配置页分段（P3.1 / P3.3） ----------
+        // ---------- 数据管理页分段（P3.1 / P3.3） ----------
 
-        /// <summary>采集配置页分段切换：采集数据 / 全局变量 / 系统变量。</summary>
+        /// <summary>数据管理页分段切换：采集数据 / 全局变量 / 系统变量。</summary>
         private void AcqView_Checked(object sender, RoutedEventArgs e)
         {
             if (AcquisitionDataPanel == null || GlobalVarPanel == null || SystemVarPanel == null

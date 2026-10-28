@@ -8,7 +8,7 @@ namespace DSH_Modbus采集工具.Modeling
     /// <para>
     /// 三者<b>各自独立</b>：现场确实存在「DINT 是 3412、REAL 是 1234」这类组合。
     /// 早期把 REAL 与 DINT 绑在同一套字序上（<see cref="ValueCodec.FormatRegisters"/> 只收一个
-    /// <see cref="ByteOrder32"/>），设备配置页那个「32位浮点数字节顺序」下拉框改了也不生效 ——
+    /// <see cref="ByteOrder32"/>），设备连接页那个「32位浮点数字节顺序」下拉框改了也不生效 ——
     /// 表现为界面显示 1234、数值仍按 3412 解，**不报错但全是错值**。
     /// </para>
     /// <para>

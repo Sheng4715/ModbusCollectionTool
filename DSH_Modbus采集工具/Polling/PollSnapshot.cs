@@ -19,7 +19,7 @@ namespace DSH_Modbus采集工具.Polling;
 /// ⚠️ 快照是**每拍重建**的，不是启动时缓存 —— 用户切分段、翻页必须下一拍就生效。
 /// </para>
 /// </summary>
-/// <param name="IoPageActive">是否停在「状态信息」页（离开则三个分段全停，心跳不受影响）。</param>
+/// <param name="IoPageActive">是否停在「设备监控」页（离开则三个分段全停，心跳不受影响）。</param>
 /// <param name="FreeViewActive">是否显示「自由监控」分段。</param>
 /// <param name="VisiblePage">当前显示分段「当前页」的 IO 点位快照；未导入 IO 表时为空数组。</param>
 /// <param name="PollIntervalMs">本拍结束后到下一拍的目标间隔。</param>
@@ -35,7 +35,7 @@ namespace DSH_Modbus采集工具.Polling;
 /// 采集任务组引用的全局变量 —— **常驻读取，与页面可见性无关**。
 /// <para>
 /// ⚠️ 这是本快照里唯一**不看可见性**的一项，与上面几个正好相反，理由见
-/// <see cref="ModbusPoller.PollAcquisitionGlobalsAsync"/>：用户切到设备配置页调参数时，
+/// <see cref="ModbusPoller.PollAcquisitionGlobalsAsync"/>：用户切到设备连接页调参数时，
 /// 采集任务不能跟着停 —— 停了记录里会凭空缺一段，事后完全看不出来。
 /// </para>
 /// </param>

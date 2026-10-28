@@ -215,7 +215,153 @@ namespace DSH_Modbus采集工具.Modeling
     }
 
     /// <summary>
-    /// 状态机画布的**固定布局**：9 个框的位置、14 条连线、灰底容器。
+    /// 画布上的一个**指示灯**（Error / Fault 两个之一）。
+    /// <para>
+    /// 视觉与 IO 监控里那颗灯同源（圆点 + 右侧文字），但这里它是画布上的独立元件：
+    /// 双击可改文字与表达式，表达式为真时点亮（绿），为假时熄灭（灰）。
+    /// </para>
+    /// <para>
+    /// 与 <see cref="MachineStateItem"/> 的区别：灯**没有字形**（永远常规体），
+    /// 颜色也只有「点亮」这一种 —— 熄灭一律画主题灰。灯亮灯灭要能一眼看出来，
+    /// 让用户连灭态都配色只会让「灭」看着像「亮」。
+    /// </para>
+    /// <para>
+    /// 可编辑的是四样：文字、文字大小、圆点大小、点亮颜色（外加表达式）。
+    /// 点亮色**永远是具体颜色**，没有「跟随主题」这一档 —— 灯色是用户自己定的，
+    /// 换个深浅主题就悄悄变色会让人以为设置没生效。
+    /// </para>
+    /// </summary>
+    public sealed class MachineStateLamp : INotifyPropertyChanged
+    {
+        private string _text;
+        private string _expression = string.Empty;
+        private string _color = MachineStateLayout.LampOnColor;
+        private double _dotSize = MachineStateLayout.LampDotSize;
+        private double _fontSize = MachineStateLayout.LampFontSize;
+        private bool _isOn;
+
+        public MachineStateLamp(string id, string text)
+        {
+            Id = id;
+            _text = text ?? string.Empty;
+        }
+
+        /// <summary>稳定键（<c>Error</c> / <c>Fault</c>），落盘按它合并。</summary>
+        public string Id { get; }
+
+        /// <summary>灯右边显示的文字。</summary>
+        public string Text
+        {
+            get => _text;
+            set => Set(ref _text, value ?? string.Empty);
+        }
+
+        /// <summary>
+        /// 点亮时圆点的颜色，<c>#RRGGBB</c>。**永远是具体颜色**，不会跟着主题变。
+        /// <para>
+        /// 出厂 <see cref="MachineStateLayout.LampOnColor"/>（浅色主题那支绿）。
+        /// 写进来认不出的值一律退回这个色，不会留空 —— 空的颜色在画布上没法画。
+        /// </para>
+        /// </summary>
+        public string Color
+        {
+            get => _color;
+            set => Set(ref _color, NormalizeColor(value));
+        }
+
+        /// <summary>
+        /// 圆点直径（设计坐标单位）。
+        /// <para>上限 28：指示灯格子高 30（<see cref="MachineStateLayout.Lamps"/>），再大就撑出去了。</para>
+        /// </summary>
+        public double DotSize
+        {
+            get => _dotSize;
+            set => Set(ref _dotSize, Math.Clamp(value, 6, 28));
+        }
+
+        /// <summary>灯右边文字的字号（设计坐标单位）。</summary>
+        public double FontSize
+        {
+            get => _fontSize;
+            set => Set(ref _fontSize, Math.Clamp(value, 8, 32));
+        }
+
+        /// <summary>BOOLEAN 表达式。空串 = 恒为假（灯一直灭）。</summary>
+        public string Expression
+        {
+            get => _expression;
+            set => Set(ref _expression, value ?? string.Empty);
+        }
+
+        /// <summary>当前是否点亮。**运行期字段，不落盘**；只有真的变了才通知。</summary>
+        public bool IsOn
+        {
+            get => _isOn;
+            set => Set(ref _isOn, value);
+        }
+
+        /// <summary>编译后的表达式（运行期缓存，不落盘）。</summary>
+        [JsonIgnore]
+        public CompiledExpression? Compiled { get; set; }
+
+        /// <summary>最近一次求值失败的原因；空串表示没问题（含「表达式为空」）。</summary>
+        [JsonIgnore]
+        public string ExpressionError { get; set; } = string.Empty;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        /// <summary>
+        /// 把任意写法归一成 <c>#RRGGBB</c>；**认不出就退回 <see cref="MachineStateLayout.LampOnColor"/>**。
+        /// <para>
+        /// 与 <see cref="MachineStateItem.NormalizeColor"/> 同一个取舍（认不出退回一个确定的颜色），
+        /// 只是退回的色不同：状态框退回浅红，灯退回它自己的出厂绿。
+        /// 原本这里是退回空串（= 跟随主题），用户 2026-10-28 明确要求删掉「跟随主题」，
+        /// 于是空串不再是一个有意义的取值。
+        /// </para>
+        /// </summary>
+        public static string NormalizeColor(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return MachineStateLayout.LampOnColor;
+            }
+
+            string s = value.Trim();
+            if (!s.StartsWith('#'))
+            {
+                s = "#" + s;
+            }
+
+            if (s.Length != 7)
+            {
+                return MachineStateLayout.LampOnColor;
+            }
+
+            for (int i = 1; i < 7; i++)
+            {
+                if (!Uri.IsHexDigit(s[i]))
+                {
+                    return MachineStateLayout.LampOnColor;
+                }
+            }
+
+            return s.ToUpperInvariant();
+        }
+
+        private void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
+        {
+            if (EqualityComparer<T>.Default.Equals(field, value))
+            {
+                return;
+            }
+
+            field = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+    }
+
+    /// <summary>
+    /// 状态机画布的**固定布局**：9 个框的位置、14 条连线、2 个指示灯、灰底容器。
     /// <para>
     /// 这些坐标全部由项目根目录的 <c>PLC_MachineState.drawio</c> 换算而来
     /// （横向 ×1.5 拉开列距，纵向原样），**不要在代码里手调** ——
@@ -263,6 +409,56 @@ namespace DSH_Modbus采集工具.Modeling
                 ["Aborted"] = new(879, 358, 150, 50),
                 ["ManualControl"] = new(339, 358, 150, 50),
             };
+
+        /// <summary>指示灯圆点默认直径（设计坐标，与 IO 监控里那颗 10px 的灯同量级）。</summary>
+        public const double LampDotSize = 14;
+
+        /// <summary>指示灯文字默认字号（设计坐标）。</summary>
+        public const double LampFontSize = 14;
+
+        /// <summary>
+        /// 指示灯出厂的点亮色 —— 与主题键 <c>Io.Input.On</c> 的**浅色**值同一个绿。
+        /// <para>
+        /// 它是一个**常量**而不是资源引用：灯色由用户配，不跟主题走
+        /// （用户 2026-10-28 要求删掉「跟随主题」）。深色主题下这颗灯仍是这个绿。
+        /// </para>
+        /// </summary>
+        public const string LampOnColor = "#0B7A0B";
+
+        /// <summary>
+        /// 2 个指示灯的位置与尺寸，键是稳定键。
+        /// <para>
+        /// 位置落在灰底容器**下面**那条空白带、Manual Control 与 Aborted 之间
+        /// （用户在截图上圈的就是这里）。宽度与状态框一致（150），两个灯之间留 16，
+        /// 合计 316，正好居中于 489–879 这段空隙。
+        /// </para>
+        /// </summary>
+        public static IReadOnlyDictionary<string, DesignRect> Lamps { get; } =
+            new Dictionary<string, DesignRect>(StringComparer.Ordinal)
+            {
+                ["Error"] = new(526, 368, 150, 30),
+                ["Fault"] = new(692, 368, 150, 30),
+            };
+
+        /// <summary>2 个指示灯的出厂值：稳定键 → 灯右边的文字。</summary>
+        public static IReadOnlyList<(string Id, string Text)> LampDefaults { get; } =
+            new (string, string)[]
+            {
+                ("Error", "Error"),
+                ("Fault", "Fault"),
+            };
+
+        /// <summary>按出厂值造一组指示灯（不读盘）。</summary>
+        public static List<MachineStateLamp> CreateDefaultLamps()
+        {
+            var list = new List<MachineStateLamp>(LampDefaults.Count);
+            foreach ((string id, string text) in LampDefaults)
+            {
+                list.Add(new MachineStateLamp(id, text) { Expression = string.Empty });
+            }
+
+            return list;
+        }
 
         /// <summary>14 条转移连线（顺序即绘制顺序）。几何写死，标签文字可编辑。</summary>
         public static IReadOnlyList<MachineStateEdge> Edges { get; } = new MachineStateEdge[]
@@ -373,24 +569,36 @@ namespace DSH_Modbus采集工具.Modeling
 
         public static string FilePath => Path.Combine(AppContext.BaseDirectory, FileName);
 
+        /// <summary>只读状态与连线（指示灯用出厂值）。</summary>
         public static (List<MachineStateItem> States, List<MachineEdgeLabel> Edges) Load()
+        {
+            (List<MachineStateItem> states, List<MachineEdgeLabel> edges, _) = LoadAll();
+            return (states, edges);
+        }
+
+        /// <summary>读全部：状态、连线标签、指示灯。</summary>
+        public static (
+            List<MachineStateItem> States,
+            List<MachineEdgeLabel> Edges,
+            List<MachineStateLamp> Lamps) LoadAll()
         {
             List<MachineStateItem> items = MachineStateLayout.CreateDefault();
             List<MachineEdgeLabel> edges = MachineStateLayout.CreateDefaultEdgeLabels();
+            List<MachineStateLamp> lamps = MachineStateLayout.CreateDefaultLamps();
 
             try
             {
                 string path = FilePath;
                 if (!File.Exists(path))
                 {
-                    return (items, edges);
+                    return (items, edges, lamps);
                 }
 
                 MachineStateFile? file =
                     JsonSerializer.Deserialize<MachineStateFile>(File.ReadAllText(path), Options);
                 if (file == null)
                 {
-                    return (items, edges);
+                    return (items, edges, lamps);
                 }
 
                 var byId = items.ToDictionary(x => x.Id, StringComparer.Ordinal);
@@ -417,18 +625,58 @@ namespace DSH_Modbus采集工具.Modeling
                         label.Text = entry.Text ?? label.Text;
                     }
                 }
+
+                // 指示灯同理（老文件没有这一段 → 用出厂值）
+                var lampById = lamps.ToDictionary(x => x.Id, StringComparer.Ordinal);
+                foreach (LampEntry entry in file.Lamps ?? new List<LampEntry>())
+                {
+                    if (!string.IsNullOrEmpty(entry.Id) && lampById.TryGetValue(entry.Id, out var lamp))
+                    {
+                        lamp.Text = string.IsNullOrWhiteSpace(entry.Text) ? lamp.Text : entry.Text;
+                        lamp.Expression = entry.Expression ?? string.Empty;
+
+                        // 外观三项：老文件里没有这几个键 → 用出厂值（0 表示「没写」；
+                        // Color 缺省会被归一成 Layout.LampOnColor，正好等于出厂色）
+                        lamp.Color = MachineStateLamp.NormalizeColor(entry.Color);
+                        if (entry.DotSize > 0)
+                        {
+                            lamp.DotSize = entry.DotSize;
+                        }
+
+                        if (entry.FontSize > 0)
+                        {
+                            lamp.FontSize = entry.FontSize;
+                        }
+                    }
+                }
             }
             catch
             {
                 // 与 DataPointStore / GlobalVariableStore 一致：读失败不阻断启动，退回出厂值
-                return (MachineStateLayout.CreateDefault(), MachineStateLayout.CreateDefaultEdgeLabels());
+                return (MachineStateLayout.CreateDefault(), MachineStateLayout.CreateDefaultEdgeLabels(),
+                    MachineStateLayout.CreateDefaultLamps());
             }
 
-            return (items, edges);
+            return (items, edges, lamps);
         }
 
+        /// <summary>
+        /// 只存状态与连线（不写指示灯那一段）。
+        /// <para>
+        /// ⚠️ 产品代码请一律用带 <c>lamps</c> 的重载：这个重载会把文件里的
+        /// <c>Lamps</c> 段整段丢掉，下次读盘指示灯就退回出厂值。
+        /// 保留它只是为了让断言工程能单独测状态/连线的往返。
+        /// </para>
+        /// </summary>
         public static bool Save(
-            IEnumerable<MachineStateItem> items, IEnumerable<MachineEdgeLabel> edges)
+            IEnumerable<MachineStateItem> items, IEnumerable<MachineEdgeLabel> edges) =>
+            Save(items, edges, lamps: null);
+
+        /// <summary>存全部：状态、连线标签、指示灯。</summary>
+        public static bool Save(
+            IEnumerable<MachineStateItem> items,
+            IEnumerable<MachineEdgeLabel> edges,
+            IEnumerable<MachineStateLamp>? lamps)
         {
             try
             {
@@ -448,6 +696,15 @@ namespace DSH_Modbus采集工具.Modeling
                         Id = x.Id,
                         Text = x.Text,
                     }).ToList(),
+                    Lamps = lamps?.Select(x => new LampEntry
+                    {
+                        Id = x.Id,
+                        Text = x.Text,
+                        Expression = x.Expression,
+                        Color = x.Color,
+                        DotSize = x.DotSize,
+                        FontSize = x.FontSize,
+                    }).ToList(),
                 };
 
                 File.WriteAllText(FilePath, JsonSerializer.Serialize(file, Options));
@@ -465,6 +722,9 @@ namespace DSH_Modbus采集工具.Modeling
 
             /// <summary>连线标签。老文件没有这一段 → 用出厂文字。</summary>
             public List<EdgeEntry>? Edges { get; set; }
+
+            /// <summary>指示灯。老文件没有这一段 → 用出厂值。</summary>
+            public List<LampEntry>? Lamps { get; set; }
         }
 
         private sealed class EdgeEntry
@@ -472,6 +732,24 @@ namespace DSH_Modbus采集工具.Modeling
             public string? Id { get; set; }
 
             public string? Text { get; set; }
+        }
+
+        private sealed class LampEntry
+        {
+            public string? Id { get; set; }
+
+            public string? Text { get; set; }
+
+            /// <summary>点亮色；缺省 / 认不出 → 归一成 <see cref="MachineStateLayout.LampOnColor"/>。</summary>
+            public string? Color { get; set; }
+
+            /// <summary>圆点直径；缺省（0）= 出厂值。</summary>
+            public double DotSize { get; set; }
+
+            /// <summary>文字字号；缺省（0）= 出厂值。</summary>
+            public double FontSize { get; set; }
+
+            public string? Expression { get; set; }
         }
 
         private sealed class MachineStateEntry
@@ -490,16 +768,18 @@ namespace DSH_Modbus采集工具.Modeling
         }
     }
 
-    /// <summary>9 个状态 + 它们的表达式求值。</summary>
+    /// <summary>9 个状态 + 2 个指示灯，以及它们的表达式求值。</summary>
     public sealed class MachineStateSet
     {
         private readonly List<MachineStateItem> _items;
         private readonly List<MachineEdgeLabel> _edgeLabels;
+        private readonly List<MachineStateLamp> _lamps;
 
         public MachineStateSet()
         {
             _items = MachineStateLayout.CreateDefault();
             _edgeLabels = MachineStateLayout.CreateDefaultEdgeLabels();
+            _lamps = MachineStateLayout.CreateDefaultLamps();
         }
 
         public IReadOnlyList<MachineStateItem> Items => _items;
@@ -507,10 +787,14 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>14 条连线上的标签（用户可编辑的切换条件文字）。</summary>
         public IReadOnlyList<MachineEdgeLabel> EdgeLabels => _edgeLabels;
 
+        /// <summary>2 个指示灯（Error / Fault）。</summary>
+        public IReadOnlyList<MachineStateLamp> Lamps => _lamps;
+
         /// <summary>从磁盘读，并把每条表达式编译好。</summary>
         public void Load(Func<string, bool> nameExists)
         {
-            (List<MachineStateItem> states, List<MachineEdgeLabel> edges) = MachineStateStore.Load();
+            (List<MachineStateItem> states, List<MachineEdgeLabel> edges, List<MachineStateLamp> lamps) =
+                MachineStateStore.LoadAll();
 
             _items.Clear();
             _items.AddRange(states);
@@ -518,13 +802,21 @@ namespace DSH_Modbus采集工具.Modeling
             _edgeLabels.Clear();
             _edgeLabels.AddRange(edges);
 
+            _lamps.Clear();
+            _lamps.AddRange(lamps);
+
             foreach (MachineStateItem item in _items)
             {
                 CompileQuietly(item, nameExists);
             }
+
+            foreach (MachineStateLamp lamp in _lamps)
+            {
+                CompileQuietly(lamp, nameExists);
+            }
         }
 
-        public bool Save() => MachineStateStore.Save(_items, _edgeLabels);
+        public bool Save() => MachineStateStore.Save(_items, _edgeLabels, _lamps);
 
         /// <summary>
         /// 改一条表达式：编译 + 校验变量存在性，成功才写回。
@@ -533,19 +825,29 @@ namespace DSH_Modbus采集工具.Modeling
         public bool TrySetExpression(
             MachineStateItem item, string? text, Func<string, bool> nameExists, out string error)
         {
-            if (!CompiledExpression.TryParse(text, out CompiledExpression? compiled, out error))
-            {
-                return false;
-            }
-
-            if (!compiled!.TryValidateNames(nameExists, out error))
+            if (!TryCompile(text, nameExists, out CompiledExpression? compiled, out error))
             {
                 return false;
             }
 
             item.Compiled = compiled;
             item.ExpressionError = string.Empty;
-            item.Expression = compiled.Source;
+            item.Expression = compiled!.Source;
+            return true;
+        }
+
+        /// <summary>改一个指示灯的表达式（规则与状态框完全一致）。</summary>
+        public bool TrySetExpression(
+            MachineStateLamp lamp, string? text, Func<string, bool> nameExists, out string error)
+        {
+            if (!TryCompile(text, nameExists, out CompiledExpression? compiled, out error))
+            {
+                return false;
+            }
+
+            lamp.Compiled = compiled;
+            lamp.ExpressionError = string.Empty;
+            lamp.Expression = compiled!.Source;
             return true;
         }
 
@@ -556,9 +858,14 @@ namespace DSH_Modbus采集工具.Modeling
             {
                 CompileQuietly(item, nameExists);
             }
+
+            foreach (MachineStateLamp lamp in _lamps)
+            {
+                CompileQuietly(lamp, nameExists);
+            }
         }
 
-        /// <summary>按当前变量值刷新 9 个状态的真假。</summary>
+        /// <summary>按当前变量值刷新 9 个状态的真假与 2 个指示灯。</summary>
         public void EvaluateAll(IExpressionVariables variables)
         {
             foreach (MachineStateItem item in _items)
@@ -580,26 +887,59 @@ namespace DSH_Modbus采集工具.Modeling
                     item.ExpressionError = error;
                 }
             }
+
+            foreach (MachineStateLamp lamp in _lamps)
+            {
+                // 灯的口径与状态框一致：没表达式 / 编译失败 = 灭
+                if (lamp.Compiled == null)
+                {
+                    lamp.IsOn = false;
+                    continue;
+                }
+
+                if (lamp.Compiled.TryEvaluate(variables, out bool on, out string error))
+                {
+                    lamp.IsOn = on;
+                    lamp.ExpressionError = string.Empty;
+                }
+                else
+                {
+                    lamp.IsOn = false;
+                    lamp.ExpressionError = error;
+                }
+            }
+        }
+
+        /// <summary>编译 + 变量存在性校验（成功返回 true，且 <paramref name="compiled"/> 非空）。</summary>
+        private static bool TryCompile(
+            string? text,
+            Func<string, bool> nameExists,
+            out CompiledExpression? compiled,
+            out string error)
+        {
+            if (!CompiledExpression.TryParse(text, out compiled, out error))
+            {
+                return false;
+            }
+
+            return compiled!.TryValidateNames(nameExists, out error);
         }
 
         private static void CompileQuietly(MachineStateItem item, Func<string, bool> nameExists)
         {
-            if (!CompiledExpression.TryParse(item.Expression, out CompiledExpression? compiled, out string error))
-            {
-                item.Compiled = null;
-                item.ExpressionError = error;
-                return;
-            }
-
-            if (!compiled!.TryValidateNames(nameExists, out error))
-            {
-                item.Compiled = compiled;
-                item.ExpressionError = error;
-                return;
-            }
-
+            bool ok = TryCompile(item.Expression, nameExists, out CompiledExpression? compiled, out string error);
             item.Compiled = compiled;
-            item.ExpressionError = string.Empty;
+            item.ExpressionError = ok ? string.Empty : error;
+
+            // 校验不过时也留住编译结果：求值会因为找不到变量而失败，
+            // 语义与「编译失败」一样是灭，但界面能拿到更具体的错误
+        }
+
+        private static void CompileQuietly(MachineStateLamp lamp, Func<string, bool> nameExists)
+        {
+            bool ok = TryCompile(lamp.Expression, nameExists, out CompiledExpression? compiled, out string error);
+            lamp.Compiled = compiled;
+            lamp.ExpressionError = ok ? string.Empty : error;
         }
     }
 }

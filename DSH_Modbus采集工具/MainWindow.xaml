@@ -218,7 +218,7 @@
             </Setter>
         </Style>
 
-        <!-- 地址表元件块（设备配置页：线圈区 / 寄存器区） -->
+        <!-- 地址表元件块（设备连接页：线圈区 / 寄存器区） -->
         <DataTemplate x:Key="AreaChipTemplate">
             <Border Background="{DynamicResource Brush.Chip.Background}" BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                     CornerRadius="4" Padding="8,2" Margin="0,0,6,0"
@@ -275,8 +275,8 @@
         </Style>
 
         <!--
-            通用文字按钮（浅灰实底胶囊）：状态信息卡片的「导入 IO 表」、
-            设备配置的「刷新 / 连接」都用它。
+            通用文字按钮（浅灰实底胶囊）：设备监控卡片的「导入 IO 表」、
+            设备连接的「刷新 / 连接」都用它。
             与同页的下拉框、分段切换块（Brush.Control.Background / 圆角 6）同族 ——
             全应用「可点的块」都是这个形状，只有输入框用白底描边做区分。
         -->
@@ -312,7 +312,7 @@
             </Setter>
         </Style>
 
-        <!-- 设备配置页的按钮：同款胶囊，字号与表单标签一致（14） -->
+        <!-- 设备连接页的按钮：同款胶囊，字号与表单标签一致（14） -->
         <Style x:Key="FormButton" TargetType="Button" BasedOn="{StaticResource IoCardButton}">
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Padding" Value="14,0"/>
@@ -613,7 +613,7 @@
 
         <!--
             「当前值」输入框：**框线风格**（白底 + 细边框 + 小圆角），
-            与设备配置页的表单输入框一致 —— 行内下拉框是胶囊、这一格是输入框，
+            与设备连接页的表单输入框一致 —— 行内下拉框是胶囊、这一格是输入框，
             两者本来就不该长得一样。
             读/写失败时边框与文字转琥珀（与 ValueBrush 同色系）。
         -->
@@ -824,11 +824,11 @@
         </Style>
 
         <!--
-            ============ 表单控件样式（设备配置页等非行内场景）============
+            ============ 表单控件样式（设备连接页等非行内场景）============
 
             与自由监控行内控件**同一套视觉语言**，只把尺寸放大到表单规格：
               行内（自由监控表格）：字号 12，高 22，用于密集表格行
-              表单（设备配置页）  ：字号 14，高 30，用于表单字段
+              表单（设备连接页）  ：字号 14，高 30，用于表单字段
 
             风格分工（两处一致）：**下拉框＝胶囊**（灰底无边框），**输入框＝框线**（白底细边框）。
             这样用户在不同页面看到的「能点开选的」和「能打字的」始终是同一种外观。
@@ -879,7 +879,7 @@
             <!-- 默认不画框线（模板会读 BorderThickness，不显式置 0 会拿到系统默认的 1） -->
             <Setter Property="BorderThickness" Value="0"/>
             <!--
-                下拉项容器样式写在这里，而不是逐个控件加 —— 设备配置页有 8 个下拉框，
+                下拉项容器样式写在这里，而不是逐个控件加 —— 设备连接页有 8 个下拉框，
                 逐个写容易漏（漏掉的那个会用系统默认的蓝色选中条，与胶囊风格明显不搭）。
             -->
             <Setter Property="ItemContainerStyle" Value="{StaticResource FormComboItem}"/>
@@ -1433,7 +1433,7 @@
                              提示只给四个字、不列明细 —— 明细看子表：填错的变量列本来就各自标红了。
                              ⚠️ IsChecked 绑的是 EffectiveEnabled（= 用户意图 && 没有配置错误），
                              不是 Model.Enabled。真去改写模型会把「这个组用户是想启用的」抹掉，
-                             而采集配置是边输边存：清空变量名重打的那一瞬间也算配置错误，
+                             而数据管理是边输边存：清空变量名重打的那一瞬间也算配置错误，
                              一旦据此落盘，打完字这组就永久停采了，且没留任何痕迹。 -->
                         <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
                             <CheckBox Style="{StaticResource AcqEnableSwitch}"
@@ -1822,13 +1822,13 @@
                                      Content="总览"/>
                         <RadioButton x:Name="StatusInfoNav"
                                      Style="{StaticResource NavRadioButton}" GroupName="Nav"
-                                     Content="状态信息"/>
+                                     Content="设备监控"/>
                         <RadioButton x:Name="AcquisitionConfigNav"
                                      Style="{StaticResource NavRadioButton}" GroupName="Nav"
-                                     Content="采集配置"/>
+                                     Content="数据管理"/>
                         <RadioButton x:Name="DeviceConfigNav"
                                      Style="{StaticResource NavRadioButton}" GroupName="Nav"
-                                     Content="设备配置"/>
+                                     Content="设备连接"/>
                     </StackPanel>
 
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,12">
@@ -1874,7 +1874,7 @@
                             </Grid.RowDefinitions>
 
                             <!-- 页标题行：标题靠左，「当前视图」+ 下拉框靠右。
-                                 下拉框直接用 FormComboBox（与采集配置/设备配置页同一套：高 26、圆角 6、
+                                 下拉框直接用 FormComboBox（与数据管理/设备连接页同一套：高 26、圆角 6、
                                  灰底 Brush.Control.Background），不另造样式。 -->
                             <Grid Grid.Row="0" Margin="0,10,0,10">
                                 <TextBlock Text="总览"
@@ -1951,7 +1951,7 @@
                     </Grid>
 
                     <!--
-                        状态信息 / IO 监控。
+                        设备监控 / IO 监控。
                         面板高度绑内容区视口高度（同 OverviewPanel 的做法），使卡片**撑满**剩余空间，
                         底部的「导入 IO 表 + 分页」因此能常驻可见 —— 卡片若按内容自适应，
                         点位一多就把底部操作行顶到视口之外。
@@ -1963,7 +1963,7 @@
                             <RowDefinition Height="*"/>      <!-- 卡片（撑满剩余） -->
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Text="状态信息"
+                        <TextBlock Grid.Row="0" Text="设备监控"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
                                    Margin="0,10,0,10"/>
@@ -2317,9 +2317,9 @@
                         </Border>
                     </Grid>
 
-                    <!-- ================= 采集配置 =================
+                    <!-- ================= 数据管理 =================
                          两个分段：采集数据（P3.1，占位）/ 全局变量（P3.3，已实现）。
-                         分段的写法照抄状态信息页（IoSegmentRadioButton + 同格叠放），
+                         分段的写法照抄设备监控页（IoSegmentRadioButton + 同格叠放），
                          保持两页的切换手感一致。
 
                          立页的意义不止占位 —— 该导航项原先没有对应面板，点进去会把
@@ -2332,7 +2332,7 @@
                             <RowDefinition Height="*"/>      <!-- 卡片（撑满剩余） -->
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" Text="采集配置"
+                        <TextBlock Grid.Row="0" Text="数据管理"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Brush.Text.Primary}"
@@ -2607,11 +2607,11 @@
                         </Border>
                     </Grid>
 
-                    <!-- 设备配置 -->
+                    <!-- 设备连接 -->
                     <StackPanel x:Name="DeviceConfigPanel"
                                  Visibility="Collapsed"
                                  d:Visibility="Collapsed">
-                        <TextBlock Text="设备配置"
+                        <TextBlock Text="设备连接"
                                    FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
                                    FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
                                    Margin="0,10,0,10"/>

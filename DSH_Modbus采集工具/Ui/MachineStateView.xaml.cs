@@ -33,6 +33,7 @@ namespace DSH_Modbus采集工具.Ui
 
         private readonly Dictionary<string, BoxVisual> _boxes = new(StringComparer.Ordinal);
         private readonly Dictionary<string, LabelVisual> _labels = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, LampVisual> _lamps = new(StringComparer.Ordinal);
 
         public MachineStateView()
         {
@@ -42,16 +43,22 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>双击某个状态框时触发，参数是该状态。</summary>
         public event EventHandler<MachineStateItem>? StateDoubleClicked;
 
+        /// <summary>双击某个指示灯时触发，参数是那个灯。</summary>
+        public event EventHandler<MachineStateLamp>? LampDoubleClicked;
+
         /// <summary>某条连线的标签被改完（已写回模型），调用方据此落盘。</summary>
         public event EventHandler? EdgeLabelCommitted;
 
         /// <summary>用一组状态重建整个画面。</summary>
         public void Bind(
-            IReadOnlyList<MachineStateItem> items, IReadOnlyList<MachineEdgeLabel> edgeLabels)
+            IReadOnlyList<MachineStateItem> items,
+            IReadOnlyList<MachineEdgeLabel> edgeLabels,
+            IReadOnlyList<MachineStateLamp> lamps)
         {
             RootCanvas.Children.Clear();
             _boxes.Clear();
             _labels.Clear();
+            _lamps.Clear();
 
             RootCanvas.Width = MachineStateLayout.DesignWidth;
             RootCanvas.Height = MachineStateLayout.DesignHeight;
@@ -60,6 +67,10 @@ namespace DSH_Modbus采集工具.Ui
             BuildEdges();
             BuildEdgeLabels(edgeLabels);
             BuildBoxes(items);
+
+            // 灯放在最后：它是画布上唯一会「压」在其他图元之上的东西，
+            // 万一将来挪位置也不会被连线盖住
+            BuildLamps(lamps);
         }
 
         /// <summary>状态的真假变了：只更新受影响的框。</summary>
@@ -68,6 +79,15 @@ namespace DSH_Modbus采集工具.Ui
             if (_boxes.TryGetValue(item.Id, out BoxVisual? visual))
             {
                 visual.Apply(item);
+            }
+        }
+
+        /// <summary>指示灯亮灭变了：只更新受影响的灯。</summary>
+        public void ApplyLampState(MachineStateLamp lamp)
+        {
+            if (_lamps.TryGetValue(lamp.Id, out LampVisual? visual))
+            {
+                visual.Apply(lamp);
             }
         }
 
@@ -312,6 +332,90 @@ namespace DSH_Modbus采集工具.Ui
         }
 
         /// <summary>
+        /// 画两个指示灯（Error / Fault）。
+        /// <para>
+        /// 视觉直接沿用 IO 监控里那颗灯：**一个实心圆点 + 右边一行文字**。
+        /// 圆点直径与文字字号取模型里的值（双击可改），点亮色取模型的
+        /// <see cref="MachineStateLamp.Color"/>（永远是具体颜色，**不跟主题走**）。
+        /// 不套外框 —— 画布上本来就是一张图，套框会让人以为它是状态框。
+        /// </para>
+        /// </summary>
+        private void BuildLamps(IReadOnlyList<MachineStateLamp> lamps)
+        {
+            foreach (MachineStateLamp lamp in lamps)
+            {
+                if (!MachineStateLayout.Lamps.TryGetValue(lamp.Id, out DesignRect rect))
+                {
+                    continue;
+                }
+
+                // 尺寸这里只给初值，真正的值由 LampVisual.Apply 按模型刷上去 ——
+                // 与文字/颜色走同一条路，避免「构建时一套、刷新时另一套」
+                double dotSize = lamp.DotSize;
+                var dot = new Border
+                {
+                    Width = dotSize,
+                    Height = dotSize,
+                    CornerRadius = new CornerRadius(dotSize / 2),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    IsHitTestVisible = false,
+
+                    // 颜色不在这里给：LampVisual 构造完立刻 Apply 一次，走同一条着色路径
+                    Background = Brushes.Transparent,
+                };
+
+                var text = new TextBlock
+                {
+                    Margin = new Thickness(8, 0, 0, 0),
+                    FontSize = lamp.FontSize,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    IsHitTestVisible = false,
+                };
+
+                text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Primary");
+
+                var row = new StackPanel { Orientation = Orientation.Horizontal };
+                row.Children.Add(dot);
+                row.Children.Add(text);
+
+                var host = new Border
+                {
+                    Width = rect.Width,
+                    Height = rect.Height,
+                    Child = row,
+
+                    // ⚠️ 必须显式给一个透明背景：Border 的 Background 为 null 时**不参与命中测试**，
+                    // 双击会直接穿过去（状态框那边看不出来，是因为它总会画上填充色）
+                    Background = Brushes.Transparent,
+                    Cursor = Cursors.Hand,
+                    ToolTip = "双击编辑该指示灯",
+                    Tag = lamp,
+                };
+
+                host.MouseLeftButtonDown += Lamp_MouseLeftButtonDown;
+
+                Canvas.SetLeft(host, rect.X);
+                Canvas.SetTop(host, rect.Y);
+                RootCanvas.Children.Add(host);
+
+                var visual = new LampVisual(host, dot, text);
+                _lamps[lamp.Id] = visual;
+                visual.Apply(lamp);
+            }
+        }
+
+        private void Lamp_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ClickCount < 2 || sender is not Border { Tag: MachineStateLamp lamp })
+            {
+                return;
+            }
+
+            e.Handled = true;
+            LampDoubleClicked?.Invoke(this, lamp);
+        }
+
+        /// <summary>
         /// 一条连线标签的视觉对象：平时是只读文字，双击就地变输入框。
         /// </summary>
         private sealed class LabelVisual
@@ -429,6 +533,108 @@ namespace DSH_Modbus采集工具.Ui
 
             private void Editor_LostFocus(object sender, RoutedEventArgs e) =>
                 EndEdit(commit: true);
+        }
+
+        /// <summary>
+        /// 一个指示灯的两件视觉对象：圆点 + 文字。
+        /// <para>
+        /// 亮 = 模型里的 <see cref="MachineStateLamp.Color"/>（具体颜色，**不跟主题走**）。
+        /// 灭一律画主题的 <c>Io.Off</c> —— 灭态不给配色的余地，否则「灭」会被配得像「亮」。
+        /// </para>
+        /// <para>
+        /// 尺寸（圆点直径、文字字号）同样由模型驱动，双击编辑后立刻反映到画布上。
+        /// </para>
+        /// </summary>
+        private sealed class LampVisual
+        {
+            private readonly Border _host;
+            private readonly Border _dot;
+            private readonly TextBlock _text;
+
+            private bool? _lastOn;
+            private string _lastColor = "";
+
+            // ⚠️ 别用 NaN 当「还没刷过」的哨兵：Math.Abs(NaN - x) > 0.01 恒为 false，
+            // 那样一次都不会刷新（踩过，灯一直是布局里的初值）。尺寸永远为正，用 -1 就够。
+            private double _lastDotSize = -1;
+            private double _lastFontSize = -1;
+
+            // 点亮色用这一支画刷，循环复用（不每帧 new 刷子）
+            private readonly SolidColorBrush _onBrush = new();
+
+            public LampVisual(Border host, Border dot, TextBlock text)
+            {
+                _host = host;
+                _dot = dot;
+                _text = text;
+            }
+
+            public void Apply(MachineStateLamp lamp)
+            {
+                // 文字/字号每次都赋：双击编辑改完它们时，亮灭可能一点没变
+                _text.Text = lamp.Text;
+
+                if (Math.Abs(_lastFontSize - lamp.FontSize) > 0.01)
+                {
+                    _lastFontSize = lamp.FontSize;
+                    _text.FontSize = lamp.FontSize;
+                }
+
+                _host.ToolTip = BuildToolTip(lamp);
+
+                // 尺寸每帧比对：它只影响布局，比颜色便宜得多
+                if (Math.Abs(_lastDotSize - lamp.DotSize) > 0.01)
+                {
+                    _lastDotSize = lamp.DotSize;
+                    _dot.Width = lamp.DotSize;
+                    _dot.Height = lamp.DotSize;
+                    _dot.CornerRadius = new CornerRadius(lamp.DotSize / 2);
+                }
+
+                // 50ms 一拍，绝大多数时候亮灭和颜色都没变 —— 早退掉，别碰画笔
+                if (_lastOn == lamp.IsOn
+                    && string.Equals(_lastColor, lamp.Color, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                _lastOn = lamp.IsOn;
+                _lastColor = lamp.Color;
+
+                if (!lamp.IsOn)
+                {
+                    _dot.SetResourceReference(Border.BackgroundProperty, "Io.Off");
+                    return;
+                }
+
+                _onBrush.Color = ParseColor(lamp.Color);
+                _dot.Background = _onBrush;
+            }
+
+            private static string BuildToolTip(MachineStateLamp lamp)
+            {
+                if (string.IsNullOrWhiteSpace(lamp.Expression))
+                {
+                    return "双击编辑该指示灯";
+                }
+
+                return $"双击编辑该指示灯\n表达式：{lamp.Expression}";
+            }
+
+            private static Color ParseColor(string hex)
+            {
+                try
+                {
+                    return (Color)ColorConverter.ConvertFromString(hex);
+                }
+                catch
+                {
+                    // 走到这里说明落盘的值坏了：退回出厂绿（#0B7A0B）而不是随便一个色。
+                    // 模型层 NormalizeColor 已经把空串/坏值都归一成 MachineStateLayout.LampOnColor，
+                    // 这里只是最后一道兜底，两处颜色必须一致
+                    return Color.FromRgb(0x0B, 0x7A, 0x0B);
+                }
+            }
         }
 
         /// <summary>一个状态框的两件视觉对象，以及「上次画成什么样」的缓存。</summary>

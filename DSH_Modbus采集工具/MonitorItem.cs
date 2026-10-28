@@ -539,7 +539,7 @@ namespace DSH_Modbus采集工具
         /// 免得同一个值在这里能填、接到地址后却写不进去。
         /// </para>
         /// </summary>
-        /// <param name="orders">三套字节顺序（设备配置页下拉框的当前值）；只影响编码，不影响是否合法。</param>
+        /// <param name="orders">三套字节顺序（设备连接页下拉框的当前值）；只影响编码，不影响是否合法。</param>
         public bool TrySetMemoryValue(string? text, ByteOrderSettings orders, out string error)
         {
             error = string.Empty;
@@ -620,7 +620,7 @@ namespace DSH_Modbus采集工具
         public CommDriver? Driver { get; private set; }
 
         /// <summary>
-        /// 数据解释用的三套字节顺序。默认取当前驱动，用户改设备配置页的下拉框后由窗口覆盖。
+        /// 数据解释用的三套字节顺序。默认取当前驱动，用户改设备连接页的下拉框后由窗口覆盖。
         /// <para>
         /// 放在这里而不是每次从窗口读：轮询在后台线程回填（<see cref="ApplyBlock"/>），
         /// 而 <c>Polling/</c> 不许碰 WPF，只能从宿主暴露的集合上取这份快照。
@@ -659,7 +659,7 @@ namespace DSH_Modbus采集工具
             ReResolveAll();
         }
 
-        /// <summary>用户改了设备配置页的字节顺序下拉框：立即生效于下一拍读/写。</summary>
+        /// <summary>用户改了设备连接页的字节顺序下拉框：立即生效于下一拍读/写。</summary>
         public void SetByteOrders(ByteOrderSettings orders) => ByteOrders = orders;
 
         /// <summary>

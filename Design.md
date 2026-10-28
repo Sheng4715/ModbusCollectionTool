@@ -1,7 +1,7 @@
 # Design.md — 技术设计文档
 
 > 当前基线：Modbus TCP 采集（读 + 写）+ IO 监控（X/Y 分段、xlsx 导入、分页、持久化、输入/输出异色）+ **数据类型系统（P6.4）** + **自由监控（P2.2，读取与 FC05/06/16 写入均已落地）** + 独立心跳 + 运行日志 + 异常断开自动重连 + 全局底栏 + **主题外观（P5.1）** + **日志落盘（P5.2）** + **项目信息（P5.3）** + 目标网卡记忆，均已实现并验证。
-> **未实现**：串口（Modbus RTU）；「采集配置」页**骨架已建**（标题 + 占位卡），P3.1 采集导出功能未实现。
+> **未实现**：串口（Modbus RTU）；「数据管理」页**骨架已建**（标题 + 占位卡），P3.1 采集导出功能未实现。
 > 需求与优先级见 `Brief.md`；代码位置见 `AGENTS.md`；**本文件只讲「为什么这么设计」**。
 
 ---
@@ -21,7 +21,7 @@
 ```
 ┌───────────────────────────────────────────────────────┐
 │  UI 层  MainWindow.xaml(.cs)                          │
-│  导航 / 设备配置表单 / IO 监控灯 / 总览日志 + 全局底栏  │
+│  导航 / 设备连接表单 / IO 监控灯 / 总览日志 + 全局底栏  │
 └──────────────▲────────────────────────┬───────────────┘
                │ Dispatcher 回切        │ 连接/断开/周期设置
 ┌──────────────┴────────────────────────▼───────────────┐
@@ -48,7 +48,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `MainWindow.xaml` | 全部 UI：五页导航、IO 卡片（分段切换 / 导入 / 分页 / 空提示）、**自由监控卡片**（合并输入 + 类型/格式 + 当前值 + 删除，见 ADR-19）、**采集配置骨架页**（标题 + 占位卡）、采集周期下拉、**全局底栏**（叠放，见 ADR-16）；面板显隐由 `Nav_Checked` 控制 |
+| `MainWindow.xaml` | 全部 UI：五页导航、IO 卡片（分段切换 / 导入 / 分页 / 空提示）、**自由监控卡片**（合并输入 + 类型/格式 + 当前值 + 删除，见 ADR-19）、**数据管理骨架页**（标题 + 占位卡）、采集周期下拉、**全局底栏**（叠放，见 ADR-16）；面板显隐由 `Nav_Checked` 控制 |
 | `MainWindow.xaml.cs` | 交互编排：连接状态机 + 任务隔离、轮询循环、心跳编排、**自动重连退避**、动态点位集与分页、xlsx 导入、**自由监控增删改与校验**、网卡扫描绑定、**底栏状态**、最大化溢出补偿；运行日志只剩三处薄包装（编排在 `Ui/DeviceLogPresenter.cs`） |
 | `MonitorItem.cs` | 自由监控项：`DataPoint` 的界面包装（INPC + 行色 + ToolTip）与 `MonitorItemSet`（增删改、落盘、`AfterChange` 重解析） |
 | `XlsxIoTableReader.cs` | xlsx 解析：零依赖（`System.IO.Compression` + `XmlReader`），首个工作表 → sharedStrings/inlineStr → **地址形单元格 → 右邻为注释** |
@@ -72,7 +72,7 @@
 | `_pollIntervalMs` | volatile | 采集周期；UI 写、后台读 |
 | `_currentDriver` | UI 写 / 后台读 | 当前驱动；UI 线程缓存，避免后台碰 ComboBox |
 | `_xPoints` / `_yPoints` | 仅 UI | X/Y 点位列表，**数量由导入表决定**，按地址升序；`IoPoint.Address` 供偏移回填 |
-| `_ioPageActive` | volatile | 状态信息页可见 = 采集 IO；离开即停 IO（**心跳不受它控制**） |
+| `_ioPageActive` | volatile | 设备监控页可见 = 采集 IO；离开即停 IO（**心跳不受它控制**） |
 | `_yViewActive` | volatile | 当前分段 true=Y / false=X |
 | `_xPageIndex` / `_yPageIndex` | volatile | X/Y 各自页号（0 基） |
 | `_visiblePage` | volatile | **当前可见页点位数组快照**：`ApplyIoPage` 整体替换，`PollOnceAsync` 只读它（不遍历 List，避免与重建竞态） |
@@ -142,7 +142,7 @@
 ```
 while (!token.IsCancellationRequested)
     PollOnce:
-        _ioPageActive == false → return        ← 离开状态信息页：停 IO（心跳继续），灯保持
+        _ioPageActive == false → return        ← 离开设备监控页：停 IO（心跳继续），灯保持
         _visiblePage 为空（未导入 IO 表）→ return ← 同样不发 IO 报文（心跳继续）
         按所属地址区（CommDriver.FindArea）把本页点位分块
             每块再按 MaxCoilsPerRead(2000) 切窗
@@ -174,7 +174,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
     其他异常 → 走断线出口（与 IO 轮询同一条）
 ```
 
-> **不增加常态通讯量**：IO 采集周期（默认 100ms）远小于 1s 空闲阈值，故正常采集时心跳**恒被省略**；只有真正空闲（离页、空点位表、停留总览/设备配置页）时才以 ≤1 帧/秒 的代价做保活与断线检测。
+> **不增加常态通讯量**：IO 采集周期（默认 100ms）远小于 1s 空闲阈值，故正常采集时心跳**恒被省略**；只有真正空闲（离页、空点位表、停留总览/设备连接页）时才以 ≤1 帧/秒 的代价做保活与断线检测。
 > **心跳不写 IO 灯**：心跳结果只用于连接健康与状态提示，不更新任何 `IsOn` —— 离页期间灯色仍保持上次采集值。
 > **地址来自驱动地址表**：取 `CommDriver.Areas` 里**地址最小**的线圈区 `StartAddress`（信捷 M 区 / 汇川 M 区均为 0），FC01 单点只读不写。无单独配置 → 新增品牌零配置，且与 IO 表无关。**不依赖数组顺序**：按 `Area` 筛选后 `OrderBy(StartAddress)`。
 > **合法异常码不等于断线**：码 1/2 → 提示「心跳无效（…），请检查驱动地址表」；其余码 → 提示「心跳响应异常」。两者都保持连接并按空闲间隔继续重试，后续心跳成功即清除警告。
@@ -217,7 +217,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 
 ### 5.6 采集跟随可见性（三分段统一规则）
 
-状态信息页的三个分段**一律「只有当前显示的才读」**，且**离开者保留上次值、不清空、不断线**：
+设备监控页的三个分段**一律「只有当前显示的才读」**，且**离开者保留上次值、不清空、不断线**：
 
 | 分段 | 可见性判据 | 数据源 | 功能码 |
 |---|---|---|---|
@@ -225,7 +225,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 | 输出 Y | `!_freeViewActive` 且当前页为 Y | `_visiblePage`（IO 点位集） | FC01 |
 | 自由监控 | `_freeViewActive` | `_monitorSet`（监控项集合） | 线圈 FC01 / 保持寄存器 FC03 / 输入寄存器 FC04 |
 
-外层另有一道**页面级**闸门 `_ioPageActive`：离开「状态信息」页则三个分段全停，独立心跳继续（心跳不写任何显示值）。
+外层另有一道**页面级**闸门 `_ioPageActive`：离开「设备监控」页则三个分段全停，独立心跳继续（心跳不写任何显示值）。
 
 **自由监控的读取编排**（`MonitorItemSet.BuildReadPlan` + `PollFreeMonitorAsync`）：
 
@@ -257,7 +257,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 
 ### 5.7 自由监控写入（FC05 / FC06 / FC16）
 
-**交互形态**：「当前值」格**直接就是输入框**（框线风格，与设备配置页表单一致），回车或失焦提交。不设单独的「写入」按钮 —— 少一次点击，且输入框本身已经表达了"这里可以改"。
+**交互形态**：「当前值」格**直接就是输入框**（框线风格，与设备连接页表单一致），回车或失焦提交。不设单独的「写入」按钮 —— 少一次点击，且输入框本身已经表达了"这里可以改"。
 
 **写入链**：
 
@@ -343,7 +343,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 
 ## 7. 扩展点设计
 
-> Brief 编号已于 2026-10-16 **改为按 UI 界面分类**（P1 总览 / P2 状态信息 / P3 采集配置 / P4 设备配置 / P5 设置 / P6 其他），下表对齐当前编号；旧编号对照见 `Brief.md` 文末附录。
+> Brief 编号已于 2026-10-16 **改为按 UI 界面分类**（P1 总览 / P2 设备监控 / P3 数据管理 / P4 设备连接 / P5 设置 / P6 其他），下表对齐当前编号；旧编号对照见 `Brief.md` 文末附录。
 
 | 需求（Brief 编号） | 挂接点 | 状态 |
 |---|---|---|
@@ -352,9 +352,9 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 | Modbus RTU 串口（P4.4，低） | 新建 `ModbusRtuClient`，复用 PDU 构造/解析（MBAP 之外加 CRC16）；`ConnectionTypeComboBox` 已能切换面板 | 协议层 PDU 与传输无关，可抽出共用 |
 | **数据类型系统（P6.4，中）** | 新增类型/格式模型（`DataType` + `DisplayFormat`），点位模型从「bool + 注释」扩展为「类型 + 位宽 + 格式 + 值」 | ✅ **已全部实现**（`Modeling/`：`DataTypes` + `ValueCodec` + `DataPoint`；字序/字符串序真机定案见 §10.3 / §10.4，独立工程 `ModelingCheck/` 100 项断言全通过）。自由监控的读取链路已接通（见下行） |
 | **寄存器读写（P6.4 前置）** | `ModbusTcpClient` 的 FC03/04**读**已就绪；需补 FC06/16**写**。点位模型需支持寄存器组（`DINT` 占 2 个、`STRING[n]` 占 ⌈n/2⌉ 个） | ✅ **读写 API 均已实现**（读 FC01/02/03/04 + 写 FC05/06/16）。⚠️ 两次字序/字符串实测由 XDPPro 写、应用侧只读，**未用应用侧写入**；该缺口已于 2026-10-16 用真机补验（独立裸客户端读回 **15/15** 项符合，见 §10.14） |
-| **采集导出 CSV（P3.1，低）** | 「采集配置」页骨架已建（`AcquisitionConfigPanel`：标题 + 占位卡）；轮询成功回调处挂录制旁路，支持周期/条件触发两种启动方式 | 页面骨架 ✅（2026-10-16）；采集导出待设计（触发细节见 Brief §6-4） |
+| **采集导出 CSV（P3.1，低）** | 「数据管理」页骨架已建（`AcquisitionConfigPanel`：标题 + 占位卡）；轮询成功回调处挂录制旁路，支持周期/条件触发两种启动方式 | 页面骨架 ✅（2026-10-16）；采集导出待设计（触发细节见 Brief §6-4） |
 | **MES 上报（P3.2，低）** | 在采集数据基础上做 HTTP + JSON 上报；可复用录制旁路的数据快照 | 待设计 |
-| **自由监控（P2.2，中）** | 「状态信息」页第三分段新增列表式监控区：**方案 2** 合并输入（`TrySplitName`）+ 类型反推（`AreasOfElement`）+ `data-points.json` 即时落盘；**写入需新增 FC05/06/16** | ✅ **已全部实现**（ADR-19 界面；读取 `MonitorItemSet.BuildReadPlan` 跟随可见性、按区分块；写入 FC05/06/16 见 §5.6 与 `AGENTS.md` §5.1） |
+| **自由监控（P2.2，中）** | 「设备监控」页第三分段新增列表式监控区：**方案 2** 合并输入（`TrySplitName`）+ 类型反推（`AreasOfElement`）+ `data-points.json` 即时落盘；**写入需新增 FC05/06/16** | ✅ **已全部实现**（ADR-19 界面；读取 `MonitorItemSet.BuildReadPlan` 跟随可见性、按区分块；写入 FC05/06/16 见 §5.6 与 `AGENTS.md` §5.1） |
 | xlsx 导入 IO 表 | `ImportIoTableButton_Click` → `XlsxIoTableReader.Read` → 逐行按 `_currentDriver` 校验 → 整体替换 `_comments` → `RebuildIoPoints()` + 复位第 1 页 → `SaveComments()` | ✅（解析限制见 §8-8） |
 | 多页面 IO（原 P2 → P2.1） | X/Y 分段：`_xPoints`/`_yPoints` 双列表 + 双网格；分页：每页 4×`IoRowsPerColumn`，页号独立。再加 M/D 段 = 复制一个列表 + 网格 + 分段按钮 | ✅ X/Y + 分页；M/D 暂缓 |
 | **结构重构（P5 步骤 1、2）** | 采集编排 → `Polling/`；IO 点位集/分页/导入 → `Io/`（**均不引用 WPF**）。自由监控**刻意未抽**（12 处直接碰控件） | ✅（ADR-21） |
@@ -418,7 +418,7 @@ D[n] = (char[2i] << 8) | char[2i+1]
 
 **采集导出（P3.1）**
 
-- 配置位置：「采集配置」页（`AcquisitionConfigPanel`，**骨架已建**：标题 + 「采集数据」占位卡；采集项勾选 / 触发方式 / CSV 输出待填）
+- 配置位置：「数据管理」页（`AcquisitionConfigPanel`，**骨架已建**：标题 + 「采集数据」占位卡；采集项勾选 / 触发方式 / CSV 输出待填）
 - 采集内容：用户勾选要录制的线圈/寄存器项
 - 启动方式：周期式 或 值条件触发 —— 触发细节待定（Brief §6-4）
 - 输出：CSV，列格式待定
@@ -746,7 +746,7 @@ RESULT: every replaced literal maps to an identical Light.xaml value
 
 - 首启 `ThemeSystemSegment.IsSelected = True`（默认跟随系统，注册表 `AppsUseLightTheme=1` → 浅色）✓
 - 切深色 → `app-settings.json` = `{ "Theme": "Dark" }`；切浅色 → `{ "Theme": "Light" }` ✓
-- 逐页截图核对：设置页（浅/深）、总览、状态信息、设备配置 —— 胶囊下拉、框线输入框、灰底按钮、地址 chip、分隔线、状态栏、分段轨道**全部跟随**✓
+- 逐页截图核对：设置页（浅/深）、总览、设备监控、设备连接 —— 胶囊下拉、框线输入框、灰底按钮、地址 chip、分隔线、状态栏、分段轨道**全部跟随**✓
 
 **3. 真机活数据下的像素采样（C# 侧画刷的关键证明）**
 
@@ -936,13 +936,13 @@ LogSaveToggle.Content = enabled ? "开" : "关";   // 在 Changed 与 Sync 两�
 
 **1. 四个标题为什么位置不一致**
 
-四页标题（总览 / 状态信息 / 设备配置 / 设置）都是同一个 `ContentScrollViewer` 的**并列兄弟节点**，故**水平位置本来就相同**（都由 `ScrollViewer` 的 `Margin.Left` + `Padding.Left` 决定）。差异只在**垂直** `Margin`：
+四页标题（总览 / 设备监控 / 设备连接 / 设置）都是同一个 `ContentScrollViewer` 的**并列兄弟节点**，故**水平位置本来就相同**（都由 `ScrollViewer` 的 `Margin.Left` + `Padding.Left` 决定）。差异只在**垂直** `Margin`：
 
 | 页 | 原 `Margin` |
 |---|---|
 | 总览 | `0,10,0,10` |
-| 状态信息 | `0,8,0,10` |
-| 设备配置 | `0,16,0,16` |
+| 设备监控 | `0,8,0,10` |
+| 设备连接 | `0,16,0,16` |
 | 设置 | `0,16,0,16` |
 
 统一为 `0,10,0,10`。**这个差异没有任何设计意图** —— 四个标题是四次分别写的，谁也没参照谁。统一后切页时标题不再上下跳。
@@ -1092,11 +1092,11 @@ SDK 把两者合成 `<Version>`。理由与「构建日期不手写」完全一�
 
 跨重启复测：关掉应用再启动，下拉框仍为 `WLAN(192.168.1.15)`，即 §10.11-1 那个误导性报错不再出现。
 
-### 10.12 「采集配置」页骨架（2026-10-16）
+### 10.12 「数据管理」页骨架（2026-10-16）
 
 **1. 为什么先建这个页**
 
-Brief §7-4 一直记着「点『采集配置』不切面板」。它不只是"点了没反应" —— 该导航项原先没有 `x:Name`、也没有对应面板，`Checked="RadioButton_Checked"` 是个空方法：
+Brief §7-4 一直记着「点『数据管理』不切面板」。它不只是"点了没反应" —— 该导航项原先没有 `x:Name`、也没有对应面板，`Checked="RadioButton_Checked"` 是个空方法：
 
 ```csharp
 private void RadioButton_Checked(object sender, RoutedEventArgs e) { }
@@ -1108,7 +1108,7 @@ private void RadioButton_Checked(object sender, RoutedEventArgs e) { }
 
 | 处 | 改动 |
 |---|---|
-| `MainWindow.xaml` 导航区 | `采集配置` 项补 `x:Name="AcquisitionConfigNav"`，删掉 `Checked="RadioButton_Checked"` |
+| `MainWindow.xaml` 导航区 | `数据管理` 项补 `x:Name="AcquisitionConfigNav"`，删掉 `Checked="RadioButton_Checked"` |
 | `MainWindow.xaml` 内容区 | 新增 `AcquisitionConfigPanel`（`StackPanel` + 标题 + 一张「采集数据」卡），置于 `DeviceConfigPanel` 之前 |
 | `MainWindow.xaml.cs` | `Nav_Checked` 增加一支显隐 `AcquisitionConfigPanel`；删除空壳 `RadioButton_Checked` |
 
@@ -1121,10 +1121,10 @@ private void RadioButton_Checked(object sender, RoutedEventArgs e) { }
 | 项 | 结果 |
 |---|---|
 | 切换前，页标题（宽 > 1000）数 | **0** —— 面板还是 `Collapsed`，符合预期 |
-| 点「采集配置」后，页标题数 | **1**（w=1308）→ **白屏已修** |
+| 点「数据管理」后，页标题数 | **1**（w=1308）→ **白屏已修** |
 | 卡片标题「采集数据」/ 占位文字「尚未实现」 | 各 **1** 个，均可见 |
 | 其它页内容（`运行日志` / `显示外观` / `设备类型` / `尚未导入 IO 表`） | 全部 **0** → 确实换了面板，不是叠着 |
-| **五页导航往返**（总览 / 状态信息 / 采集配置 / 设备配置 / 设置） | 每页页标题恰好 **1** 个，**5/5 OK** |
+| **五页导航往返**（总览 / 设备监控 / 数据管理 / 设备连接 / 设置） | 每页页标题恰好 **1** 个，**5/5 OK** |
 | 五页大标题位置 | 全部 `relX=198 relY=93 w=1308 h=40`（device px）—— 与 §10.9 实测值一致，**新增页未破坏标题统一** |
 | 卡片内标题左缘 | `采集数据` 的 `relX=236`，与设置页 `显示外观` 的 `relX=236` **逐像素相同**（两卡 `Padding` 同为 24）→ 卡片外框与其余页对齐 |
 
@@ -1232,7 +1232,7 @@ private void RadioButton_Checked(object sender, RoutedEventArgs e) { }
 
 ### 10.15 字节顺序接线（P4.3，2026-10-21）
 
-**问题**：设备配置页那三个下拉框自 2026-10-13 起就存在，但一直是**死控件** ——
+**问题**：设备连接页那三个下拉框自 2026-10-13 起就存在，但一直是**死控件** ——
 选择只写进窗口的 `_int32ByteOrder` / `_floatByteOrder` / `_stringByteOrder` 三个字段，**无人读取**。
 解码/编码走的是 `driver.Int32ByteOrder` / `driver.StringByteOrder`（驱动出厂默认）。
 因下拉框初值就是从驱动同步来的，界面显示与真实行为一致 —— 所以**看起来一切正常**，
@@ -1450,7 +1450,7 @@ DINT 解出 123456 而 REAL 解不出 123.45；反过来亦然；编码侧同样
 
 - 离线：`ModelingCheck` **160 项**全通过（新增 §13 共 25 项：只收可读变量 / 相邻合并 / 空洞断开 /
   32 位占两寄存器 / 线圈与寄存器分块 / 按字序回填 / 长度不足保留旧值）
-- 端到端（UIA + 记录请求的假从站，3 项）：总览页 D10 读 114 次 → 切到状态信息页 3 秒内新增 1 次 →
+- 端到端（UIA + 记录请求的假从站，3 项）：总览页 D10 读 114 次 → 切到设备监控页 3 秒内新增 1 次 →
   切回总览 3 秒内新增 37 次
 - 画面：从站返 `D10 = 8`，**Manual Control 亮**（此前恒为 Stopped）
 
@@ -1459,7 +1459,7 @@ DINT 解出 123456 而 REAL 解不出 123.45；反过来亦然；编码侧同样
 - **假从站必须绑在应用所选网卡的地址上**（`192.168.1.80`）。应用会把本地端点绑到那块网卡
   （见 ADR-14 的多网卡约束），绑 `127.0.0.1` 时它连不上，从站一帧都收不到 ——
   现象是「代码没跑」，实际只是连不上
-- **断言只能数 `FC3 start=10` 这一种帧**。切到状态信息页后应用**仍会**读 IO（FC1 两个块），
+- **断言只能数 `FC3 start=10` 这一种帧**。切到设备监控页后应用**仍会**读 IO（FC1 两个块），
   数全部帧会把 IO 采集误判成「还在读状态机变量」。第一版就是这么误报了 74 帧，差点去查一个不存在的 bug
 
 **变量的读写链路**（补记，2026-10-21 同日）：
@@ -1628,7 +1628,7 @@ UI 与配置结构在 §10.24 就位后，这一版接上「真的采、真的�
 现有引擎的采集全部**跟随页面可见性**（IO 监控 / 自由监控 / 状态机引用的全局变量，
 见 `PollSnapshot` 的四个字段）。采集任务组**不能**沿用这套：
 
-> 用户切到设备配置页调参数时，采集任务跟着停 —— 记录里就会凭空缺一段，
+> 用户切到设备连接页调参数时，采集任务跟着停 —— 记录里就会凭空缺一段，
 > 而缺的那段**事后完全看不出来**：文件里只有「11:04:15」这样的时间戳，
 > 没有「这段没采」的标记。
 
@@ -1691,7 +1691,7 @@ UI 与配置结构在 §10.24 就位后，这一版接上「真的采、真的�
 |---|---|
 | 表头只写一次 | 连跑 90 行，文件里只有 1 行表头 |
 | 值真的在刷新 | `1785 → 1807 → 1827 → 1849…` 逐行递增（不是恒 0，能排除「没在采」） |
-| **切走页面不停采** | 停在**设备配置**页 7 秒，行数 48 → 69、值 2965 → 2985 |
+| **切走页面不停采** | 停在**设备连接**页 7 秒，行数 48 → 69、值 2965 → 2985 |
 | 首行是真值 | 延后首拍后第一行 `16:06:44,读取,1785`，不再是 0 |
 | 断开不记录 | 未连接期间完全不产生文件 |
 | BOM | 首三字节 `EF BB BF` |
@@ -1821,7 +1821,7 @@ UIA 实测：在来源框输入 `SysState` 后写入变量的 `IsEnabled` 由 Fa
   —— 采纳。配置错误与用户主动停用本来就是同一种「不采集」，第一版等于把同一个语义实现两遍。
 - 补充定案（原话）：「列宽装不下的话你看能不能从数据项那一列分出来，另外只提示配置错误就可以了不用这么详细」
   → 列宽从「数据项」匀 70 给「启用」；提示只留四个字，明细不上界面（只进断言消息）。
-- 不做：不弹窗（采集配置「边输边存」，没有"提交"时刻，见 §10.28）、不阻止继续编辑
+- 不做：不弹窗（数据管理「边输边存」，没有"提交"时刻，见 §10.28）、不阻止继续编辑
   （错误是中间态，边改边报才合理）、不新增开关、**不改写 `Model.Enabled`**。
 
 #### 判定口径（`Modeling/AcquisitionTaskCheck.cs`，纯逻辑不碰 WPF）
@@ -1864,7 +1864,7 @@ Describe(task, findVariable) -> List<string>
   整个采集页直接打不开；而编译期是 0 警告 0 错误，完全看不出来。setter 写的是**用户意图**
   （`Enabled`），`EffectiveEnabled` 的值永远由 get 现算。
 - ⚠️ **`Model.Enabled` 存用户意图，程序绝不改写它**，三条理由：
-  ① 采集配置边输边存，清空变量名重打的那一瞬间就是配置错误，据此落盘会让组永久静默停采且无痕迹；
+  ① 数据管理页边输边存，清空变量名重打的那一瞬间就是配置错误，据此落盘会让组永久静默停采且无痕迹；
   ② 新组默认 `Enabled = true` 且 0 项，一创建就被关，等于把默认值废掉；
   ③ 改写后分不出「我关的」和「它自己关的」。
   所以开关只是**显示为关、点不动**，配置修好之后自己回到「开」。
@@ -2032,6 +2032,203 @@ Skipped 与 Failed 分开是必要的：前者是用户允许的常态配置，�
 写入后回读确认、事务/回滚、多项合并成一次 FC16、FC15、变化去重（心跳组写常量 `sys_True`，
 去重后就只在启动时写一次）、只读区改「仅警告」、失败降噪。
 
+### 10.31 状态机画布新增两个指示灯 Error / Fault（2026-10-28）
+
+> ⚠️ 本节「灯只有文字 / 表达式两项、颜色由主题决定」的判断已被 **§10.32** 部分推翻
+> （用户后来要求颜色 / 圆点大小 / 文字大小都可编辑）。两节都保留：本节记录最初的形状与两个坑，
+> §10.32 记录后来的外观扩展。**以 §10.32 为准。**
+
+用户需求（原话）：**「在画布上红框圈出的位置加两个指示灯控件，风格直接复用 IO 监控里的，
+<灯> Error  <灯> Fault，这个控件也要像状态框一样可以编辑」**。
+
+位置是画布下沿、`Manual Control` 右边与 `Aborted` 左边之间的空白带 ——
+drawio 里那块一直空着，加灯之后下沿三个元素（ManualControl / 两灯 / Aborted）就齐了。
+
+#### 一、为什么新造一个类，而不是复用 `MachineStateItem`
+
+状态框能编辑的是**文字 / 字体样式 / 字体大小 / 颜色 / 表达式**五项；指示灯只有
+**文字 / 表达式**两项 —— 灯的颜色是「亮/灭」的语义，由主题决定，让用户自选颜色反而
+会跟 `Io.Input.On` / `Io.Off` 这两颗既有色打架。
+
+所以 `MachineStateLamp` 是一个**独立的精简模型**（`Id` / `Text` / `Expression` / `IsOn`），
+与 `MachineStateItem` 平行而不是继承。判据：两者共享的只有「Id + Text + Expression + 编译结果」，
+共享部分不到一半，抽基类只会多一层间接。
+
+#### 二、几何（写死在 `MachineStateLayout.Lamps`）
+
+| 灯 | 设计坐标 (x, y, w, h) |
+|---|---|
+| Error | (526, 368, 150, 30) |
+| Fault | (692, 368, 150, 30) |
+
+x 取值依据：`ManualControl` 右边 = 339 + 150 = **489**，`Aborted` 左边 = **879**
+→ 空档 390 宽；两灯各 150、间距 16 → 合计 316，左右各留 37 居中，于是 489 + 37 = 526。
+
+y = 368 与 ManualControl / Stopped / Aborted 同排（它们的 y 都是 358，高 50，中心 383；
+灯高 30 居中即 383 − 15 = 368）。
+
+#### 三、视觉：照抄 IO 监控那颗圆点
+
+`MainWindow.xaml` 的 `IoItemTemplate` 里那颗灯是
+`<Border Width="10" Height="10" CornerRadius="5" Background="{Binding StateBrush}"/>`。
+指示灯没有直接绑 `StateBrush`（那是 `IoPoint` 的属性），而是照同样的形状放大到 **14×14、
+CornerRadius=7**，颜色走 `SetResourceReference`：
+
+| 状态 | 资源键 | Light | Dark |
+|---|---|---|---|
+| 亮 | `Io.Input.On` | `#0B7A0B` | `#4EC94E` |
+| 灭 | `Io.Off` | `#C4C4C4` | `#5A5A5A` |
+
+**没有新增主题键** —— 灯的颜色语义与 IO 输入点完全一致，复用既有的两把刷子即可
+（新增键就要在两套主题各加一次，收益为零）。文字 14pt 走 `Brush.Text.Primary`。
+
+`LampVisual.Apply` 里 `_lastOn` 早退：`IsOn` 没变就不重设资源引用，
+和 `BoxVisual` 的 `_lastActive` + `_colorKey` 是同一套降噪思路。
+
+#### 四、可编辑：双击弹 `Ui/MachineLampEditDialog.cs`
+
+零 XAML、`DialogChrome.Apply(this)`、`RequireStyle("Dialog.*")`，与 `MachineStateEditDialog` 同构：
+预览（14×14 圆点 + 文字）→ 显示文字 → 表达式 → 内联错误 → 取消/确定。
+表达式校验口径与状态框**完全一致**（`CompiledExpression.TryParse` + `TryValidateNames`），
+失败时内联红字 + 退回上一次有效值（`_revertingExpression` 挡回填触发的 TextChanged）。
+
+#### 五、持久化
+
+`machine-state.json` 新增 `Lamps` 段，按 `Id` 合并出厂值：
+
+```json
+"Lamps": [ { "Id": "Error", "Text": "Error", "Expression": "sys_False" },
+           { "Id": "Fault", "Text": "Fault", "Expression": "sys_False" } ]
+```
+
+**老文件没有这一段也能读** —— `LoadAll()` 里 `Lamps` 缺省就走 `CreateDefaultLamps()`，
+不需要迁移。⚠️ 保留了一个不带 `lamps` 参数的 `Save` 重载（只给断言工程用），
+它会**把文件里的 `Lamps` 段整段丢掉**，产品代码一律走三参数版本。
+
+#### 六、两个必须记住的坑
+
+**① `Background` 为 null 的 `Border` 不参与命中测试。**
+第一版 host `Border` 只给了 `Width/Height/Child`，双击直接穿到画布上、编辑窗永远打不开
+（`MouseLeftButtonDown` 一次都没触发）。修法：`Background = Brushes.Transparent`。
+WPF 里「透明」与「没有背景」在命中测试上是两回事，而视觉上完全看不出差别。
+
+**② 灯的表达式引用的全局变量必须进采集计划。**
+`RefreshMachineGlobals()` 原本只遍历 `_machineSet.Items`；改成抽出局部函数 `Collect(compiled)`，
+对 `Items` 与 `Lamps` **各调一次**，否则灯的表达式读到的是初始值 `"0"`，灯永远不亮。
+
+#### 七、验证
+
+| 证据 | 结果 |
+|---|---|
+| 画布 | Error 绿点 / Fault 灰点，落在 ManualControl 与 Aborted 之间（150% DPI，窗口 30,30 1536×960） |
+| UIA | `name=Error rect=883,617,34,20` / `name=Fault rect=1069,617,33,20` |
+| 像素 | `errdot #0B7A0B (76%)` / `faultdot #C4C4C4 (77%)` / 文字 `#1A1A1A` —— 正是 `Io.Input.On` 与 `Io.Off` |
+| 双击编辑 | 弹「指示灯编辑」；UIA `ValuePattern` 改文字与表达式 → 确定 → `machine-state.json` 的 `Lamps` 段随之改写 |
+| 亮灭 | Error 改 `sys_False` → 灰点；Fault 改 `sys_True` → 绿点 |
+| 闪烁 | Error 设 `sys_Pulse1s`，连拍四帧 darkest 依次 `#C4C4C4` / `#0B7A0B` / `#0B7A0B` / `#C4C4C4` |
+| 校验 | 表达式填 `NoSuchVar > 0` 失焦 → 内联「第 1 个字符：变量“NoSuchVar”不存在」+ 退回 `sys_False`；点确定不关闭 |
+
+回归：`.tmp/ExpressionCheck` **101 → 124 项**（此节定稿时；加完外观相关的 19 条后为 **143**，见 §10.32）。新增 23 条：布局 2 灯 / 键名 / 出厂文字 /
+在设计宽高内 / 两灯不重叠 / **灯不压任何状态框** / 集合与布局一一对应 / 表达式成功与写回 /
+拒收未知变量 / 被拒后模型未改 / 亮灭翻转 / 出厂造 2 个 / 文字与表达式往返 /
+未改的灯仍出厂文字 / **老文件无 Lamps 段仍读出 2 个灯**）。
+
+#### 八、UIA 取证的一个坑
+
+WPF 的 **owned window 在 UIA 树里是主窗口的后代**，不是 `RootElement` 的子节点。
+`navcap.ps1 -ListWindows` 只枚举顶层，因此会漏掉带 `Owner` 的对话框
+（一度让我误判「弹窗根本没出现」）。正确查法：先按 pid 找到主窗口，
+再在它的 `Descendants` 里找 `Name = '指示灯编辑'`。
+
+同理，改输入框内容要用 **`ValuePattern.SetValue`**，不要用 `SendKeys` ——
+后者依赖当前焦点，而对话框 `Loaded` 里有 `_textBox.Focus()/SelectAll()`，
+连续往两个框里 SendKeys 会全部打进第一个框。
+
+### 10.32 指示灯可编辑外观：颜色 / 圆点大小 / 文字大小（2026-10-28）
+
+用户需求（原话）：**「灯需要可以编辑颜色和大小，文字大小也要可编辑」**。
+§10.31 里「灯只有文字与表达式两项、颜色由主题定」的定案被这条需求推翻，
+但**只推翻了一半** —— 见下面「为什么不给灭态配色」。
+
+#### 一、三个新属性
+
+| 属性 | 出厂 | 夹取 | 语义 |
+|---|---|---|---|
+| `Color` | `MachineStateLayout.LampOnColor` = `#0B7A0B` | 归一化 | **永远是一个具体颜色**，没有「跟随主题」这一档（用户 2026-10-28 要求删掉，见「一之补」） |
+| `DotSize` | `MachineStateLayout.LampDotSize` = 14 | 6..28 | 圆点直径；上限 28 是因为灯格高只有 30 |
+| `FontSize` | `MachineStateLayout.LampFontSize` = 14 | 8..32 | 文字字号 |
+
+**为什么不给灭态配色**：灭态一律 `Io.Off`（主题灰）。若允许用户配色，一颗红色「灭」灯
+与一颗红色「亮」灯在画布上无法区分 —— 语义就丢了。所以 `Color` 只描述**点亮**的样子。
+
+**`NormalizeColor` 的兜底**：认不出（空串、长度不对、非 hex）一律退回
+`MachineStateLayout.LampOnColor`（`#0B7A0B`）。与 `MachineStateItem.NormalizeColor` 退回 `#F8CECC`
+是同一取舍 —— 认不出就给一个能画出来的颜色 —— 只是退回的色不同。
+
+#### 一之补、「跟随主题」已被删除（2026-10-28，用户原话「把灯颜色的跟随主题删掉」）
+
+初版把 `Color = ""` 定义为「跟随主题」（走资源键 `Io.Input.On`），编辑窗色盘第 4 行第 0 格是
+一颗圆形「跟随主题」格。用户要求删掉，理由是**用户改过的颜色不该因为换主题而变** ——
+那会让人以为设置没生效。改动：
+
+- `MachineStateLayout` 新增常量 `LampOnColor = "#0B7A0B"`（数值等于 `Io.Input.On` 的**浅色**值，
+  但它是**常量而不是资源引用**，就是为了不跟主题走）
+- `MachineStateLamp.Color` 初值 = `LampOnColor`；`NormalizeColor` 三处兜底都改成 `LampOnColor`，
+  **永不返回空串**（空的颜色在画布上没法画）
+- 画布 `LampVisual.Apply` 删掉「空色 → `SetResourceReference("Io.Input.On")`」整支，
+  直接 `_onBrush.Color = ParseColor(lamp.Color)`
+- 编辑窗 `BuildPalette()` 回到 3 行 30 色，圆形「跟随主题」格与其右侧提示 `TextBlock` 整段删除；
+  `UpdatePreview()` / `UpdateColorUi()` 里的空色分支同步删掉
+- **老文件无需迁移**：缺 `Color` 键 → `NormalizeColor(null)` → `#0B7A0B`，正好等于出厂色
+
+#### 二、编辑窗从两项变五项
+
+`Ui/MachineLampEditDialog.cs` 重写（315 → 约 480 行）：
+预览 → 显示文字 → **文字大小** → **灯大小** → **灯颜色** → 表达式 → 内联错误 → 取消/确定。
+
+- 色盘就是状态框那 30 个 drawio 原色，10 列 × 3 行；初版的第 4 行「跟随主题」格已删（见「一之补」）
+- **预览条永远画点亮态**：颜色只在点亮时可见，预览灭态等于永远看不出颜色
+- 两个下拉（文字大小 / 灯大小）复用了状态框的 `SelectSize` 语义：当前值不在预设里就**插进去**，
+  绝不悄悄改成别的值
+
+#### 三、渲染侧
+
+`LampVisual.Apply` 顺序：文字 → 字号（变了才改）→ ToolTip → 圆点尺寸（变了才改）
+→ 早退判断（`_lastOn == IsOn && _lastColor == Color`）→ 灭走 `Io.Off`
+→ 亮则复用同一个 `SolidColorBrush` 只改 `Color = ParseColor(lamp.Color)`（不每帧 new 刷子）。
+注意 `BuildLamps` 里 `dot` 的初值必须是 `Brushes.Transparent` 而不是调 `ParseColor` ——
+`ParseColor` 是内部类 `LampVisual` 的私有方法，外层类访问不到（会报 `CS0103`），
+颜色由构造完立刻执行的 `Apply` 刷。
+
+#### 四、踩到的真 bug：`double.NaN` 当哨兵
+
+第一版把「上次尺寸」哨兵初始化成 `double.NaN`，于是 `Math.Abs(NaN - x) > 0.01` **恒为 `false`**，
+一次都不会刷新 —— 现象是「把灯大小 22 改成 24，`machine-state.json` 写对了、画布纹丝不动」。
+改成 `-1`（尺寸永远为正，足够当哨兵）。**这类"早期值只能靠哨兵区分"的地方，别用 NaN。**
+
+#### 五、验证
+
+| 证据 | 结果 |
+|---|---|
+| 编辑窗 | 双击 Error 灯 →「指示灯编辑」五项俱全，预览绿圆点 + `Error`，文字大小 18 / 灯大小 22 / 灯颜色 `#60A917` / 表达式 `sys_True` |
+| 改色 | 点色盘 `#EA6B66` → 预览与色值同步；确定后 `machine-state.json`：`"Color": "#EA6B66", "DotSize": 24, "FontSize": 18` |
+| 像素 | Error 圆点 `#EA6B66` 26×26；Fault 圆点 `#C4C4C4` 22×21（DotSize 20） |
+| 出厂色 | 新建灯未配色时圆点 `#0B7A0B`（= `LampOnColor`），与主题无关 |
+| 重启 | 杀进程重启后外观保持（`fix1.png` 与改完一致） |
+
+回归：`.tmp/ExpressionCheck` **124 → 144 项**（新增「20. 指示灯的外观」14 条 +
+「21. 指示灯外观的持久化」6 条；删「跟随主题」后把 5 条空串断言改成出厂绿断言，
+并补一条「颜色永不返回空串」）。
+
+#### 六、取证实战教训
+
+- **下拉框不能点，要用 `SendKeys '{DOWN}{ENTER}'`**：WPF 弹出层的位置与行高不对应，
+  点「18」实际落在了色盘某格上（把颜色改了）
+- **收弹窗不要用 ESC**：ESC 有时不生效，紧接着的点击会落到色盘上改掉颜色。
+  用 UIA `InvokePattern` 点「确定」，或者直接杀进程
+
+---
+
 ### 10.26 采集执行的两处收尾：列变即换文件、运行日志（2026-10-26）
 
 §10.25 上线后自查，发现三个问题，这一节是它们的处置。
@@ -2193,7 +2390,7 @@ DWM 一旦接管圆角，就会自己在窗口最外层补一圈 1px 边框，�
 
 - 页头从一行 `TextBlock` 变成两栏 `Grid`：左「总览」标题，右 `StackPanel`（右对齐）
   放「当前视图」标签 + `OverviewViewCombo`
-- 下拉框**直接用 `FormComboBox`**（采集配置 / 设备配置页同一套），不另造样式 ——
+- 下拉框**直接用 `FormComboBox`**（数据管理 / 设备连接页同一套），不另造样式 ——
   否则以后调外观会各走各的
 - 卡片内那行胶囊删掉，画布直接占满卡片
 - 代码侧：`OverviewView_Checked` → `OverviewView_SelectionChanged`，
@@ -2205,7 +2402,7 @@ DWM 一旦接管圆角，就会自己在窗口最外层补一圈 1px 边框，�
   「当前视图和下拉框文本字号是否一致？」
 - **`FormComboBox` 的模板原本完全忽略 `BorderBrush`/`BorderThickness`**，写上去没效果。
   改成 `TemplateBinding` 后，必须**同时**在 Style 里补 `BorderThickness=0` 作默认值 ——
-  不补的话其余 8 个下拉框会跟着一起长出框线（已实拍确认设备配置页外观未变）
+  不补的话其余 8 个下拉框会跟着一起长出框线（已实拍确认设备连接页外观未变）
 - **初始化顺序**：XAML 里的 `SelectedIndex="0"` 会在 `InitializeComponent` 期间就触发一次
   `SelectionChanged`，那时 `MachineStateViewControl` 还没造出来，处理器必须先判空返回
 
@@ -2315,7 +2512,7 @@ drawio 里那段结构是：外层圆角容器 → 左侧一列竖排胶囊（�
 
 UIA 实测子导航条目 `159×45 px`（= 106×30 DIP，两者等宽、纵向紧邻）；
 主导航 `Nav_Checked` 仍正常切页（`OverviewNav` / `StatusInfoNav` 来回切均生效）；
-状态信息页那组横排分段（`IoSegmentRadioButton`）**未受影响**。
+设备监控页那组横排分段（`IoSegmentRadioButton`）**未受影响**。
 
 方案 B 落地后（截图像素扫描，非目测）：
 

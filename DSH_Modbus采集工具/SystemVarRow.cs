@@ -5,7 +5,7 @@ using DSH_Modbus采集工具.Modeling;
 namespace DSH_Modbus采集工具
 {
     /// <summary>
-    /// 状态信息页「系统变量」监控表里的一行 —— <see cref="SystemVariable"/> 的界面包装（P2.3）。
+    /// 设备监控页「系统变量」监控表里的一行 —— <see cref="SystemVariable"/> 的界面包装（P2.3）。
     /// <para>
     /// 与 <see cref="GlobalVarItem"/> / <c>MonitorItem</c> 的区别：那两个是**可编辑**的模型包装，
     /// 这个是**纯展示** —— 只有 <see cref="Value"/> 会变（定时器每 100ms 推一次），

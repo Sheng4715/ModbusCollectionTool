@@ -114,9 +114,9 @@ Window
 | 导航项 | 面板 | 说明 |
 |---|---|---|
 | `OverviewNav` 总览 | `OverviewPanel` | 视图切换在**页头右侧下拉框**「当前视图」（`FormComboBox`）：「PLC状态机」（P1.2，见 §5.5）/「生产数据」（占位）；卡片内只有画布 + 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
-| `StatusInfoNav` 状态信息 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
-| `DeviceConfigNav` 设备配置 | `DeviceConfigPanel` | 连接表单 |
-| `AcquisitionConfigNav` 采集配置 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1 骨架，采集导出未实现）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5，只读清单，见 §5.3） |
+| `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
+| `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | 连接表单 |
+| `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1 骨架，采集导出未实现）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5，只读清单，见 §5.3） |
 | `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 日志保存（P5.2）+ 项目信息（P5.3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
@@ -141,10 +141,10 @@ Window
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
 | `IoPagerButton` | 分页箭头（26×26，首末页置灰） |
 | `IoCardButton` | **通用文字按钮**（浅灰实底胶囊／圆角 6／高 26／字号 12；底色走 `Brush.Control.Background`） |
-| `FormButton` | 设备配置页按钮，`BasedOn` `IoCardButton`，仅字号 14、内边距 14 |
-| `FormComboBox` | 设备配置页下拉框：**胶囊**（灰底 + 圆角 6 + chevron），字号 14／高 26。默认 `BorderThickness=0`（无框线）；模板已 `TemplateBinding` `BorderBrush`/`BorderThickness`，个别位置需要框线时自己设 1 即可（总览页「当前视图」就是） |
+| `FormButton` | 设备连接页按钮，`BasedOn` `IoCardButton`，仅字号 14、内边距 14 |
+| `FormComboBox` | 设备连接页下拉框：**胶囊**（灰底 + 圆角 6 + chevron），字号 14／高 26。默认 `BorderThickness=0`（无框线）；模板已 `TemplateBinding` `BorderBrush`/`BorderThickness`，个别位置需要框线时自己设 1 即可（总览页「当前视图」就是） |
 | `FormComboItem` | 表单下拉项容器（含 `ItemContainerStyle`，勿漏） |
-| `FormTextBox` | 设备配置页输入框：**框线**（白底 + `Brush.Input.Border` 圆角 4），字号 14／高 26 |
+| `FormTextBox` | 设备连接页输入框：**框线**（白底 + `Brush.Input.Border` 圆角 4），字号 14／高 26 |
 | `MonitorInlineComboBox` / `MonitorTypeCombo` | 自由监控行内下拉框：胶囊，字号 12／高 22 |
 | `MonitorComboItem` | 行内下拉项容器 |
 | `MonitorInlineTextBox` / `MonitorValueTextBox` | 自由监控行内输入框：框线，字号 12／高 22 |
@@ -161,8 +161,8 @@ Window
 ### 3.4 页面细节
 
 - **总览**：顶部仅「总览」标题（原状态卡已移除，连接状态统一在全局底栏）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。
-- **状态信息**：见 §5 IO 监控 / §5.1 自由监控。
-- **设备配置**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 §8.1）。连接中锁定表单（`SetInputsEnabled`）——**例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍即生效，锁上反而挡住现场纠正（见 §8.1）。串口模式仅隐藏以太网面板，**功能未实现**。
+- **设备监控**：见 §5 IO 监控 / §5.1 自由监控。
+- **设备连接**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 §8.1）。连接中锁定表单（`SetInputsEnabled`）——**例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍即生效，锁上反而挡住现场纠正（见 §8.1）。串口模式仅隐藏以太网面板，**功能未实现**。
 
 **连接参数会被记住**（`app-settings.json`）：`TargetNic` / `TargetIp` / `TargetPort`，下次启动回填。
 
@@ -188,7 +188,7 @@ Window
 | 左 | `StatusDot` + `StatusText` | 状态点 + 状态文字：`未连接` / `正在连接 …` / `已连接` / `通讯异常：<原因>` / `已断开：<原因>` / `正在重连 … Ns（第 M 次）`。**一律不带 ip:端口** —— 连接参数只由右侧 `StatusBarDetail` 显示；断开与失败的原因经 `ClassifyDisconnectReason` 归一，与日志同一份用词 |
 | 右 | `StatusBarDetail` | 连接参数：`驱动：连接方式  协议  IP:端口` |
 
-- **两个控件名沿用自旧设备配置表单**，故 `SetStatus()` 逻辑无需改动 —— 它写的就是这两个名字
+- **两个控件名沿用自旧设备连接表单**，故 `SetStatus()` 逻辑无需改动 —— 它写的就是这两个名字
 - `SetStatus(text, colorHex)` 同时设 `StatusText.Text` / `.Foreground` / `StatusDot.Fill`，并顺带调 `UpdateOverviewStatus()`。**这几条规则都实现在 `Ui/StatusBarPresenter.cs`**：窗口侧 `SetStatus` / `UpdateOverviewStatus` 各只是一行薄包装（12 个调用点未动），右侧参数串由窗口的 `BuildConnectionDetail()` 提供（它要读表单控件），呈现器因此不认识任何表单控件
 - ⚠️ **`_statusBar` 必须可空**：`UpdateOverviewStatus()` 会在 `InitializeComponent()` **期间**被 ComboBox 的 `SelectionChanged` 触发 —— 那时构造函数体还没执行、呈现器尚未创建。改成不可空会让应用**一启动就崩**（实测 `NullReferenceException`，堆栈落在 `InitializeComponent` 里）。这条只有真跑起来才看得见：构建与独立断言都不会报
 - `UpdateOverviewStatus()` 只写 `StatusBarDetail`（表单参数变化时刷新）；栏内边距 16，**不跟随内容区的卡片缩进**（内容区左右留白见 §3.7）
@@ -227,7 +227,7 @@ Window
 - **左右 Padding 必须同值**，卡片才会在内容区里居中（左以分隔线为基准、右以窗口右缘为基准，两者都只是 Padding，同值即对称）。曾经左 20 / 右 36 是历史遗留的不对称，已统一为 20
 - ⚠️ **`Margin` 与 `Padding` 在这里分工不同，别混**：`Margin` 管「让开导航」，`Padding` 管「卡片缩进」。分隔线位置只由 `Margin` 决定，改 `Padding` 不会动线
 - ⚠️ 改 `Margin.Left` 时必须**同时**改导航 `Border` 的右边距（两个 112 是成对的，见 §3.5）；只改一个会让分隔线与内容起点脱节
-- 卡片**外框**已与页面大标题左对齐；卡片**内容**再往内缩各自 `Padding.Left`（各卡不同：设置页三卡 24、设备配置 20、状态信息 12、总览日志卡无）。这是卡片内边距，不是错位
+- 卡片**外框**已与页面大标题左对齐；卡片**内容**再往内缩各自 `Padding.Left`（各卡不同：设置页三卡 24、设备连接 20、设备监控 12、总览日志卡无）。这是卡片内边距，不是错位
 
 ### 3.8 窗口圆角与边缘线（DWM 绘制）
 
@@ -291,7 +291,7 @@ Window
 - 导入校验：**仅接受 X / Y 元件**，地址须落在当前驱动范围内；结果**一律用 `MessageBox`** 汇报（0 项有效则警告框且拒绝替换）
 - **分页**：每页 4 列 × `IoPager.RowsPerColumn`(16) = 64 点，X/Y 各自独立页号；单页时整体隐藏。列宽 `*` 等分；行高 22、行距 2、列距 4
 - **采集跟随可见性**：只读**当前显示分段 + 当前页**（`_visiblePage` 快照，按所属地址区分块 FC01，同区跨度超 2000 点切窗，默认 100ms）；**离开本页停止 IO 采集，独立心跳继续**；断线不清灯色（`IsOn` 保持上次值）
-- **三个分段统一「跟随可见性」**（输入 X / 输出 Y / 自由监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开状态信息页则全停）。详见 §5.1 与 `Design.md` §5.6
+- **三个分段统一「跟随可见性」**（输入 X / 输出 Y / 自由监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开设备监控页则全停）。详见 §5.1 与 `Design.md` §5.6
 - **卡片内同一时刻只有一条滚动条**：Row=2 的 `Grid` 下，X/Y 共用一个 `IoScrollViewer`（每页固定 64 点，见 §5 分页），自由监控则让 `FreeMonitorPanel` 自己填满该格、只让列表滚动（表头常驻 —— 它是「+」的落点）。⚠️ **列表不要写 `MaxHeight`**：面板整体已绑 `ViewportHeight`，写死高度会让「里层先滚、里层滚不动了外层再滚」，两条滚动条并存（历史缺陷：527f2e2 给自由监控列表套了 `MaxHeight="380"`）
 - **合法异常码不算断线**（2026-10-16）：IO 分块读**单独捕 `ModbusResponseException`** 并与成功路径分开 —— 跳过该块、其余块照读、该块的点保持上次值，**不断开也不重连**；某块**连续** `ModbusPoller.ConsecutiveExceptionThreshold`（**5**）次才记一条琥珀「通讯异常」（措辞 `原因（地址 xxx 异常码 N）`），**只记一次、读通即清零**（不这么做，100ms 一拍会让 200 条日志 20 秒内刷满）。**超时 / IO 异常仍照旧断开**。详见 §5.1 / §6 与 `Design.md` §8-12
 
@@ -305,7 +305,7 @@ Window
 
 ### 5.1 自由监控（P2.2，第三分段）
 
-状态信息页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**
+设备监控页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**
 （第四分段「系统变量」见 §5.4）。
 
 - **界面采用 Brief「方案 2」**：元件符号与编号**合并为一个输入框**（`NameBox`，如 `HD100`），不再是「符号下拉 + 编号框」
@@ -362,11 +362,11 @@ Window
 - ⚠️ `MonitorItemSet.SetVariableLookup` 必须在 `Load()` **之前**调用，
   否则第一轮会把变量行当成元件行标红
 
-- ⏳ **未实现**：**串口（Modbus RTU）** —— 设备配置页的串口模式只隐藏以太网面板，功能未做
+- ⏳ **未实现**：**串口（Modbus RTU）** —— 设备连接页的串口模式只隐藏以太网面板，功能未做
 
-### 5.2 全局变量（P3.3，采集配置页第二分段）
+### 5.2 全局变量（P3.3，数据管理页第二分段）
 
-采集配置页分三段：**采集数据**（P3.1 骨架）/ **全局变量**（本项）/ **系统变量**（P3.5，见 §5.3）。
+数据管理页分三段：**采集数据**（P3.1 骨架）/ **全局变量**（本项）/ **系统变量**（P3.5，见 §5.3）。
 表列：**序号 / 变量名称 / 数据类型 / 映射地址 / 注释 / 删除**。
 
 ⚠️ **本页只管理变量定义** —— 不显示当前值、不写入。`GlobalVariable.Value` 仍是内存字段（不落盘），
@@ -458,11 +458,11 @@ Window
 - `_machineViewActive` 在 `SyncMachineTimer` 里赋值，且必须在**早退之前**，否则「状态没变」时标志更新不到
 
 **端到端怎么验**（`.tmp/machine-poll-e2e.ps1` + `.tmp/MachineSlave`，均未提交）：
-假从站记录每一帧的 `(功能码, 起始, 数量)`，然后断言「总览页 D10 在采 / 切到状态信息页停采 / 切回来恢复」。
+假从站记录每一帧的 `(功能码, 起始, 数量)`，然后断言「总览页 D10 在采 / 切到设备监控页停采 / 切回来恢复」。
 
 - ⚠️ **假从站必须绑在应用所选网卡的地址上**（如 `192.168.1.80`）：应用会把本地端点绑到那块网卡，
   绑 `127.0.0.1` 时它连不上，从站一帧都收不到 —— 表现成「代码没跑」，其实只是连不上
-- ⚠️ **断言只能数 `FC3 start=10` 那一种帧**：切到状态信息页后应用**仍会**读 IO（FC1 两个块），
+- ⚠️ **断言只能数 `FC3 start=10` 那一种帧**：切到设备监控页后应用**仍会**读 IO（FC1 两个块），
   数全部帧会把 IO 采集误判成「还在读状态机变量」（第一版就这么误报了 74 帧）
 - ⚠️ 脚本里**不要 `Start-Process` 起从站**：实测会挂住。从站用单独的后台任务先起好
 
@@ -481,7 +481,7 @@ Window
   - 同步之后「变量只有一份值」才成立，不再依赖哪个页面可见
   - 编辑中（`IsEditing`）仍然整个跳过：用户手上的输入优先，两处都不动
 
-### 5.3 系统变量（P3.5，采集配置页第三分段）
+### 5.3 系统变量（P3.5，数据管理页第三分段）
 
 摆出一份**写死、只读**的预定义变量清单（16 项）。
 表列：**序号 / 变量名称 / 数据类型 / 注释** —— 比全局变量少了**映射地址**与**删除**两列。
@@ -517,14 +517,14 @@ Window
 常量 / 三种脉冲的 0·49·50·99·100ms 相位 / 星期 1~7 连续七天 / 零点与年末边界 / 秒分时日的进位 /
 负数时长 / 脉冲与运行时长不受墙上时间影响 / 键集合与清单一致 / Kind 无重复且覆盖全部枚举值。
 
-### 5.4 系统变量监控（P2.3，状态信息页第四分段）
+### 5.4 系统变量监控（P2.3，设备监控页第四分段）
 
-状态信息页第四分段（`SysVarViewSegment`），把 `SystemVariable.All` 那 16 项**连值一起**摆出来：
+设备监控页第四分段（`SysVarViewSegment`），把 `SystemVariable.All` 那 16 项**连值一起**摆出来：
 **序号 / 变量名称 / 数据类型 / 当前值 / 注释**。与 P3.5 的定义表相比只多一列「当前值」，其余几何完全一致。
 
 - 行对象 `SystemVarRow`（`SystemVarRow.cs`）：纯展示 —— 只有 `Value` 会变，名称/类型/注释钉在清单上
 - 值来自 `SystemVariableValues.Capture(DateTime.Now, _runClock.Elapsed)`（见 §5.3）
-- **定时器 50ms、`DispatcherPriority.Background`**，只在「本分段可见 **且** 状态信息页可见」时跑（`SyncSystemVarTimer`）
+- **定时器 50ms、`DispatcherPriority.Background`**，只在「本分段可见 **且** 设备监控页可见」时跑（`SyncSystemVarTimer`）
   - ⚠️ **为什么是 50ms 而不是 100ms**：`sys_Pulse100ms` 的半周期就是 50ms，每 100ms 采一次，
     采样点永远落在「50ms 的整数倍、步长 2」那一列 —— 相位固定，读出来恒为同一个值，看上去**卡住不闪**。
     50ms 一拍刚好每半周期采到一次
@@ -558,7 +558,7 @@ Window
 - 页头是两栏 `Grid`：左「总览」标题、右 `StackPanel`（右对齐）里放
   「当前视图」标签 + `OverviewViewCombo`。标签字号 **14**，必须与 `FormComboBox` 的
   `FontSize` 一致 —— 早先写 13，比右侧选项小一号，一眼就能看出来。
-- 下拉框直接用 `FormComboBox`（采集配置 / 设备配置页同一套：高 26、圆角 6、灰底）。
+- 下拉框直接用 `FormComboBox`（数据管理 / 设备连接页同一套：高 26、圆角 6、灰底）。
   **不要**为它另造样式，否则以后调外观会各走各的。
   - 总览页这一个额外加了 `BorderThickness="1"` + `BorderBrush="{DynamicResource Brush.Input.Border}"`，
     因为它悬在页头空白处、没有卡片衬底，不加框线看不出来是个控件。
@@ -582,7 +582,7 @@ Window
 > 否则会在日志卡片处断掉。
 
 **布局是写死的**，全部来自项目根目录的 `PLC_MachineState.drawio`：
-9 个状态框 + **14 条**转移连线 + 灰底容器。坐标表在 `MachineStateLayout`（`Modeling/MachineState.cs`）里，
+9 个状态框 + **14 条**转移连线 + 灰底容器 + **2 个指示灯**（Error / Fault，见本节末尾）。坐标表在 `MachineStateLayout`（`Modeling/MachineState.cs`）里，
 **不要在代码里手调坐标** —— 要改布局请改 drawio 再重新换算，否则框和线会对不上。
 
 - 设计坐标：横向 ×1.5 拉开列距、纵向原样，画布 1095×446，由 `Viewbox` 等比缩放到实际空间
@@ -639,7 +639,34 @@ Window
 - 字号下拉若当前值不在预设里会**插进去**，不会悄悄改成别的值
 - 确定后写回模型 → `MachineStateSet.Save()` → 刷新画布
 
-**离线断言**：`.tmp/ExpressionCheck` **101 项**（表达式 + 状态机模型）；
+**指示灯 Error / Fault**（2026-10-28，用户「风格直接复用 IO 监控里的」）：
+
+- 位置写死在 `MachineStateLayout.Lamps`：`Error` = (526, 368, 150, 30)、`Fault` = (692, 368, 150, 30)，
+  两灯间距 16，整体居中在 ManualControl 右边（489）与 Aborted 左边（879）之间的空白带
+- 视觉照抄 IO 监控那颗圆点：`Border` 直径 × 直径、`CornerRadius = 直径/2`，
+  **亮 = 模型色、灭 = `Io.Off`**（灭态复用主题键，没有新键）；文字走 `Brush.Text.Primary`
+- 模型是 `MachineStateLamp`（Id / Text / Expression / IsOn / **Color / DotSize / FontSize**），`Expression` 空串恒为假
+  - 出厂：`DotSize = MachineStateLayout.LampDotSize`（14）、`FontSize = LampFontSize`（14）、`Color = MachineStateLayout.LampOnColor`（`#0B7A0B`）
+  - `Color` **永远是一个具体的 `#RRGGBB`**，**没有「跟随主题」这一档**（用户 2026-10-28 明确要求删掉）：
+    用户改过的颜色换主题就变，会让人以为设置没生效。所以 `LampOnColor` 是**常量**而不是资源引用
+  - 夹取：`DotSize` 6..28（上限 28 因为这些灯格高只有 30）、`FontSize` 8..32
+  - **没有 FontStyle**：灯永远常规体（一个点的文字加粗没意义）
+  - `MachineStateLamp.NormalizeColor` 认不出时退回 `#0B7A0B`，`MachineStateItem.NormalizeColor` 退回 `#F8CECC`
+    —— 同一取舍（认不出就给个能画的颜色），只是退回的色不同
+- 双击弹 `Ui/MachineLampEditDialog.cs`（**五项**：显示文字 / 文字大小 / 灯大小 / 灯颜色 / 表达式），校验口径与状态框完全一致
+  - 色盘就是状态框那 30 个 drawio 原色，10 列 × 3 行，**没有第 4 行**（原来的「跟随主题」格已删）
+  - 预览条**永远画点亮态** —— 颜色只在点亮时可见，预览灭态等于永远看不出颜色
+- ⚠️ `LampVisual` 的「上次尺寸」哨兵**不能初始化为 `double.NaN`**：
+  `Math.Abs(NaN - x) > 0.01` 恒为 `false`，灯会永远停在 `BuildLamps` 的初值（实测踩过：
+  把灯大小 22 改成 24，json 写对了、画布纹丝不动）。用 `-1`（尺寸永远为正）
+- 落盘在 `machine-state.json` 的 `Lamps` 段，按 `Id` 合并出厂值；**老文件没有这一段也能读**
+- ⚠️ `Bind` 里 `BuildLamps` 必须放在 `BuildBoxes` **之后**（z 序 = 添加顺序，灯要压在连线标签之上）
+- ⚠️ 灯的 host `Border` 必须给 `Background = Brushes.Transparent`：
+  **`Background` 为 null 的 Border 不参与命中测试**，双击会直接穿过去打不开编辑窗
+- ⚠️ 灯的表达式引用的全局变量要在 `RefreshMachineGlobals()` 里一起收（它现在对
+  `_machineSet.Items` 与 `_machineSet.Lamps` **各调一次** `Collect`），否则灯永远不亮
+
+**离线断言**：`.tmp/ExpressionCheck` **143 项**（表达式 + 状态机模型 + 指示灯 + 灯外观及其持久化）；
 系统变量名保留另在 `.tmp/SystemVarCheck` **124 项**里覆盖。
 
 ### 5.6 变量名补全（P6.5，三处输入框共用一套）
@@ -672,7 +699,7 @@ Window
   却会挡住候选窗、吃掉回车。这行代码在 `CompletionPopup.Attach` 里，**凡是挂了补全的框都会自动关**，
   所以新增挂载点时不用再写一遍；但**别推广到没挂补全的普通文本框**
 
-### 5.7 采集数据（P3.1，采集配置页第一分段）
+### 5.7 采集数据（P3.1，数据管理页第一分段）
 
 任务组与数据项可以增删改、落盘到 `acquisition-tasks.json`；
 **采集执行与 CSV 落盘已接**（2026-10-26，见本节末尾「执行与落盘」）。
@@ -853,7 +880,7 @@ Window
 - ⚠️ **`EffectiveEnabled` 必须可写**（`set => Enabled = value;`）：`CheckBox.IsChecked` 默认 TwoWay，
   绑到只读属性会让行模板一实例化就抛 `XamlParseException`（「无法对只读属性进行 TwoWay 绑定」），
   整个采集页直接打不开，而编译期 0 警告 0 错误 —— 完全看不出来
-- ⚠️ **`Model.Enabled` 存用户意图，程序绝不改写它**：采集配置边输边存，清空变量名重打的那一瞬间
+- ⚠️ **`Model.Enabled` 存用户意图，程序绝不改写它**：数据管理页边输边存，清空变量名重打的那一瞬间
   就是配置错误，据此落盘会让组永久静默停采且无痕迹；新组默认 `Enabled = true` 且 0 项，
   一创建就被关等于默认值作废；改写后也分不出「我关的」与「它自己关的」。
   因此开关显示为关、点不动，修好配置后自己回到「开」
@@ -1053,7 +1080,7 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 ### 8.1 字节顺序（数据解释方式）
 
-`CommDriver` 上有三个**品牌约定**属性，设备配置页各对应一个下拉框：
+`CommDriver` 上有三个**品牌约定**属性，设备连接页各对应一个下拉框：
 
 | 属性 | 枚举 | 信捷 XD 实测值 | 汇川 Easy 实测值 |
 |---|---|---|---|
@@ -1129,7 +1156,7 @@ OrderProbe <ip> <port> <unitId> <localIp|-> <addr:count> [addr:count ...]
 
 | 场景 | 字号 | 高 | 例 |
 |---|---|---|---|
-| 表单 | 14 | 26 | 设备配置页 |
+| 表单 | 14 | 26 | 设备连接页 |
 | 行内 / 卡片 | 12 | 22 | 自由监控表格行 |
 
 **几条容易踩的**：
@@ -1252,7 +1279,7 @@ public sealed class MyDialog : Window
 | **设置页（P5）** | `SettingsPanel`（`MainWindow.xaml`）+ `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；自动连接 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` / `TryAutoConnect`（见 §7.2）；项目信息 `RefreshProjectInfo`（见 §7.3） |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
-| 加设备配置字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
+| 加设备连接字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
 | 总览状态格式 | 窗口 `BuildConnectionDetail()` 拼串 → `Ui/StatusBarPresenter.cs` 写 `StatusBarDetail` |
 | 底栏状态文字/颜色 | `Ui/StatusBarPresenter.cs`（`Set` / `RefreshDetail` / `ReapplyTheme`）；窗口侧 `SetStatus` / `UpdateOverviewStatus` 只是薄包装 |
 | 底栏布局/对齐 | `MainWindow.xaml` 主体 Grid 末尾的底栏 `Border`（见 §3.5，**改前必读**） |
@@ -1269,6 +1296,7 @@ public sealed class MyDialog : Window
 | **自由监控轮询入口** | `Polling/ModbusPoller.cs` 的 `PollOnceAsync` 开头按 `_freeViewActive` 分流 → `PollFreeMonitorAsync`（按区选 FC01/FC03/FC04，单块失败不断线） |
 | **系统变量（P3.5，写死只读）** | `Modeling/SystemVariable.cs`（16 项清单）+ 窗口 `AcqView_Checked`（见 **§5.3**；无编辑入口） |
 | **PLC 状态机（P1.2，总览页）** | `Expressions/`（表达式引擎）+ `Modeling/MachineState.cs`（布局/模型/持久化）+ `Ui/MachineStateView.xaml(.cs)`（画布）+ 窗口 `RefreshMachineStates` / `SyncMachineTimer`（见 **§5.5**） |
+| **状态机指示灯 Error / Fault** | `MachineStateLamp`（含 Color/DotSize/FontSize）+ `MachineStateLayout.Lamps`/`LampDotSize`/`LampFontSize`（`Modeling/MachineState.cs`）+ 画布 `BuildLamps`/`ApplyLampState`/`LampVisual`（`Ui/MachineStateView.xaml.cs`）+ `Ui/MachineLampEditDialog.cs`（见 **§5.5**） |
 | **系统变量监控（P2.3，第四分段）** | `SystemVarRow.cs` + `SystemVariableValues.cs` + 窗口 `RefreshSystemVarValues` / `SyncSystemVarTimer` / `IoView_Checked`（见 **§5.4**） |
 | **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化）+ `GlobalVarItem.cs`（界面包装）+ 窗口 `GlobalVar*` 处理器（见 **§5.2**；不读不写） |
 | **采集数据（P3.1，任务组/数据项/执行/CSV）** | 模型 `Modeling/AcquisitionTask.cs`（+ `AcquisitionTaskRules` 文案与类型规则）+ 行包装 `AcquisitionTaskItem.cs` + 对话框 `Ui/AcquisitionTaskDialog.cs`；执行与落盘 `Modeling/AcquisitionCsv.cs` + 窗口 `RunAcquisitionTick` / `RefreshAcquisitionGlobals`（50ms 常驻定时器，**不随页面可见性停**，见 **§5.7**） |
@@ -1283,7 +1311,7 @@ public sealed class MyDialog : Window
 | **元件名称输入 → 符号+编号拆分** | `CommDriver.TrySplitName`（`TryResolve` 与自由监控共用） |
 | **数据类型候选（线圈/寄存器）** | `CommDriver.AreasOfElement` + `DataTypes.CoilTypes` / `RegisterTypes` |
 | **监控项持久化** | `DataPointStore`（`data-points.json`）；模型 `Modeling/DataPoint.cs` |
-| **字节顺序（字序/字符串序）** | `Modeling/ByteOrderSettings.cs`（三套值）+ 设备配置页三个下拉框 + 窗口 `ApplyByteOrders` / `SyncByteOrderCombos`（见 §8.1）；读取用 `MonitorItemSet.ByteOrders` |
+| **字节顺序（字序/字符串序）** | `Modeling/ByteOrderSettings.cs`（三套值）+ 设备连接页三个下拉框 + 窗口 `ApplyByteOrders` / `SyncByteOrderCombos`（见 §8.1）；读取用 `MonitorItemSet.ByteOrders` |
 | **类型值编解码与显示格式化** | `Modeling/ValueCodec.cs`（入参传字节顺序，不读全局状态） |
 | Modbus 报文/超时 | `Drivers/ModbusTcpClient.cs` |
 | 心跳周期/空闲判断/地址来源 | `Drivers/ModbusHeartbeat.cs` → `RunAsync`；`ModbusTcpClient.HeartbeatIfIdleAsync` |
