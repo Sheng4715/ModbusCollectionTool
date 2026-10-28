@@ -1835,6 +1835,14 @@ Describe(task, findVariable) -> List<string>
 - 写入类型每项**按填写先后短路**，只报第一处，避免一次刷出三条：
   来源空 → 「未填来源变量」 → 来源查不到 → 写入变量空 → 写入变量查不到 → 类型不符（`WriteTypesMatch`）。
 - **未映射地址不算配置错误** —— 这是 §10.28 用户定案允许的状态。
+- **组级问题先报（触发表达式，2026-10-27 追加）**：`DescribeTrigger` 在逐项循环之前跑，
+  只对 `Trigger == Edge` 生效。三种都算：
+  ① `CompiledExpression.TryParse` 失败 → 「触发表达式无法解析（…error…）」；
+  ② 表达式为空 → 「触发式任务没有填触发表达式」——空表达式恒为假（与状态机同一口径），
+     而任务选项对话框**允许存空**，不报就是「任务永远不跑且毫无痕迹」；
+  ③ `TryValidateNames` 失败 → 「触发表达式无效（第 N 个字符：变量“X”不存在）」。
+  名字存在性按「系统变量 ∪ 全局变量」判，与对话框 `_nameExistsOfVariable` 同一口径 ——
+  公式化地把「变量被删/改名 → 静默永不触发」变成看得见的配置错误（用户 m02209 的 A 项）。
 - 项名前缀 `项3（压力）：`；项名是空白、或恰好等于「项N」（默认名）时**只给序号**，
   否则会出现「项1（项1）：」，看着像 bug。
 - `ErrorText = "配置错误"` 是界面上唯一露出的字。第一版的 `DescribeHint`（拼 ToolTip 明细）
@@ -1912,8 +1920,27 @@ Describe(task, findVariable) -> List<string>
 **禁用态与普通「关」在像素上可区分**（轨道 `#F6F6F6` vs `#EDEDED`，字 `#B0B0B0` vs `#1A1A1A`），
 不是靠"看起来灰一点"。
 
-回归：`AcquisitionCheck` **134**、`ConnCheck` 35、`DeviceLogCheck` 23、`ExpressionCheck` 101、
-`GlobalVarCheck` 164、`MonitorVarCheck` 70、`NicCheck` 17、`SystemVarCheck` 124 全通过。
+回归：`AcquisitionCheck` **134**（此节定稿时；加完触发表达式判定后为 169）、`ConnCheck` 35、
+`DeviceLogCheck` 23、`ExpressionCheck` 101、`GlobalVarCheck` 164、`MonitorVarCheck` 70、
+`NicCheck` 17、`SystemVarCheck` 124 全通过。
+
+#### 追加：触发表达式也算配置错误（2026-10-27，用户 A 项）
+
+起因：触发式任务的表达式引用了**已被删除/改名的变量**时，`EvaluateTrigger` 永远返回 false，
+任务从此静默不跑 —— 没有红字、没有日志，界面上看不出任何异常（用户 m02209 定「先做A」）。
+
+实机证据（150% DPI，窗口 30,30 1536×960；指向假从站 `192.168.1.80:15020`，**不连真机**；
+种子 3 组：`正常周期`(Periodic 2s) / `坏表达式`(Edge `DeletedVar > 0`) / `好表达式`(Edge `sys_True`))：
+
+| 证据 | 结果 |
+|---|---|
+| 视觉 | 第 1、3 行 开 + 蓝轨道；第 2 行 关 + 极浅轨道 + 右侧琥珀「配置错误」 |
+| UIA | `开 en=True` / `关 en=False` + `TextBlock name=配置错误 rect=1054,550,66,22` / `开 en=True`；`TogglePattern.Toggle()` 对第 2 行抛 `Unrecognized error.`（打不开），对第 1 行正常生效 |
+| 不采集不存文件不计日志 | `.tmp\AcqEdge` 下只有 `正常周期` 与 `好表达式` 两个文件夹；`坏表达式` 无目录；日志里 `正常周期` 28 条、`好表达式` 1 条（上升沿只触发一次）、`坏表达式` **0 条** |
+| 修好自动回开 | 打开第 2 组任务选项、把表达式改成 `sys_True` 后确定 → 开关立刻变 `name=开 en=True`、琥珀提示消失、`坏表达式` 文件夹出现、日志新增 1 条「任务组2（坏表达式）：触发读取任务执行完成」 |
+
+断言：`AcquisitionCheck` ⑧㉘–⑧㉞（7 条）覆盖「引用已删变量 / 系统变量合法 / 全局变量合法 /
+空表达式 / 语法错 / 周期式不看表达式 / 行上三属性联动」，总数 162 → **169 通过**。
 
 ### 10.30 采集「写入任务」真正下发到 PLC + 只读区拦截（2026-10-27）
 

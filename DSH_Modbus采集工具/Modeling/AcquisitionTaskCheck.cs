@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using DSH_Modbus采集工具.Expressions;
 
 namespace DSH_Modbus采集工具.Modeling
 {
@@ -55,6 +56,9 @@ namespace DSH_Modbus采集工具.Modeling
                 return issues;
             }
 
+            // 组级问题先报：表达式坏了的组，逐项查完也跑不起来
+            DescribeTrigger(task, findVariable, issues);
+
             for (int i = 0; i < task.Items.Count; i++)
             {
                 AcquisitionItem item = task.Items[i];
@@ -68,6 +72,55 @@ namespace DSH_Modbus采集工具.Modeling
             }
 
             return issues;
+        }
+
+        /// <summary>
+        /// 触发式任务的**表达式**还能不能用（P3.1 收尾，2026-10-27）。
+        /// <para>
+        /// 起因：表达式引用的变量被删或改名后，表达式永远求不出 TRUE，任务从此静默不跑 ——
+        /// 不采集、不存文件、日志里一个字都没有，界面上也看不出来。与「数据项没填」是同一类坑。
+        /// </para>
+        /// <para>
+        /// 口径与任务选项对话框、PLC 状态机**完全一致**（同一个 <see cref="CompiledExpression"/>）：
+        /// 先语法分析，再校验用到的名字都是变量（系统变量或全局变量）。
+        /// 周期式任务不写表达式，这一整段跳过。
+        /// </para>
+        /// </summary>
+        private static void DescribeTrigger(
+            AcquisitionTask task,
+            Func<string, GlobalVariable?>? findVariable,
+            List<string> issues)
+        {
+            if (task.Trigger != AcquisitionTriggerMode.Edge)
+            {
+                return;
+            }
+
+            string source = task.Expression ?? string.Empty;
+
+            if (!CompiledExpression.TryParse(source, out CompiledExpression? compiled, out string error))
+            {
+                issues.Add("触发表达式无法解析（" + error + "）");
+                return;
+            }
+
+            if (compiled == null || compiled.IsEmpty)
+            {
+                // 空表达式恒为假 = 永不触发。对话框允许存空，所以这里必须报
+                issues.Add("触发式任务没有填触发表达式");
+                return;
+            }
+
+            if (!compiled.TryValidateNames(NameExists, out error))
+            {
+                // error 自带「第 N 个字符」与变量名，直接转达
+                issues.Add("触发表达式无效（" + error + "）");
+            }
+
+            // 表达式里的名字必须是变量：系统变量或全局变量，口径同任务选项对话框；
+            // 刻意不复用「任务名」那套判断（同名不同义，混用会写出「填任务名也算合法」）
+            bool NameExists(string name) =>
+                SystemVariable.Find(name) != null || findVariable?.Invoke(name) != null;
         }
 
         private static void DescribeItem(
