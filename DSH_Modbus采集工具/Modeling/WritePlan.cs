@@ -1,6 +1,6 @@
 using DSH_Modbus采集工具.Drivers;
 
-namespace DSH_Modbus采集工具
+namespace DSH_Modbus采集工具.Modeling
 {
     /// <summary>
     /// 一次写入的报文参数：线圈写 <see cref="CoilValue"/>（FC05），

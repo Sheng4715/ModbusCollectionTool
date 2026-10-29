@@ -18,7 +18,7 @@ namespace DSH_Modbus采集工具.Ui
     /// 与 <see cref="MachineStateEditDialog"/> 一样零 XAML 自绘、外观走 Dialog.* 主题资源。
     /// </para>
     /// </summary>
-    public sealed class AcquisitionTaskDialog : Window
+    public sealed class AcquisitionTaskDialog : DialogWindow
     {
         private static readonly (string Text, AcquisitionTaskKind Value)[] Kinds =
         {
@@ -49,20 +49,12 @@ namespace DSH_Modbus采集工具.Ui
             Func<string, bool> taskNameExists,
             Func<string, bool> variableExists,
             Func<IReadOnlyList<CompletionCandidate>>? completions)
+            : base("任务选项", 442)
         {
             _taskNameExists = taskNameExists;
             _variableExists = variableExists;
             _completions = completions;
             _originalName = task.Name ?? string.Empty;
-
-            Title = "任务选项";
-            Width = 442;
-            SizeToContent = SizeToContent.Height;
-            WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            ResizeMode = ResizeMode.NoResize;
-            ShowInTaskbar = false;
-
-            DialogChrome.Apply(this);
 
             var root = new Grid { Margin = new Thickness(16) };
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
@@ -306,24 +298,9 @@ namespace DSH_Modbus采集工具.Ui
         {
             var dlg = new AcquisitionTaskDialog(task, taskNameExists, variableExists, completions);
 
-            Window? effectiveOwner = owner ?? Application.Current?.MainWindow;
-            if (effectiveOwner != null && !ReferenceEquals(effectiveOwner, dlg) && effectiveOwner.IsLoaded)
-            {
-                dlg.Owner = effectiveOwner;
-            }
-            else
-            {
-                dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            }
+            dlg.AttachOwner(owner);
 
-            dlg.Loaded += (_, _) =>
-            {
-                dlg.Activate();
-                dlg._nameBox.Focus();
-                dlg._nameBox.SelectAll();
-            };
-
-            return dlg.ShowDialog() == true ? dlg : null;
+            return dlg.ShowOwned(dlg._nameBox) ? dlg : null;
         }
 
         /// <summary>
@@ -518,88 +495,5 @@ namespace DSH_Modbus采集工具.Ui
             _kindCombo.SelectedIndex = 0;
         }
 
-        private void AddLabel(Grid root, string text, int row)
-        {
-            var label = new TextBlock
-            {
-                Text = text,
-                Style = RequireStyle("Dialog.Label"),
-                Margin = new Thickness(0, 0, 0, 10),
-            };
-
-            Grid.SetRow(label, row);
-            Grid.SetColumn(label, 0);
-            root.Children.Add(label);
-        }
-
-        private static void Place(
-            Grid root, UIElement element, int row, Thickness margin, bool stretch = false)
-        {
-            if (element is FrameworkElement fe)
-            {
-                fe.Margin = margin;
-                fe.HorizontalAlignment = stretch ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-            }
-
-            Grid.SetRow(element, row);
-            Grid.SetColumn(element, 1);
-            root.Children.Add(element);
-        }
-
-        private TextBox MakeTextBox(string? text) => new TextBox
-        {
-            Text = text ?? string.Empty,
-            Style = RequireStyle("Dialog.TextBox"),
-        };
-
-        private ComboBox MakeCombo(double width) => new ComboBox
-        {
-            Width = width,
-            Style = RequireStyle("Dialog.ComboBox"),
-        };
-
-        /// <summary>
-        /// 造一个对话框单选按钮。
-        /// <para>
-        /// ⚠️ <paramref name="groupName"/> **必须显式给**：单选按钮分别装在不同的 StackPanel 里
-        /// （「周期」那档还要跟着一个秒数输入框），而 WPF 默认按**逻辑父容器**分组 ——
-        /// 不给名字它们就各成一伙，可以同时是选中的（真机截图里两个蓝圈同亮，实测踩到）。
-        /// 组名还必须**各组互不相同**，否则「数据记录」和「执行方式」会串成一组。
-        /// </para>
-        /// </summary>
-        private RadioButton MakeRadio(string text, string groupName) => new RadioButton
-        {
-            Content = text,
-            Style = RequireStyle("Dialog.RadioButton"),
-            VerticalAlignment = VerticalAlignment.Center,
-            GroupName = groupName,
-        };
-
-        private Button MakeButton(string text, bool primary) => new Button
-        {
-            Content = text,
-            Style = RequireStyle(primary ? "Dialog.Button.Primary" : "Dialog.Button.Secondary"),
-        };
-
-        private Style RequireStyle(string key) =>
-            TryFindResource(key) as Style
-            ?? throw new InvalidOperationException(
-                "缺少样式资源 " + key + "，请检查 Themes/DialogControls.xaml 是否已合并进 App.xaml");
-
-        /// <summary>下拉框里的一项：显示文本 + 真实取值（不要靠字符串反解）。</summary>
-        private sealed class ComboItem<T>
-        {
-            public ComboItem(string text, T value)
-            {
-                Text = text;
-                Value = value;
-            }
-
-            public string Text { get; }
-
-            public T Value { get; }
-
-            public override string ToString() => Text;
-        }
     }
 }

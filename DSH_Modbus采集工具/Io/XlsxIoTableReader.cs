@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Xml;
 
-namespace DSH_Modbus采集工具
+namespace DSH_Modbus采集工具.Io
 {
     /// <summary>
     /// xlsx 点位表解析（零第三方依赖：xlsx = zip + XML，用 System.IO.Compression + XmlReader 手写）。

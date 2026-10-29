@@ -17,22 +17,8 @@ namespace DSH_Modbus采集工具.Ui
     /// 深色主题下不会突然蹦出一块白的。
     /// </para>
     /// </summary>
-    public sealed class MachineStateEditDialog : Window
+    public sealed class MachineStateEditDialog : DialogWindow
     {
-        /// <summary>色盘：drawio 调色板。9 个状态的出厂色全在第二行，保证选得回来。</summary>
-        private static readonly string[] Palette =
-        {
-            "#FFFFFF", "#E6E6E6", "#CCCCCC", "#B3B3B3", "#999999",
-            "#808080", "#666666", "#4D4D4D", "#333333", "#000000",
-            "#F8CECC", "#EA6B66", "#B85450", "#D5E8D4", "#82B366",
-            "#DAE8FC", "#6C8EBF", "#FFF2CC", "#FFCD28", "#FFE6CC",
-            "#D79B00", "#E1D5E7", "#9673A6", "#A20025", "#1BA1E2",
-            "#0050EF", "#60A917", "#008A00", "#F0A30A", "#E51400",
-        };
-
-        /// <summary>字号下拉的可选值（<c>FontSize</c> 本身在 8~72 之间夹取）。</summary>
-        private static readonly double[] FontSizes =
-            { 8, 10, 12, 14, 15, 16, 18, 20, 24, 28 };
 
         private static readonly (string Text, MachineStateFontStyle Value)[] FontStyles =
         {
@@ -72,21 +58,12 @@ namespace DSH_Modbus采集工具.Ui
             MachineStateItem item,
             Func<string, bool> nameExists,
             Func<IReadOnlyList<CompletionCandidate>>? completions)
+            : base("状态编辑", 442)
         {
             _nameExists = nameExists;
             _completions = completions;
             _colorHex = MachineStateItem.NormalizeColor(item.Color);
             _lastValidExpression = item.Expression;
-
-            Title = "状态编辑";
-            Width = 442;
-            SizeToContent = SizeToContent.Height;
-            WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            ResizeMode = ResizeMode.NoResize;
-            ShowInTaskbar = false;
-
-            // 统一外壳：卡片底色 + 统一字体 + 深色主题下标题栏也跟着变深
-            DialogChrome.Apply(this);
 
             var root = new Grid { Margin = new Thickness(16) };
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
@@ -142,7 +119,7 @@ namespace DSH_Modbus采集工具.Ui
 
             AddLabel(root, "字体大小", row);
             _sizeCombo = MakeCombo(88);
-            foreach (double size in FontSizes)
+            foreach (double size in ColorPalette.FontSizes)
             {
                 _sizeCombo.Items.Add(new ComboItem<double>(
                     size.ToString(CultureInfo.InvariantCulture), size));
@@ -273,25 +250,9 @@ namespace DSH_Modbus采集工具.Ui
         {
             var dlg = new MachineStateEditDialog(item, nameExists, completions);
 
-            Window? effectiveOwner = owner ?? Application.Current?.MainWindow;
-            if (effectiveOwner != null && !ReferenceEquals(effectiveOwner, dlg) && effectiveOwner.IsLoaded)
-            {
-                dlg.Owner = effectiveOwner;
-            }
-            else
-            {
-                dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            }
+            dlg.AttachOwner(owner);
 
-            // 与 NumberInputDialog 同理：不显式激活的话，键盘输入会落到主窗口
-            dlg.Loaded += (_, _) =>
-            {
-                dlg.Activate();
-                dlg._textBox.Focus();
-                dlg._textBox.SelectAll();
-            };
-
-            return dlg.ShowDialog() == true ? dlg : null;
+            return dlg.ShowOwned(dlg._textBox) ? dlg : null;
         }
 
         /// <summary>
@@ -365,9 +326,9 @@ namespace DSH_Modbus采集工具.Ui
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             }
 
-            for (int i = 0; i < Palette.Length; i++)
+            for (int i = 0; i < ColorPalette.Colors.Length; i++)
             {
-                string hex = Palette[i];
+                string hex = ColorPalette.Colors[i];
                 var cell = new Border
                 {
                     Width = 20,
@@ -376,7 +337,7 @@ namespace DSH_Modbus采集工具.Ui
                     CornerRadius = new CornerRadius(3),
                     BorderThickness = new Thickness(1),
                     BorderBrush = new SolidColorBrush(Color.FromRgb(0xAF, 0xAF, 0xAF)),
-                    Background = new SolidColorBrush(ParseColor(hex)),
+                    Background = new SolidColorBrush(ParseColor(hex, Colors.White)),
                     Cursor = Cursors.Hand,
                     Tag = hex,
                 };
@@ -399,7 +360,7 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>刷新「当前色」预览 + 色盘里那一圈蓝色选中框。</summary>
         private void UpdateColorUi()
         {
-            _currentSwatch.Background = new SolidColorBrush(ParseColor(_colorHex));
+            _currentSwatch.Background = new SolidColorBrush(ParseColor(_colorHex, Colors.White));
             _currentHex.Text = _colorHex.ToUpperInvariant();
 
             foreach ((string hex, Border cell) in _swatches)
@@ -421,7 +382,7 @@ namespace DSH_Modbus采集工具.Ui
         /// </summary>
         private void UpdatePreview()
         {
-            Color fill = ParseColor(_colorHex);
+            Color fill = ParseColor(_colorHex, Colors.White);
 
             _preview.Background = new SolidColorBrush(fill);
             _preview.BorderBrush = new SolidColorBrush(Color.FromRgb(
@@ -495,91 +456,5 @@ namespace DSH_Modbus采集工具.Ui
             _sizeCombo.SelectedIndex = index;
         }
 
-        private void AddLabel(Grid root, string text, int row, bool topAlign = false)
-        {
-            var label = new TextBlock
-            {
-                Text = text,
-                Style = RequireStyle("Dialog.Label"),
-                VerticalAlignment = topAlign ? VerticalAlignment.Top : VerticalAlignment.Center,
-                Margin = topAlign ? new Thickness(0, 4, 0, 10) : new Thickness(0, 0, 0, 10),
-            };
-
-            Grid.SetRow(label, row);
-            Grid.SetColumn(label, 0);
-            root.Children.Add(label);
-        }
-
-        private static void Place(Grid root, UIElement element, int row, Thickness margin, bool stretch = false)
-        {
-            if (element is FrameworkElement fe)
-            {
-                fe.Margin = margin;
-                fe.HorizontalAlignment = stretch ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-            }
-
-            Grid.SetRow(element, row);
-            Grid.SetColumn(element, 1);
-            root.Children.Add(element);
-        }
-
-        // 不写死宽度：原先 Width=330，而对话框客户区在 150% DPI 下只给列 1 留了约 327 DIP，
-        // 超出的 3 DIP 被裁掉 —— 表现为「右边框整条不见了」（左边、上边、下边都在）。
-        // 交给 Place(..., stretch: true) 随列宽拉伸，右边框就完整了。
-        private TextBox MakeTextBox(string text) => new()
-        {
-            Text = text,
-            Style = RequireStyle("Dialog.TextBox"),
-        };
-
-        private ComboBox MakeCombo(double width) => new()
-        {
-            Width = width,
-            Style = RequireStyle("Dialog.ComboBox"),
-        };
-
-        private Button MakeButton(string text, bool primary) => new()
-        {
-            Content = text,
-            Style = RequireStyle(primary ? "Dialog.Button.Primary" : "Dialog.Button.Secondary"),
-        };
-
-        /// <summary>
-        /// 取统一控件样式。**取不到就抛**：样式名写错会静默退化成系统默认外观
-        /// （深色主题下正好表现为「浅灰底白字」那种几乎看不见的控件），
-        /// 宁可开窗就崩，也不要让人对着一个看不见的下拉框猜。
-        /// </summary>
-        private Style RequireStyle(string key) =>
-            TryFindResource(key) as Style
-            ?? throw new InvalidOperationException(
-                $"缺少样式资源 {key}，请检查 Themes/DialogControls.xaml 是否已合并进 App.xaml");
-
-        private static Color ParseColor(string hex)
-        {
-            try
-            {
-                return (Color)ColorConverter.ConvertFromString(hex);
-            }
-            catch
-            {
-                return Colors.White;
-            }
-        }
-
-        /// <summary>下拉框里的一项：显示文本 + 真实取值（不要靠字符串反解）。</summary>
-        private sealed class ComboItem<T>
-        {
-            public ComboItem(string text, T value)
-            {
-                Text = text;
-                Value = value;
-            }
-
-            public string Text { get; }
-
-            public T Value { get; }
-
-            public override string ToString() => Text;
-        }
     }
 }

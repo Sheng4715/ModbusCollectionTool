@@ -30,21 +30,8 @@ namespace DSH_Modbus采集工具.Ui
     /// 用户改过的颜色换主题就变，会让人以为设置没生效。
     /// </para>
     /// </summary>
-    public sealed class MachineLampEditDialog : Window
+    public sealed class MachineLampEditDialog : DialogWindow
     {
-        /// <summary>色盘：drawio 原色，10 列 × 3 行（与状态编辑窗同一份）。</summary>
-        private static readonly string[] Palette =
-        {
-            "#FFFFFF", "#E6E6E6", "#CCCCCC", "#B3B3B3", "#999999",
-            "#808080", "#666666", "#4D4D4D", "#333333", "#000000",
-            "#F8CECC", "#EA6B66", "#B85450", "#D5E8D4", "#82B366",
-            "#DAE8FC", "#6C8EBF", "#FFF2CC", "#FFCD28", "#FFE6CC",
-            "#D79B00", "#E1D5E7", "#9673A6", "#A20025", "#1BA1E2",
-            "#0050EF", "#60A917", "#008A00", "#F0A30A", "#E51400",
-        };
-
-        /// <summary>文字字号候选。</summary>
-        private static readonly double[] FontSizes = { 8, 10, 12, 14, 15, 16, 18, 20, 24, 28 };
 
         /// <summary>圆点直径候选（模型允许 6..28，这里取整数步长）。</summary>
         private static readonly double[] DotSizes = { 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28 };
@@ -75,20 +62,12 @@ namespace DSH_Modbus采集工具.Ui
             MachineStateLamp lamp,
             Func<string, bool> nameExists,
             Func<IReadOnlyList<CompletionCandidate>>? completions)
+            : base("指示灯编辑", 442)
         {
             _nameExists = nameExists;
             _completions = completions;
             _lastValidExpression = lamp.Expression;
             _lampColor = MachineStateLamp.NormalizeColor(lamp.Color);
-
-            Title = "指示灯编辑";
-            Width = 442;
-            SizeToContent = SizeToContent.Height;
-            WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            ResizeMode = ResizeMode.NoResize;
-            ShowInTaskbar = false;
-
-            DialogChrome.Apply(this);
 
             var root = new Grid { Margin = new Thickness(16) };
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
@@ -146,7 +125,7 @@ namespace DSH_Modbus采集工具.Ui
 
             AddLabel(root, "文字大小", row);
             _fontSizeCombo = MakeCombo(88);
-            foreach (double size in FontSizes)
+            foreach (double size in ColorPalette.FontSizes)
             {
                 _fontSizeCombo.Items.Add(new ComboItem<double>(
                     size.ToString(CultureInfo.InvariantCulture), size));
@@ -168,7 +147,7 @@ namespace DSH_Modbus采集工具.Ui
             _dotSizeCombo.SelectionChanged += (_, _) => UpdatePreview();
             Place(root, _dotSizeCombo, row++, new Thickness(0, 0, 0, 10));
 
-            AddLabel(root, "灯颜色", row, topAlign: true);
+            AddLabel(root, "灯颜色", row, topAlign: true, topMargin: 6);
             var colorBlock = new StackPanel { Orientation = Orientation.Vertical };
 
             var current = new StackPanel
@@ -281,25 +260,9 @@ namespace DSH_Modbus采集工具.Ui
         {
             var dlg = new MachineLampEditDialog(lamp, nameExists, completions);
 
-            Window? effectiveOwner = owner ?? Application.Current?.MainWindow;
-            if (effectiveOwner != null && !ReferenceEquals(effectiveOwner, dlg) && effectiveOwner.IsLoaded)
-            {
-                dlg.Owner = effectiveOwner;
-            }
-            else
-            {
-                dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            }
+            dlg.AttachOwner(owner);
 
-            // 不显式激活的话键盘输入会落到主窗口（与其余两个编辑窗同一个坑）
-            dlg.Loaded += (_, _) =>
-            {
-                dlg.Activate();
-                dlg._textBox.Focus();
-                dlg._textBox.SelectAll();
-            };
-
-            return dlg.ShowDialog() == true ? dlg : null;
+            return dlg.ShowOwned(dlg._textBox) ? dlg : null;
         }
 
         private void ExpressionBox_LostFocus(object sender, RoutedEventArgs e)
@@ -371,7 +334,7 @@ namespace DSH_Modbus采集工具.Ui
             _previewDot.Height = dot;
             _previewDot.CornerRadius = new CornerRadius(dot / 2);
 
-            _previewDot.Background = new SolidColorBrush(ParseColor(_lampColor));
+            _previewDot.Background = new SolidColorBrush(ParseColor(_lampColor, Color.FromRgb(0x0B, 0x7A, 0x0B)));
         }
 
         private void ShowError(string? message)
@@ -397,9 +360,9 @@ namespace DSH_Modbus采集工具.Ui
                 grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             }
 
-            for (int i = 0; i < Palette.Length; i++)
+            for (int i = 0; i < ColorPalette.Colors.Length; i++)
             {
-                string hex = Palette[i];
+                string hex = ColorPalette.Colors[i];
                 var cell = new Border
                 {
                     Width = 20,
@@ -408,7 +371,7 @@ namespace DSH_Modbus采集工具.Ui
                     CornerRadius = new CornerRadius(3),
                     BorderThickness = new Thickness(1),
                     BorderBrush = new SolidColorBrush(Color.FromRgb(0xAF, 0xAF, 0xAF)),
-                    Background = new SolidColorBrush(ParseColor(hex)),
+                    Background = new SolidColorBrush(ParseColor(hex, Color.FromRgb(0x0B, 0x7A, 0x0B))),
                     Cursor = Cursors.Hand,
                     Tag = hex,
                 };
@@ -431,7 +394,7 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>刷新「当前色」预览 + 色盘里那一圈蓝色选中框。</summary>
         private void UpdateColorUi()
         {
-            _currentSwatch.Background = new SolidColorBrush(ParseColor(_lampColor));
+            _currentSwatch.Background = new SolidColorBrush(ParseColor(_lampColor, Color.FromRgb(0x0B, 0x7A, 0x0B)));
             _currentHex.Text = _lampColor.ToUpperInvariant();
 
             foreach ((string hex, Border cell) in _swatches)
@@ -479,85 +442,5 @@ namespace DSH_Modbus采集工具.Ui
             combo.SelectedItem = extra;
         }
 
-        private void AddLabel(Grid root, string text, int row, bool topAlign = false)
-        {
-            var label = new TextBlock
-            {
-                Text = text,
-                Style = RequireStyle("Dialog.Label"),
-                VerticalAlignment = topAlign ? VerticalAlignment.Top : VerticalAlignment.Center,
-                Margin = topAlign ? new Thickness(0, 6, 0, 10) : new Thickness(0, 0, 0, 10),
-            };
-
-            Grid.SetRow(label, row);
-            Grid.SetColumn(label, 0);
-            root.Children.Add(label);
-        }
-
-        private static void Place(Grid root, UIElement element, int row, Thickness margin, bool stretch = false)
-        {
-            if (element is FrameworkElement fe)
-            {
-                fe.Margin = margin;
-                fe.HorizontalAlignment = stretch ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-            }
-
-            Grid.SetRow(element, row);
-            Grid.SetColumn(element, 1);
-            root.Children.Add(element);
-        }
-
-        private TextBox MakeTextBox(string text) => new()
-        {
-            Text = text,
-            Style = RequireStyle("Dialog.TextBox"),
-        };
-
-        private ComboBox MakeCombo(double width) => new()
-        {
-            Width = width,
-            Style = RequireStyle("Dialog.ComboBox"),
-        };
-
-        private Button MakeButton(string text, bool primary) => new()
-        {
-            Content = text,
-            Style = RequireStyle(primary ? "Dialog.Button.Primary" : "Dialog.Button.Secondary"),
-        };
-
-        /// <summary>取统一控件样式 —— **取不到就抛**，样式名写错宁可开窗就崩。</summary>
-        private Style RequireStyle(string key) =>
-            TryFindResource(key) as Style
-            ?? throw new InvalidOperationException(
-                $"缺少样式资源 {key}，请检查 Themes/DialogControls.xaml 是否已合并进 App.xaml");
-
-        private Brush? TryFindBrush(string key) => TryFindResource(key) as Brush;
-
-        private static Color ParseColor(string hex)
-        {
-            try
-            {
-                return (Color)ColorConverter.ConvertFromString(hex);
-            }
-            catch
-            {
-                return Color.FromRgb(0x0B, 0x7A, 0x0B);
-            }
-        }
-
-        private sealed class ComboItem<T>
-        {
-            public ComboItem(string text, T value)
-            {
-                Text = text;
-                Value = value;
-            }
-
-            public string Text { get; }
-
-            public T Value { get; }
-
-            public override string ToString() => Text;
-        }
     }
 }
