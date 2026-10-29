@@ -92,6 +92,8 @@ DSH_Modbus采集工具/
 > `ConnCheck`（退避策略 + 连接身份 / 两种断开语义，**35 项**）、`DeviceLogCheck`（日志编排：上限裁剪 / 级别映射 / 共用时间戳 / 清空 / 换主题重建，**23 项**）、`NicCheck`（网卡选择还原优先级，**17 项**）、`PollerCheck`（IO 轮询异常码策略，**10 项**）。
 > **探针型**（无断言，需传参数人工读输出）：`IoCheck`（接 xlsx 路径，打印 `IoTableImporter` / `IoPager` 的解析与分页结果）、`FakeSlave` 与 `E2ESlave`（端到端验证用最小假从站）。
 > 它们验的是「改一次就够」的行为，不值当长期维护；要重跑时会话记录里有完整源码。
+>
+> **每次改完的验证口径（2026-10-29 用户定案）**：只跑 **(a) `dotnet build DSH_Modbus采集工具.sln` 与 (b) `.tmp/ExpressionCheck`**（`dotnet build` 该工程后直接跑 exe，不要用 `dotnet run`——`dotnet run` 每次要多花约 5 s 在 SDK/NuGet 探测上）。其余断言工程（GlobalVarCheck / AcquisitionCheck / ConnCheck / DeviceLogCheck / MonitorVarCheck / NicCheck / SystemVarCheck）**不再在每次提交前全跑**；只有改动直接触及它们的断言对象时才单独跑那一个。原因：8 个工程各自 link 同一批产品源码重复编译，合计纯机器时间约 37 s，加上杀进程与全量构建约 46 s，而提交本身不到 1 s。
 
 ## 3. 页面与 UI
 
@@ -1345,3 +1347,4 @@ public sealed class MyDialog : Window
 - git 仓库（分支 `main`），`.gitignore` 排除 `bin/ obj/ .vs/ *.user`
 - 身份为仓库级配置（`G.Sheng`）
 - **提交信息用中文**；提交前先 `git diff` 确认范围，**不要整文件盲加**（会把别人的 WIP 一起带走）
+- **提交前的验证只跑两样（2026-10-29 用户定案）**：`dotnet build DSH_Modbus采集工具.sln` + `.tmp/ExpressionCheck`（跑 exe，不用 `dotnet run`）。其余断言套件不再全量复跑，详见 §2 末尾的同名说明。
