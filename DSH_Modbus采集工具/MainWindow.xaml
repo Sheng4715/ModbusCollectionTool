@@ -1404,7 +1404,7 @@
                             <ColumnDefinition Width="34"/>   <!-- # -->
                             <ColumnDefinition Width="*" MinWidth="120"/>  <!-- 任务名称 -->
                             <ColumnDefinition Width="90"/>   <!-- 任务类型 -->
-                            <ColumnDefinition Width="140"/>  <!-- 执行方式 -->
+                            <ColumnDefinition Width="76"/>   <!-- 执行方式（只有「周期」/「触发」两个字，用户定案 2026-10-29；原 140 装的是「周期 5s」） -->
                             <ColumnDefinition Width="180"/>  <!-- 启用（开关 96 + 提示 66，见下） -->
                             <ColumnDefinition Width="80"/>   <!-- 共N项 -->
                             <ColumnDefinition Width="120"/>  <!-- … ↑↓ -->
@@ -2399,7 +2399,7 @@
                                                         <ColumnDefinition Width="34"/>   <!-- # -->
                                                         <ColumnDefinition Width="*" MinWidth="120"/>  <!-- 任务名称 -->
                                                         <ColumnDefinition Width="90"/>   <!-- 任务类型 -->
-                                                        <ColumnDefinition Width="140"/>  <!-- 执行方式 -->
+                                                        <ColumnDefinition Width="76"/>   <!-- 执行方式（只有「周期」/「触发」两个字，用户定案 2026-10-29；原 140 装的是「周期 5s」） -->
                                                         <ColumnDefinition Width="180"/>  <!-- 启用 -->
                                                         <ColumnDefinition Width="80"/>   <!-- 数据项 -->
                                                         <ColumnDefinition Width="120"/>  <!-- 操作（占位，见右侧按钮） -->

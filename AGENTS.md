@@ -715,7 +715,7 @@ Window
 |---|---|---|
 | 任务名称 | `任务组N`（默认名，重名会被拒） | 走「…」对话框 |
 | 任务类型 | 数据读取 / 数据写入（默认**数据读取**） | 走「…」对话框 |
-| 执行方式 | `周期 5s` / `触发（上升沿）` | 走「…」对话框 |
+| 执行方式 | `周期` / `触发`（**只有两个字**，用户定案 2026-10-29；秒数与上升沿语义在「…」对话框里看） | 走「…」对话框 |
 | 启用 | `AcqEnableSwitch` | 行内开关，即时落盘 |
 | # | 序号（1 起，**不落盘**） | 只读 |
 | 数据记录 | 记录到文件的开关（与行内「启用」是**两件事**） | 对话框 |
@@ -863,8 +863,12 @@ Window
 
 - 判据全在纯逻辑里（不碰 WPF）：`Describe(task, findVariable)` 返回问题清单，
   `ErrorText = "配置错误"`。读取类型查读取变量；
-  写入类型**按填写先后短路只报第一处**（来源空 → 来源查不到 → 写入变量空 → 写入变量查不到 → 类型不符），
-  否则一项没填会对用户刷三条
+  写入类型**按填写先后短路只报第一处**（来源空 → 来源查不到 → 写入变量空 → 写入变量查不到 → 类型不符
+  → **写入变量落在只读区**），否则一项没填会对用户刷三条
+- **写入变量落在只读区也算配置错误**（2026-10-29 用户定案）：`variable.IsReadOnly` 为真时
+  报「写入变量「X」映射到 X5，属于只读区（输入元件），不能作为写入目标」。
+  为什么放在这里而不是映射地址时拦：全局变量表**允许**映射 X（见下节「只读区只拦写不拦映射」），
+  「读得到、写不了」这件事只有写入任务知道，所以只能在这一层报
 - ⚠️ **未映射地址不算配置错误**：用户定案允许（见上）
 - **组级问题先报（触发表达式）**：`DescribeTrigger` 在逐项检查之前跑，只对触发式（`Trigger == Edge`）生效。
   三种都算配置错误：表达式解析不了（`CompiledExpression.TryParse` 的 error 原样带出）、
@@ -914,7 +918,9 @@ Window
   **`BeginWriteTask` 里不能 await**（50ms 定时器回调里 await 会卡节拍）；
   fire-and-forget 的异常没人接，`RunWriteTaskAsync` 必须 try/catch/finally 兜底
 - `TryBuild` 判定顺序：变量不存在 → 无地址 **Skipped**（静默跳过、不算错误）→
-  `ResolvedAddress < 0` → 只读区 → `CoilOnly` 文本须 `0`/`1` → `TryEncodeRegisters`。
+  `ResolvedAddress < 0`（**解析失败**，`ResolveError` 有值就带出来）→ `IsReadOnly`（只读区兜底）→
+  `CoilOnly` 文本须 `0`/`1` → `TryEncodeRegisters`。注意「无地址」与「解析失败」是两回事：
+  前者 `HasAddress = false` 走 Skipped，后者是地址填了但解析不出来（`ResolvedAddress = -1`）走 Failed。
   **Skipped 与 Failed 必须分开**：前者是允许的常态，不能污染失败日志
 - ⚠️ **编码规则（最易写错）**：用**来源变量的 `Format`** 解析文本，用**写入变量的 `Type`/`Length`**
   定字宽与范围（两者 Type 已被 `WriteTypesMatch` 强制相同，只有 Format 可能不同；
@@ -924,10 +930,15 @@ Window
   `2/3 项写入失败：项1（压力）：…`，项名前缀**复用 `AcquisitionTaskCheck.DescribeItemPrefix`**
   （故它是 public，两处各写一份必然走样）
 - CSV **一行不改**：它记写入变量的回读值，来源变量从不进文件；写通后该列自然变成真值
-- 只读区拦截（用户定「在全局变量表映射地址时限制」）：`GlobalVariableStore.TryResolve` 先判只读
-  再赋地址，命中 `AddressErrorKind.ReadOnlyArea`。⚠️ **代价：全局变量表从此不能映射 X**
-  （X 仍可在自由监控直接读；将来要读 X 得改成「仅警告」）。⚠️ 测试要用 BOOL 变量，
-  INT 填 X0 会先在 `CanMapTo` 报「类型不符」走不到这里
+- **只读区只拦「写」，不拦「映射」**（用户 2026-10-29 定案，推翻了 2026-10-27 的硬拦截）：
+  全局变量表**允许**把地址填成 X / 离散输入 / 输入寄存器 —— X 读得进变量、进记录表、进表达式。
+  `GlobalVariableStore.TryResolve` 命中只读元件时只置 `v.IsReadOnly = true` 并**照常赋地址**、
+  照常返回 `true`；`AddressErrorKind` 里**已经没有 `ReadOnlyArea` 这一档**（连枚举成员一起删了）。
+  「不许写」改在写入任务那一层报两处：① `AcquisitionTaskCheck.DescribeItem` 的 Write 分支
+  命中 `variable.IsReadOnly` → 算**配置错误**（整组拦下，比运行期写失败好）；
+  ② `AcquisitionWrite.TryBuild` 兜底拒写（给旧数据 / 手改 json 用）。
+  行内也标：`AcquisitionTaskItem.HasVariableError` 与 `VariableHint` 都会报「属于只读区（输入元件）」。
+  ⚠️ 判定只有 `GlobalVariableStore.IsReadOnlyElement` **一处来源**，写入侧只管读 `IsReadOnly` 标志
 
 ## 6. 心跳与连接生命周期
 

@@ -1610,6 +1610,7 @@ Brief P3.1 从 💤 低 提到 ⏳ 中：采集结果要落表格文件。用户
   `周期秒数` 反向变 False（UIA 逐控件读的，不是看截图猜的）
 - 端到端：填 `SysState == 10` → 确定 → 行的执行方式由 `周期 5s` 变 `触发（上升沿）`，
   且 JSON 里 `"Trigger": "Edge"`、`"Expression": "SysState == 10"` 都已落盘
+  （**列文案已于 2026-10-29 改成只剩两个字**，见 §10.35；判定逻辑与这一段无关）
 
 ### 10.25 采集执行与 CSV 输出（P3.1 功能实现）（2026-10-26）
 
@@ -1833,7 +1834,9 @@ Describe(task, findVariable) -> List<string>
 - `task == null` → 「任务组不存在」；`Items` 为空 → 「没有数据项」。
 - 读取类型每项：变量名为空 → 「未填读取变量」；名字查不到 → 「读取变量「X」不存在」。
 - 写入类型每项**按填写先后短路**，只报第一处，避免一次刷出三条：
-  来源空 → 「未填来源变量」 → 来源查不到 → 写入变量空 → 写入变量查不到 → 类型不符（`WriteTypesMatch`）。
+  来源空 → 「未填来源变量」 → 来源查不到 → 写入变量空 → 写入变量查不到 → 类型不符（`WriteTypesMatch`）
+  → **写入变量落在只读区**（`variable.IsReadOnly`，2026-10-29 追加，见 §10.34）。
+  只读那条**必须放在类型判断之后**并各自 `return`，否则类型不符的项会被连带报两条。
 - **未映射地址不算配置错误** —— 这是 §10.28 用户定案允许的状态。
 - **组级问题先报（触发表达式，2026-10-27 追加）**：`DescribeTrigger` 在逐项循环之前跑，
   只对 `Trigger == Edge` 生效。三种都算：
@@ -1996,6 +1999,9 @@ Skipped 与 Failed 分开是必要的：前者是用户允许的常态配置，�
 
 #### 五、只读区拦截（行为变更，有代价）
 
+> ⚠️ **本小节的判断已被 §10.34 推翻**（2026-10-29 用户定案：全局变量**可以**映射 X，
+> 只禁止「当写入目标」）。下面保留原记录，看清当初是怎么想的。
+
 用户定「在新建全局变量表映射地址时限制」。落点 `Modeling/GlobalVariable.cs:458`
 —— `GlobalVariableStore.TryResolve` 先判只读再赋地址，命中时置
 `IsReadOnly = true`、`ResolvedAddress = -1`，返回 `AddressErrorKind.ReadOnlyArea`（`:123`），
@@ -2022,7 +2028,7 @@ Skipped 与 Failed 分开是必要的：前者是用户允许的常态配置，�
 | 运行日志 | 每 5s 一条 `任务组1（写入验证）：周期写入任务执行完成`，连续 8 条无失败 |
 | CSV | 表头 `时间,任务类型,计数,灯,双字,备用`；`16:34:03,写入,58,1,238816827,0` —— 计数 58 与 FC06 写进去的 58 一致，**写后回读闭环成立** |
 | 界面 | 四行全绿无红，无地址的「备用」也不标红（符合定案） |
-| 只读区 | 把 Light(BOOL) 地址改成 `X0` 失焦 → MessageBox 标题「只读区」、正文「"X0"属于只读区（输入元件），读得到但写不了，不能作为全局变量的映射地址。」 |
+| 只读区 | 把 Light(BOOL) 地址改成 `X0` 失焦 → MessageBox 标题「只读区」、正文「"X0"属于只读区（输入元件），读得到但写不了，不能作为全局变量的映射地址。」（**该弹窗已于 §10.34 删除**） |
 
 回归：`AcquisitionCheck` **162**、`ConnCheck` 35、`DeviceLogCheck` 23、`ExpressionCheck` 101、
 `GlobalVarCheck` 164、`MonitorVarCheck` 70、`NicCheck` 17、`SystemVarCheck` 124 全通过。
@@ -2728,6 +2734,135 @@ B 版落地后，用户的要求是**「为我还原到横向切换胶囊的版�
 - 右边框回来了：聚焦态 `#4CA3E0`（x=626..627）、常态 `#555555`（表达式框）
 - 文字起点距左边框 **13.3 DIP**（含字形左侧留白），与下拉框的 10 DIP + 留白一致
 - 深浅两套主题复截确认，回归 `ExpressionCheck` 101 项、`ModelingCheck` 160 项全通过
+
+### 10.34 只读区口径反转：允许映射 X，只禁止当写入目标（2026-10-29）
+
+用户原话（m05724）：
+
+> 第1项：全局变量可以映射X元件，但是写入任务的写入变量不允许使用
+
+这一句推翻了 §10.30 §五 的做法（那时是「映射地址时就硬拦」）。反转的理由很直接：
+X 是**输入点**，现场最常见的用法恰恰是「把 X 读进变量、进记录、进表达式判断」——
+硬拦等于把最有用的那一半需求砍掉了。真正该拦的只有「把它当写入目标」。
+
+#### 一、改了什么
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| `AddressErrorKind` 枚举 | 有 `ReadOnlyArea` 成员 | **整支删除**（连报错分支一起） |
+| `GlobalVariableRules.DescribeAddressError` | `case ReadOnlyArea:` 弹「只读区」 | 整个 case 删掉 |
+| `GlobalVariableStore.TryResolve` | 命中只读 → `ResolvedAddress = -1`、返回 false | 只置 `IsReadOnly = true`，**照常赋地址、照常返回 true** |
+| `AcquisitionTaskCheck.DescribeItem`（Write 分支） | 只查类型 | 追加 `variable.IsReadOnly` → 配置错误 |
+| `AcquisitionTaskItem.HasVariableError` / `VariableHint` | 只查类型 | 追加只读判定，行内标红 + 悬停说明 |
+| `AcquisitionWrite.TryBuild` | 只读分支在 | **保留**，注释改成「给旧数据 / 手改 json 兜底」 |
+
+判定来源仍然只有一处：`GlobalVariableStore.IsReadOnlyElement`（`DiscreteInput`/`InputRegister` 区，
+或元件名为 `X`）。它的结果现在**只写进 `IsReadOnly`，不影响解析成败**。
+写入侧只读这个标志，不去重新判元件 —— 两处各判一次必然走样。
+
+#### 二、为什么拦在「配置错误」这一层
+
+因为只有写入任务知道「这个变量要拿去写」。放在全局变量表时就拦，等于假设所有 X 变量都只用于写；
+放到运行期（`TryBuild` 失败）才拦，则是「配的时候看不出来、跑到才失败」，最差的一种。
+放进「配置错误」还顺带白拿了整组行为：不采集、不建目录、不写 CSV、不记日志、
+开关关掉并锁住、修好后自己回开 —— 这些 §10.29 已经全部实现，不需要新写一行。
+
+#### 三、验证（假从站，不碰真机）
+
+沙箱：`GlobalVar.json` 里 `In5`（BOOL/Bin/`X5`）+ `Count`(D101) + `Light`(M300)；
+两个任务组共用同一个 `SavePath`：`读X点`（Read/Periodic 2s/项→In5）、
+`写X点`（Write/Periodic 2s/源 `sys_True` → In5）。
+假从站加了可选第 4 参 `on`：没被写过的线圈读作 ON，这样「读到 0」不会被误当成「根本没读」。
+
+| 证据 | 结果 |
+|---|---|
+| 从站日志 | `FC1 READ-COIL addr=20485 count=1` 共 **2097** 次 —— 20485 = 20480 + 5，**X5 确实被采了** |
+| 从站写日志 | **0 条 `WRITE`** —— 写任务一次都没下发 |
+| CSV | 只有 `读X点\\2026-10-29.csv`（BOM `EF BB BF`、表头 `时间,任务类型,输入`、行 `09:41:38,读取,1`）；**没有 `写X点` 目录** |
+| 运行日志 | `任务组1（读X点）：周期读取任务执行完成` 17 条；`写X点` **0 条** |
+| UIA | 第 1 行 `CheckBox|name=开|en=True`；第 2 行 `CheckBox|name=关|en=False` + `TextBlock|name=配置错误` |
+| 全局变量页 | 把 `In5` 的映射地址改成 `X7` 后失焦 → **顶层窗口只有 1 个**（无 MessageBox），`GlobalVar.json` 落盘 `"Address": "X7"`；改回 `X5` 同样无弹窗 |
+
+**坐标换算的坑**：这台机器屏幕 1280×853，而窗口内容固定 1536 物理像素宽，
+UIA 的 `BoundingRectangle` 会给出屏幕外的 x（如 1408）。要截到右侧列得先把窗口
+挪到 `X = -200`（`SetWindowPos`）。另：`GetWindowRect` 对该进程返回的是 **DIP**
+（128,83,1024×640），UIA 返回的是**物理像素**（192,124,1536×960），两者差 1.5 倍。
+
+#### 四、顺带修掉：两个指示灯重叠 20 px
+
+`.tmp/ExpressionCheck` 报 143/144，唯一失败项是「两个灯不重叠」。
+HEAD 里灯是 `Error (600,368,120,30)` / `Fault (700,368,120,30)` —— 左边缘相距 100、
+宽度却是 120，于是 600–720 与 700–820 **重叠 20 px**。那 20 px 里双击算哪个灯取决于 z 序
+（`Fault` 后建、在上），是说不清的行为。
+
+宽度改成 **100**：`Error` 占 600–700、`Fault` 占 700–800，接缝相邻不重叠，
+同时仍在 `Aborted`（879）左侧。灯的实际内容只有「圆点 + 间距 + 文字」共 60 出头，100 够宽。
+改后 144/144。
+
+#### 五、断言与回归
+
+| 套件 | 变化 | 结果 |
+|---|---|---|
+| `.tmp/GlobalVarCheck` | 164 → **165**（X5 两条「被拦」改三条「可映射 / 标只读 / 留了地址」） | 165/165 |
+| `.tmp/AcquisitionCheck` | 169 → **173**（新增 ⑧㉟–⑧㊳；⑨㉕/⑨㉖/⑨㉘ 改成「放行 + 留地址 + 端到端拒写」） | 173/173 |
+| `.tmp/ExpressionCheck` | 灯宽 120→100 | 144/144 |
+| 其余 | ConnCheck 35 / DeviceLogCheck 23 / MonitorVarCheck 70 / NicCheck 17 / SystemVarCheck 124 | 全通过 |
+
+X0 的绝对地址是 **20480**（`Drivers/DriverRegistry.cs:65` `Element="X", Area=Coil,
+StartIndex=0, Count=64, StartAddress=20480, IndexBase=NumberBase.Octal`），X5 即 20485。
+
+---
+
+### 10.35 执行方式列只显示「周期」/「触发」（2026-10-29）
+
+用户原话（m06512）：
+
+> 把执行方式列显示优化一下，只显示为周期或者触发即可，不需要那么详细
+
+#### 一、改前是什么，为什么当初那么写
+
+`AcquisitionTaskRules.DescribeSchedule` 给的是「周期 5s」/「触发（上升沿）」，
+理由写在注释里：「列表里要一眼看出周期多长，光写『周期』等于没写」。
+那条判断现在被推翻 —— 秒数和边沿语义在「…」任务选项对话框里本来就看得见，
+列表里再写一遍，等于用 6~8 个字占掉「任务名称」的宽度。
+
+#### 二、改法：复用同一个短词函数
+
+没有新写函数，直接把列改用**运行日志行首那套短词**（`DescribeShortTrigger`，本来就有）：
+
+```csharp
+public string ScheduleDisplay => AcquisitionTaskRules.DescribeShortTrigger(Model.Trigger);
+```
+
+顺带删掉两个已经无人调用的方法：`DescribeSchedule(AcquisitionTask)`（这次改完就没了调用方）
+和 `DescribeTrigger(AcquisitionTriggerMode)`（与 `DescribeShortTrigger` 逐字相同，早就重复）。
+`FormatSeconds` 保留 —— 对话框回填与周期范围校验还在用。
+
+#### 三、列宽 140 → 76 DIP
+
+两处列定义一起改：行模板 `MainWindow.xaml:1407`、表头 `MainWindow.xaml:2402`。
+140 是给「触发（上升沿）」留的，现在只装两个字，空出来的宽度全给了 `*` 列（任务名称）。
+
+为什么是 **76**：表头「执行方式」四个字 @ FontSize 12 = 48 DIP，内容两个字 = 24 DIP，
+76 留 28 DIP 余量 —— 既不会裁表头，也不会让内容贴到下一列。
+
+固定列合计从 `34+90+140+180+80+120 = 644` 降到 `34+90+76+180+80+120 = 580`，
+即「任务名称」这一列多了 **64 DIP（96 物理像素）**。
+
+#### 四、实测（UIA 读的，不是看截图猜的）
+
+| 对象 | 改后 rect（物理像素，150% DPI） |
+|---|---|
+| 表头「执行方式」 | `x=994 w=114`（114 / 1.5 = **76 DIP**，与代码一致） |
+| 第 1 行（心跳，Write/Periodic） | `周期` `x=994 y=453 w=114` |
+| 第 2 行（任务组2，Read/Edge） | `触发` `x=994 y=643 w=114` |
+| 任务名称列 | `w=398`（+96 物理像素，与上面的计算一致） |
+| 其余列 | 任务类型 135 / 启用 270 / 数据项 120 / 共N项 56 全部未动 |
+
+断言：`AcquisitionCheck` **173/173**、`ExpressionCheck` **144/144**、`GlobalVarCheck` **165/165**，
+构建 0 警告 0 错误。
+
+---
 
 ## 11. 构建与运行
 

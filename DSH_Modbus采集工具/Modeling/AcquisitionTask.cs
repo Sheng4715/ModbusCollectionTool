@@ -257,25 +257,20 @@ namespace DSH_Modbus采集工具.Modeling
         public static string DescribeKind(AcquisitionTaskKind kind) =>
             kind == AcquisitionTaskKind.Write ? "数据写入" : "数据读取";
 
-        /// <summary>执行方式显示名（不含参数）</summary>
-        public static string DescribeTrigger(AcquisitionTriggerMode mode) =>
-            mode == AcquisitionTriggerMode.Edge ? "触发" : "周期";
-
         /// <summary>
-        /// 「执行方式」列的完整文案：周期 → <c>周期 5s</c>；触发 → <c>触发（上升沿）</c>。
-        /// <para>列表里要一眼看出周期多长，光写「周期」等于没写。</para>
+        /// 执行方式的**短词**版（<c>周期</c> / <c>触发</c>）。
+        /// <para>
+        /// 两处共用：① 任务表的「执行方式」列；② 运行日志的行首（<c>触发读取任务</c>）。
+        /// </para>
+        /// <para>
+        /// ⚠️ 任务表里**只写这两个词**（用户定案 2026-10-29：「只显示为周期或者触发即可，
+        /// 不需要那么详细」）。原先这里给的是「周期 5s」/「触发（上升沿）」，
+        /// 理由是「列表里要一眼看出周期多长」—— 那条已被推翻：秒数和边沿语义在
+        /// 「…」任务选项对话框里看得到，列里挤成六七个字反而把「任务名称」挤窄了。
+        /// </para>
         /// </summary>
-        public static string DescribeSchedule(AcquisitionTask task)
-        {
-            if (task == null)
-            {
-                return string.Empty;
-            }
-
-            return task.Trigger == AcquisitionTriggerMode.Edge
-                ? "触发（上升沿）"
-                : "周期 " + FormatSeconds(task.PeriodSeconds) + "s";
-        }
+        public static string DescribeShortTrigger(AcquisitionTriggerMode mode) =>
+            mode == AcquisitionTriggerMode.Edge ? "触发" : "周期";
 
         /// <summary>
         /// 运行日志里的**短词**版任务类型（<c>读取</c> / <c>写入</c>）。
@@ -288,9 +283,6 @@ namespace DSH_Modbus采集工具.Modeling
         public static string DescribeShortKind(AcquisitionTaskKind kind) =>
             kind == AcquisitionTaskKind.Write ? "写入" : "读取";
 
-        /// <summary>运行日志里的**短词**版执行方式（<c>周期</c> / <c>触发</c>）。</summary>
-        public static string DescribeShortTrigger(AcquisitionTriggerMode mode) =>
-            mode == AcquisitionTriggerMode.Edge ? "触发" : "周期";
 
         /// <summary>
         /// 运行日志的行首：<c>任务组1（压力采集）：触发读取任务</c>。

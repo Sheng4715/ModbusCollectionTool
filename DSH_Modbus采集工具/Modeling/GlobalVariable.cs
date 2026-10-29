@@ -70,7 +70,13 @@ namespace DSH_Modbus采集工具.Modeling
         [JsonIgnore]
         public ModbusArea Area { get; set; } = ModbusArea.Coil;
 
-        /// <summary>该映射区是否只读（方案 C：X 等输入元件只读）。**不持久化**。</summary>
+        /// <summary>
+        /// 该映射区是否只读（方案 C：X 等输入元件 / 离散输入 / 输入寄存器）。**不持久化**。
+        /// <para>
+        /// ⚠️ 只读**不影响映射**（用户定案 2026-10-29：全局变量允许映射 X，X 照样能读进变量），
+        /// 只影响**能不能写** —— 写入任务的写入变量若落在只读区，配置检查报错、整组拦下。
+        /// </para>
+        /// </summary>
         [JsonIgnore]
         public bool IsReadOnly { get; set; }
 
@@ -99,8 +105,12 @@ namespace DSH_Modbus采集工具.Modeling
     /// 映射地址解析失败的原因类别 —— 决定界面弹哪一句提示。
     /// <para>
     /// 分类的原因是**用户的改法完全不同**：类型不符要改数据类型或换元件，
-    /// 软元件无效要改地址本身，只读区要换一个可写的元件。笼统报一句「地址无效」
-    /// 会把人引向错误方向。
+    /// 软元件无效要改地址本身。笼统报一句「地址无效」会把人引向错误方向。
+    /// </para>
+    /// <para>
+    /// ⚠️ 这里**没有「只读区」这一档**（用户定案 2026-10-29）：全局变量允许映射 X，
+    /// 「读得到、写不了」不再算映射地址的错误，改由写入任务那一层报
+    /// （<see cref="AcquisitionTaskCheck"/> 报配置错误、<c>AcquisitionWrite</c> 兜底拒写）。
     /// </para>
     /// </summary>
     public enum AddressErrorKind
@@ -113,14 +123,6 @@ namespace DSH_Modbus采集工具.Modeling
 
         /// <summary>软元件无效：符号不存在、编号越界、格式不对、超出地址范围。</summary>
         InvalidElement,
-
-        /// <summary>
-        /// 软元件属于**只读区**（X 等输入元件 / 离散输入 / 输入寄存器）。
-        /// <para>
-        /// 读得到、写不了 —— 见 <c>GlobalVariable.IsReadOnly</c>。
-        /// </para>
-        /// </summary>
-        ReadOnlyArea,
 
         /// <summary>与地址无关的配置问题（显示格式、STRING 长度、未选设备类型）。</summary>
         Configuration,
@@ -261,14 +263,6 @@ namespace DSH_Modbus采集工具.Modeling
                     // 与另两处名称弹窗同一排版：正文最前面是**用户刚输入的内容**（外加双引号）
                     title = "软元件无效";
                     body = input.Length == 0 ? "不是有效软元件" : $"“{input}”不是有效软元件";
-                    return;
-
-                case AddressErrorKind.ReadOnlyArea:
-                    // 说清「为什么不行」+「还能怎么用」，否则用户只会反复换编号重试
-                    title = "只读区";
-                    body = input.Length == 0
-                        ? "该元件属于只读区，不能作为映射地址。"
-                        : $"“{input}”属于只读区（输入元件），读得到但写不了，不能作为全局变量的映射地址。";
                     return;
 
                 default:
@@ -445,22 +439,14 @@ namespace DSH_Modbus采集工具.Modeling
 
             // 只读区（X 等输入元件 / 离散输入 / 输入寄存器）：读得到、写不了。
             //
-            // 用户定案（2026-10-27）：在**映射地址这一步**就拦住，而不是等数据管理里再报错 ——
-            // 一个注定写不进去的地址，配进来只会让写入任务在运行期失败，还查不出为什么。
+            // 用户定案（2026-10-29，推翻了 2026-10-27 那版硬拦截）：
+            // **全局变量允许映射 X** —— X 照样能读进变量、进记录表、进表达式，
+            // 所以这里不再拦。一个只读元件当映射地址是**完全合法**的配置。
             //
-            // ⚠️ 代价：全局变量表里**不能再映射 X**。X 仍然可以在自由监控里直接读
-            // （那条路不走全局变量）；若将来需要把 X 读进变量，得把这条拦法改成「仅警告」。
-            if (IsReadOnlyElement(driver, element, matched.Value))
-            {
-                v.IsReadOnly = true;
-                v.ResolvedAddress = -1;
-                error = $"{v.Address} 属于只读区（输入元件），不能作为全局变量的映射地址";
-                kind = AddressErrorKind.ReadOnlyArea;
-                v.ResolveError = error;
-                return false;
-            }
-
-            v.IsReadOnly = false;
+            // 「不许写」改由**写入任务**那一层管：AcquisitionTaskCheck 在界面上报
+            // 「配置错误」并整组拦下（不会等到运行期才写失败），AcquisitionWrite 再兜底拒写。
+            // IsReadOnly 仍然在这里置位 —— 判定只有一处来源，写入侧只管读这个标志。
+            v.IsReadOnly = IsReadOnlyElement(driver, element, matched.Value);
             v.ResolvedAddress = address;
             v.Area = matched.Value;
             return true;
@@ -472,6 +458,10 @@ namespace DSH_Modbus采集工具.Modeling
         /// 判据：同一元件若存在**线圈区**定义 → 它是输出/内部继电器，可读写；
         /// 若只落在离散输入区 → 只读。信捷的 X 在本驱动里登记为 Coil，
         /// 但按业务语义它是**输入点**，故额外按元件名判定。
+        /// </para>
+        /// <para>
+        /// ⚠️ 结果只写进 <see cref="GlobalVariable.IsReadOnly"/>，**不影响解析成败**
+        /// （用户定案 2026-10-29）。想判断「这条变量能不能当写入目标」，读那个标志。
         /// </para>
         /// </summary>
         private static bool IsReadOnlyElement(CommDriver driver, string element, ModbusArea area)

@@ -178,7 +178,10 @@ namespace DSH_Modbus采集工具
         /// <summary>
         /// 写入变量这一格有问题 → 标红（输入框与数据类型列共用这一条）。
         /// <para>
-        /// 两种情况：名字在全局变量表里查不到；写入类型下数据类型与来源变量不同。
+        /// 三种情况：名字在全局变量表里查不到；写入类型下数据类型与来源变量不同；
+        /// 写入类型下变量落在**只读区**（X 等输入元件，用户定案 2026-10-29）。
+        /// </para>
+        /// <para>
         /// ⚠️ **未映射地址不算错**（用户定案 2026-10-27）：允许先建一条纯内存变量当写入目标，
         /// 地址以后再补。这里若拦下来，界面上就再也填不进去了。
         /// </para>
@@ -199,9 +202,16 @@ namespace DSH_Modbus采集工具
                 }
 
                 AcquisitionSource? source = SourceVariable;
-                return _isWriteTask
+                if (_isWriteTask
                     && source != null
-                    && !AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type);
+                    && !AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type))
+                {
+                    return true;
+                }
+
+                // 只读区不能当写入目标（用户定案 2026-10-29）：全局变量本身允许映射 X，
+                // 所以这个判据只在这一格、且只在写入类型下成立。与配置检查同一口径。
+                return _isWriteTask && variable.IsReadOnly;
             }
         }
 
@@ -234,6 +244,11 @@ namespace DSH_Modbus采集工具
                 {
                     return AcquisitionTaskRules.DescribeTypeMismatch(
                         source.Name, source.Type, name, variable.Type);
+                }
+
+                if (_isWriteTask && variable.IsReadOnly)
+                {
+                    return variable.Address + " 属于只读区（输入元件），不能作为写入目标";
                 }
 
                 string hint = string.IsNullOrWhiteSpace(variable.Comment) ? name : variable.Comment;
@@ -336,8 +351,15 @@ namespace DSH_Modbus采集工具
         /// <summary>是否写入类型 —— 子表的列集合要跟着它变（写入多一列「来源变量」）</summary>
         public bool IsWrite => Model.Kind == AcquisitionTaskKind.Write;
 
-        /// <summary>执行方式显示名（只读，改它走任务选项对话框）</summary>
-        public string ScheduleDisplay => AcquisitionTaskRules.DescribeSchedule(Model);
+        /// <summary>
+        /// 执行方式显示名（只读，改它走任务选项对话框）。
+        /// <para>
+        /// **只有两个字**：<c>周期</c> / <c>触发</c>（用户定案 2026-10-29）。
+        /// 周期多少秒、触发是上升沿 —— 这些细节在「…」任务选项对话框里看，
+        /// 列里不重复一遍，省下的宽度留给「任务名称」。
+        /// </para>
+        /// </summary>
+        public string ScheduleDisplay => AcquisitionTaskRules.DescribeShortTrigger(Model.Trigger);
 
         /// <summary>「共 N 项」列的文字</summary>
         public string ItemCountText => "共 " + Items.Count + " 项";

@@ -170,6 +170,19 @@ namespace DSH_Modbus采集工具.Modeling
                         prefix + "来源「" + source.Name + "」是 " + DataTypes.Get(source.Type).DisplayName
                         + "，写入变量「" + variable.Name + "」是 " + DataTypes.Get(variable.Type).DisplayName
                         + "，两者必须相同");
+                    return;
+                }
+
+                // 只读区（X 等输入元件）不能当写入目标 —— 用户定案 2026-10-29。
+                //
+                // 全局变量**允许**映射 X（那条限制已经撤掉），所以「读得到、写不了」这件事
+                // 只能在这里报：放进「配置错误」整组拦下，比等到运行期才写失败、日志里
+                // 一句「从站回异常码 2」查不出来要好得多。
+                if (variable.IsReadOnly)
+                {
+                    issues.Add(
+                        prefix + "写入变量「" + variable.Name + "」映射到 " + variable.Address
+                        + "，属于只读区（输入元件），不能作为写入目标");
                 }
 
                 return;

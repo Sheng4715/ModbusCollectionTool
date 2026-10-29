@@ -73,11 +73,12 @@ namespace DSH_Modbus采集工具.Modeling
                 return AcquisitionWriteStatus.Failed;
             }
 
-            // 只读区兜底：新版全局变量表已经在映射地址时拦掉了只读元件，
-            // 这里再挡一次是为了旧数据（改版前存的 X 变量）不被打到总线上。
+            // 只读区兜底：配置检查（AcquisitionTaskCheck）已经在界面上把这种组拦成
+            // 「配置错误」，正常走不到这里。留着是给旧数据 / 手改 json 的情况兜底 ——
+            // 绝不能把写报文打到只读区去。
             if (target.IsReadOnly)
             {
-                error = $"{target.Address} 属于只读区，不能写入";
+                error = $"{target.Address} 属于只读区（输入元件），不能写入";
                 return AcquisitionWriteStatus.Failed;
             }
 
