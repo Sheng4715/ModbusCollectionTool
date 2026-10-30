@@ -242,7 +242,7 @@ namespace DSH_Modbus采集工具
             _acqTaskSet.Rename(task, dialog.TaskName, out _);
             task.ApplyDialogResult(
                 dialog.KindValue, dialog.TriggerValue, dialog.PeriodSecondsValue, dialog.ExpressionText,
-                dialog.RecordEnabledValue, dialog.SavePathValue);
+                dialog.LogEnabledValue, dialog.RecordEnabledValue, dialog.SavePathValue);
 
             // 改名不搬家：文件夹按名称建，改完新数据进新文件夹，旧的原样留着。
             // 不提示一句的话，用户会以为历史数据也跟着过去了
@@ -345,7 +345,8 @@ namespace DSH_Modbus采集工具
                 // 日志里必须分得开（用户定案：写成「执行完成（未启用数据记录）」）
                 if (!task.RecordEnabled)
                 {
-                    AppendDeviceLog(
+                    LogTaskActivity(
+                        task,
                         AcquisitionTaskRules.DescribeLogSuccess(task, item.Index),
                         DeviceLogLevel.Neutral);
                     continue;
@@ -355,7 +356,8 @@ namespace DSH_Modbus采集工具
 
                 // 每次执行都记一条（用户定案 C）：成功不带原因、失败必带。
                 // 写盘失败不弹窗（50ms 一拍会弹到用户崩溃），只走日志
-                AppendDeviceLog(
+                LogTaskActivity(
+                    task,
                     error.Length == 0
                         ? AcquisitionTaskRules.DescribeLogSuccess(task, item.Index)
                         : AcquisitionTaskRules.DescribeLogFailure(task, item.Index, error),
@@ -499,7 +501,8 @@ namespace DSH_Modbus采集工具
                     }
                 }
 
-                AppendDeviceLog(
+                LogTaskActivity(
+                    task,
                     reason.Length == 0
                         ? AcquisitionTaskRules.DescribeLogSuccess(task, item.Index)
                         : AcquisitionTaskRules.DescribeLogFailure(task, item.Index, reason),
@@ -508,7 +511,8 @@ namespace DSH_Modbus采集工具
             catch (Exception ex)
             {
                 // fire-and-forget 里漏出来的异常没人接，必须自己收掉，否则进程会静默炸掉
-                AppendDeviceLog(
+                LogTaskActivity(
+                    task,
                     AcquisitionTaskRules.DescribeLogFailure(task, item.Index, ex.Message),
                     DeviceLogLevel.Warning);
             }
@@ -516,6 +520,29 @@ namespace DSH_Modbus采集工具
             {
                 state.WriteInFlight = false;
             }
+        }
+
+        /// <summary>
+        /// 任务组的活动日志入口：**组级「日志记录」关掉就整组不记**。
+        /// <para>
+        /// 不用在调用点逐个判 <c>task.LogEnabled</c>，是因为日志有 4 个出口
+        /// （只跑不记 / 记录成功 / 记录失败 / 写入异常兜底），逐个判漏一个
+        /// 就会出现「关掉了却还在刷」的诡异现象。
+        /// </para>
+        /// <para>
+        /// ⚠️ 只管**任务组自身活动**。断线 / 连接失败这类系统级日志不归它管 ——
+        /// 那是设备状态，不是「这个任务组跑没跑」。
+        /// </para>
+        /// </summary>
+        private void LogTaskActivity(
+            AcquisitionTask task, string message, DeviceLogLevel level)
+        {
+            if (task == null || !task.LogEnabled)
+            {
+                return;
+            }
+
+            AppendDeviceLog(message, level);
         }
 
         /// <summary>取该组的运行态；没有就建一个。</summary>

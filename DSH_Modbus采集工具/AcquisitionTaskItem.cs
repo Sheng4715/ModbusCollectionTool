@@ -532,6 +532,7 @@ namespace DSH_Modbus采集工具
             AcquisitionTriggerMode trigger,
             double periodSeconds,
             string? expression,
+            bool logEnabled,
             bool recordEnabled,
             string? savePath)
         {
@@ -539,6 +540,7 @@ namespace DSH_Modbus采集工具
             Model.Trigger = trigger;
             Model.PeriodSeconds = periodSeconds;
             Model.Expression = expression ?? string.Empty;
+            Model.LogEnabled = logEnabled;
             Model.RecordEnabled = recordEnabled;
             Model.SavePath = savePath ?? string.Empty;
 

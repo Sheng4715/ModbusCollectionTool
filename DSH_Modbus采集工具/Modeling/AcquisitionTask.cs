@@ -110,6 +110,19 @@ namespace DSH_Modbus采集工具.Modeling
         public bool Enabled { get; set; } = true;
 
         /// <summary>
+        /// 日志记录启用（**执行时往运行日志里记不记一行**）。
+        /// <para>
+        /// 默认**打开**（用户定案 2026-10-30）：日志本来就是给现场排查用的，
+        /// 新建一个任务组却什么都看不到，只会让人以为它没跑。
+        /// </para>
+        /// <para>
+        /// ⚠️ 与 <see cref="RecordEnabled"/> 是两件事：这个管「界面上看不看得见」，
+        /// 那个管「磁盘上有没有 CSV」。关掉日志不影响记录文件，反之亦然。
+        /// </para>
+        /// </summary>
+        public bool LogEnabled { get; set; } = true;
+
+        /// <summary>
         /// 数据记录启用（**采到之后写不写 CSV**）。
         /// <para>默认关闭：没配路径就闷头写文件，比不写更糟。</para>
         /// </summary>

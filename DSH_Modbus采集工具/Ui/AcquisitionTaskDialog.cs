@@ -38,6 +38,8 @@ namespace DSH_Modbus采集工具.Ui
         private readonly TextBox _periodBox;
         private readonly TextBlock _periodSuffix;
         private readonly TextBox _expressionBox;
+        private readonly RadioButton _logOffRadio;
+        private readonly RadioButton _logOnRadio;
         private readonly RadioButton _recordOffRadio;
         private readonly RadioButton _recordOnRadio;
         private readonly TextBox _pathBox;
@@ -59,9 +61,9 @@ namespace DSH_Modbus采集工具.Ui
             var root = new Grid { Margin = new Thickness(16) };
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            // 名称 / 类型 / 数据记录 / 保存路径 / 执行方式 / 表达式 / 错误 / 按钮 = 8 行，
-            // 但单选与路径各自可能换行，留足 10 行余量
-            for (int i = 0; i < 10; i++)
+            // 名称 / 类型 / 日志记录 / 数据记录 / 保存路径 / 执行方式 / 表达式 / 错误 / 按钮 = 9 行，
+            // 但单选与路径各自可能换行，留足 11 行余量
+            for (int i = 0; i < 11; i++)
             {
                 root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             }
@@ -81,6 +83,24 @@ namespace DSH_Modbus采集工具.Ui
 
             SelectKind(task.Kind);
             Place(root, _kindCombo, row++, new Thickness(0, 0, 0, 10));
+
+            AddLabel(root, "日志记录", row);
+
+            // 与下面「数据记录」同一形态：两个单选，扫一眼就是二选一。
+            // ⚠️ 两组单选的 GroupName 必须不同，否则会互相取消选中。
+            _logOffRadio = MakeRadio("不启用", "AcqTaskLog");
+            _logOnRadio = MakeRadio("启用", "AcqTaskLog");
+
+            var logLine = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            logLine.Children.Add(_logOffRadio);
+            _logOnRadio.Margin = new Thickness(20, 0, 0, 0);
+            logLine.Children.Add(_logOnRadio);
+
+            Place(root, logLine, row++, new Thickness(0, 0, 0, 10), stretch: true);
 
             AddLabel(root, "数据记录", row);
 
@@ -252,6 +272,16 @@ namespace DSH_Modbus采集工具.Ui
                 _periodRadio.IsChecked = true;
             }
 
+            // 日志记录默认**开**：新建的任务组（LogEnabled 默认 true）进来就是「启用」
+            if (task.LogEnabled)
+            {
+                _logOnRadio.IsChecked = true;
+            }
+            else
+            {
+                _logOffRadio.IsChecked = true;
+            }
+
             if (task.RecordEnabled)
             {
                 _recordOnRadio.IsChecked = true;
@@ -281,6 +311,9 @@ namespace DSH_Modbus采集工具.Ui
                 : AcquisitionTaskRules.DefaultPeriodSeconds;
 
         public string ExpressionText => _expressionBox.Text;
+
+        /// <summary>日志记录是否启用（在运行日志里记一行）。默认开。</summary>
+        public bool LogEnabledValue => _logOnRadio.IsChecked == true;
 
         /// <summary>数据记录是否启用</summary>
         public bool RecordEnabledValue => _recordOnRadio.IsChecked == true;
