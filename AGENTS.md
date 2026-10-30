@@ -476,7 +476,7 @@ public sealed class MyDialog : DialogWindow
 
 ⚠️ `MakeTextBox` **不写死宽度**：交给 `Place(..., stretch: true)` 随列宽拉伸，否则 150% DPI 下右边框会被裁掉。
 
-**七条容易踩的**：
+**八条容易踩的**：
 
 1. ⚠️ **样式取不到必须抛，不要静默用默认外观**。WPF 默认 ComboBox 模板把
    ToggleButton 画成**硬编码的浅色渐变、完全忽略 `Background`** —— 深色主题下
@@ -505,6 +505,14 @@ public sealed class MyDialog : DialogWindow
    于是几个单选按钮各自成组、**可以同时选中**。真机截图里就是两个蓝圈同亮，
    读取处读到第一个为真就停了 —— 表现为「切到触发档，但表达式框仍是灰的」。
    实测踩过一次，见 `AcquisitionTaskDialog`。
+8. ⚠️ **「行距对齐」= 行高固定，不是每行留一样的下边距**。`Place(..., margin)` 的 10 DIP
+   是靠 `Auto` 行高**叠加**在内容高度上的，于是行距 = 内容高 + 10：同屏有单选行（16）、
+   文本框行（30）、带按钮的路径行（32）时，实测行距变成 60/49/39/51/62/60 px（150% DPI），
+   肉眼就是「每行间距都不一样」。**正确做法**是给表单行统一的 `RowDefinition.Height`
+   （`AcquisitionTaskDialog` 用 40 = 该行最高的内容 32 + 呼吸），标签与控件都
+   `VerticalAlignment=Center`；此时 `Place` 的边距要传 `Thickness(0)`、
+   `AddLabel` 要传 `bottomMargin: 0`，否则那 10 又把内容顶偏。
+   错误行与按钮行仍留 `Auto`：错误行多数时候折叠，按钮行不该被撑到 40。
 
 ## 10. 任务速查
 

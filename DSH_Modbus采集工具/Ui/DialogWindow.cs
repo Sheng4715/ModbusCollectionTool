@@ -69,14 +69,22 @@ namespace DSH_Modbus采集工具.Ui
             return ShowDialog() == true;
         }
 
-        protected void AddLabel(Grid root, string text, int row, bool topAlign = false, double topMargin = 4)
+        /// <param name="bottomMargin">
+        /// 标签下边距。默认 10 配「Auto 行高 + 行内 10 下边距」的老写法；
+        /// 行高固定时传 0 —— 否则标签会被这 10 顶上去，比同行控件高半个边距。
+        /// </param>
+        protected void AddLabel(
+            Grid root, string text, int row, bool topAlign = false, double topMargin = 4,
+            double bottomMargin = 10)
         {
             var label = new TextBlock
             {
                 Text = text,
                 Style = RequireStyle("Dialog.Label"),
                 VerticalAlignment = topAlign ? VerticalAlignment.Top : VerticalAlignment.Center,
-                Margin = topAlign ? new Thickness(0, topMargin, 0, 10) : new Thickness(0, 0, 0, 10),
+                Margin = topAlign
+                    ? new Thickness(0, topMargin, 0, bottomMargin)
+                    : new Thickness(0, 0, 0, bottomMargin),
             };
 
             Grid.SetRow(label, row);

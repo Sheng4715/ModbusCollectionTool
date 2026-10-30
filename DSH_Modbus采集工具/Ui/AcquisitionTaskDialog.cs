@@ -26,6 +26,30 @@ namespace DSH_Modbus采集工具.Ui
             ("数据写入", AcquisitionTaskKind.Write),
         };
 
+        /// <summary>
+        /// 七个表单行（名称 / 类型 / 日志记录 / 数据记录 / 保存路径 / 执行方式 / 表达式）的**统一行高**。
+        /// <para>
+        /// ⚠️ 必须固定。原先用自动行高 + 每行 10 下边距，行距 = 内容高 + 10，于是
+        /// 文本框行 40、单选行 26、路径行（按钮 32）42 —— 实测 150% DPI 下
+        /// 行距是 60/49/39/51/62/60 px，肉眼看就是「每行间距都不一样」。
+        /// 对齐要看的是**行与行等距**，不是每块内容各留一样的缝。
+        /// </para>
+        /// <para>
+        /// 取 40 而不是更小：这一行里最高的内容就是 32 高的对话框按钮（保存路径行的「浏览…」），
+        /// 再留 4 上下的呼吸。单选行 16、下拉 30、文本框 30 都在这个壳里垂直居中。
+        /// </para>
+        /// </summary>
+        private const double FormRowHeight = 40;
+
+        /// <summary>固定行高的行数（七项表单）。</summary>
+        private const int FormRowCount = 7;
+
+        /// <summary>
+        /// 总行数：七个表单行 + 错误提示行 + 按钮行。
+        /// <para>后两行仍是自动高度 —— 错误行大多数时候是折叠的，按钮行不该被撑到 40。</para>
+        /// </summary>
+        private const int RowCount = FormRowCount + 2;
+
         private readonly Func<string, bool> _taskNameExists;
         private readonly Func<string, bool> _variableExists;
         private readonly Func<IReadOnlyList<CompletionCandidate>>? _completions;
@@ -61,20 +85,29 @@ namespace DSH_Modbus采集工具.Ui
             var root = new Grid { Margin = new Thickness(16) };
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            // 名称 / 类型 / 日志记录 / 数据记录 / 保存路径 / 执行方式 / 表达式 / 错误 / 按钮 = 9 行，
-            // 但单选与路径各自可能换行，留足 11 行余量
-            for (int i = 0; i < 11; i++)
+
+            // 七个表单行**固定行高 40**，标签与控件都垂直居中。
+            // ⚠️ 原来用自动行高 + 每行 10 下边距，于是行距 = 内容高 + 10：
+            // 文本框 30 → 40、单选行 16 → 26、路径行的按钮 32 → 42、下拉框 30 → 40。
+            // 实测（150% DPI）行距就是 60/49/39/51/62/60 px 这种参差 —— 而「对齐」
+            // 靠的恰恰是**行与行等距**，不是每块内容自己留一样的缝。
+            // 改成固定行高后，行距与内容高脱钩：单选行不再被压扁、路径行不再被撑高。
+            for (int i = 0; i < RowCount; i++)
             {
-                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                bool isFormRow = i < FormRowCount;
+                root.RowDefinitions.Add(new RowDefinition
+                {
+                    Height = isFormRow ? new GridLength(FormRowHeight) : GridLength.Auto,
+                });
             }
 
             int row = 0;
 
-            AddLabel(root, "任务名称", row);
+            AddLabel(root, "任务名称", row, bottomMargin: 0);
             _nameBox = MakeTextBox(task.Name);
-            Place(root, _nameBox, row++, new Thickness(0, 0, 0, 10), stretch: true);
+            Place(root, _nameBox, row++, new Thickness(0), stretch: true);
 
-            AddLabel(root, "任务类型", row);
+            AddLabel(root, "任务类型", row, bottomMargin: 0);
             _kindCombo = MakeCombo(160);
             foreach ((string text, AcquisitionTaskKind value) in Kinds)
             {
@@ -82,9 +115,9 @@ namespace DSH_Modbus采集工具.Ui
             }
 
             SelectKind(task.Kind);
-            Place(root, _kindCombo, row++, new Thickness(0, 0, 0, 10));
+            Place(root, _kindCombo, row++, new Thickness(0));
 
-            AddLabel(root, "日志记录", row);
+            AddLabel(root, "日志记录", row, bottomMargin: 0);
 
             // 与下面「数据记录」同一形态：两个单选，扫一眼就是二选一。
             // ⚠️ 两组单选的 GroupName 必须不同，否则会互相取消选中。
@@ -100,9 +133,9 @@ namespace DSH_Modbus采集工具.Ui
             _logOnRadio.Margin = new Thickness(20, 0, 0, 0);
             logLine.Children.Add(_logOnRadio);
 
-            Place(root, logLine, row++, new Thickness(0, 0, 0, 10), stretch: true);
+            Place(root, logLine, row++, new Thickness(0), stretch: true);
 
-            AddLabel(root, "数据记录", row);
+            AddLabel(root, "数据记录", row, bottomMargin: 0);
 
             // 「记录不记录」用两个单选而不是一个开关：与下面「执行方式」的形态一致，
             // 用户扫一眼就是一组二选一，不用先判断这个开关是「开」还是「关」。
@@ -118,10 +151,10 @@ namespace DSH_Modbus采集工具.Ui
             _recordOnRadio.Margin = new Thickness(20, 0, 0, 0);
             recordLine.Children.Add(_recordOnRadio);
 
-            Place(root, recordLine, row++, new Thickness(0, 0, 0, 10), stretch: true);
+            Place(root, recordLine, row++, new Thickness(0), stretch: true);
 
             // 路径单独一行：路径本身很长，和单选挤在一行会把路径框压得只剩几十像素
-            AddLabel(root, "保存路径", row);
+            AddLabel(root, "保存路径", row, bottomMargin: 0);
 
             var pathLine = new Grid();
             pathLine.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -162,9 +195,9 @@ namespace DSH_Modbus采集工具.Ui
             Grid.SetColumn(_browseButton, 1);
             pathLine.Children.Add(_browseButton);
 
-            Place(root, pathLine, row++, new Thickness(0, 0, 0, 10), stretch: true);
+            Place(root, pathLine, row++, new Thickness(0), stretch: true);
 
-            AddLabel(root, "执行方式", row);
+            AddLabel(root, "执行方式", row, bottomMargin: 0);
 
             // 周期秒数输入框**贴着周期单选框**放：需求样例里「周期（s）」的「(s)」本身就是
             // 告诉人这里要填时间，把输入框放到别处（比如另起一行）就得再补一句说明。
@@ -204,9 +237,9 @@ namespace DSH_Modbus采集工具.Ui
             _edgeRadio.Margin = new Thickness(20, 0, 0, 0);
             modeLine.Children.Add(_edgeRadio);
 
-            Place(root, modeLine, row++, new Thickness(0, 0, 0, 10), stretch: true);
+            Place(root, modeLine, row++, new Thickness(0), stretch: true);
 
-            AddLabel(root, "表达式", row);
+            AddLabel(root, "表达式", row, bottomMargin: 0);
             _expressionBox = MakeTextBox(task.Expression);
 
             if (_completions != null)
@@ -214,7 +247,7 @@ namespace DSH_Modbus采集工具.Ui
                 CompletionPopup.Attach(_expressionBox, _completions);
             }
 
-            Place(root, _expressionBox, row++, new Thickness(0, 0, 0, 10), stretch: true);
+            Place(root, _expressionBox, row++, new Thickness(0), stretch: true);
 
             // 只在「触发」下可填的两项：置灰而不是隐藏 —— 隐藏会让对话框在两档之间
             // 忽高忽低，用户点一下就得重新找控件在哪。
