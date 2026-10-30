@@ -1,7 +1,7 @@
 # Design.md — 技术设计文档
 
-> 当前基线：Modbus TCP 采集（读 + 写）+ IO 监控（X/Y 分段、xlsx 导入、分页、持久化、输入/输出异色）+ **数据类型系统（P6.4）** + **自由监控（P2.2，读取与 FC05/06/16 写入均已落地）** + 独立心跳 + 运行日志 + 异常断开自动重连 + 全局底栏 + **主题外观（P5.1）** + **日志落盘（P5.2）** + **项目信息（P5.3）** + 目标网卡记忆，均已实现并验证。
-> **未实现**：串口（Modbus RTU）；「数据管理」页**骨架已建**（标题 + 占位卡），P3.1 采集导出功能未实现。
+> 当前基线：Modbus TCP 采集（读 + 写）+ IO 监控（X/Y 分段、xlsx 导入、分页、持久化、输入/输出异色）+ **数据类型系统（P6.4）** + **自由监控（P2.2，读取与 FC05/06/16 写入均已落地）** + 独立心跳 + 运行日志 + 异常断开自动重连 + 全局底栏 + **主题外观（P5.1）** + **日志落盘（P5.2）** + **项目信息（P5.3）** + 目标网卡记忆 + **PLC 状态机（P1.2）** + **全局变量 / 系统变量（P3.3 / P3.5）** + **采集数据任务组与 CSV 输出（P3.1）**，均已实现并验证。
+> **未实现**：串口（Modbus RTU，P4.4）；MES 上报（P3.2）；「总览-生产数据」占位。
 > 需求与优先级见 `Brief.md`；代码位置见 `AGENTS.md`；**本文件只讲「为什么这么设计」**。
 
 ---
@@ -10,9 +10,9 @@
 
 | 目标 | 说明 |
 |------|------|
-| 只读采集 | 本期只读线圈/寄存器，不写入 |
+| 采集 + 可写 | 采集走 FC01–04；**写入仅限自由监控与写入任务**（FC05/06/16），IO 监控页的灯只读 |
 | 标准化地址 | 品牌差异全部收敛在数据表（`DriverRegistry`），协议层与 UI 不感知品牌 |
-| 零第三方依赖 | 不引 NuGet，Modbus 报文手写（MBAP 帧小、只读四功能码，自研成本低） |
+| 零第三方依赖 | 不引 NuGet，Modbus 报文手写（MBAP 帧小、功能码就那么几个，自研成本低） |
 | UI 不卡顿 | 采集在后台线程，UI 只接收结果回切 |
 | 故障可见 | 任何通讯异常 2–4 秒内反映到界面，绝不静默卡死 |
 
@@ -20,19 +20,21 @@
 
 ```
 ┌───────────────────────────────────────────────────────┐
-│  UI 层  MainWindow.xaml(.cs)                          │
-│  导航 / 设备连接表单 / IO 监控灯 / 总览日志 + 全局底栏  │
+│  UI 层  MainWindow.xaml(.cs) + 五个 partial            │
+│  导航 / 设备连接表单 / IO 监控灯 / 自由监控 / 全局变量  │
+│  / 采集任务 / 状态机画布 / 总览日志 / 设置 / 全局底栏   │
 └──────────────▲────────────────────────┬───────────────┘
                │ Dispatcher 回切        │ 连接/断开/周期设置
 ┌──────────────┴────────────────────────▼───────────────┐
-│  采集编排层  MainWindow 内 PollLoop + Heartbeat         │
+│  采集编排层  Polling/ModbusPoller（ICollectorHost 反向  │
+│  回调宿主）+ Drivers/ModbusHeartbeat                    │
 │    · 按周期轮询 · 独立心跳 · 取消令牌 · 异常→断线兜底   │
 │    · 异常断开→退避自动重连（1→2→4→8→10s）              │
 └──────────────▲────────────────────────┬───────────────┘
-               │ bool[] 线圈数据         │ 读请求
+               │ bool[] / ushort[]       │ 读、写请求
 ┌──────────────┴────────────────────────▼───────────────┐
 │  协议层  Drivers/ModbusTcpClient                       │
-│    MBAP 封帧/解析 · 0x01/0x02/0x03/0x04 · 2s 超时      │
+│    MBAP 封帧/解析 · 读 0x01–0x04 · 写 0x05/0x06/0x10    │
 │    请求串行(SemaphoreSlim) · tid 自增 · 异常码翻译      │
 └──────────────▲────────────────────────────────────────┘
                │ 地址(起始+数量)
@@ -48,10 +50,11 @@
 
 | 文件 | 职责 |
 |------|------|
-| `MainWindow.xaml` | 全部 UI：五页导航、IO 卡片（分段切换 / 导入 / 分页 / 空提示）、**自由监控卡片**（合并输入 + 类型/格式 + 当前值 + 删除，见 ADR-19）、**数据管理骨架页**（标题 + 占位卡）、采集周期下拉、**全局底栏**（叠放，见 ADR-16）；面板显隐由 `Nav_Checked` 控制 |
-| `MainWindow.xaml.cs` | 交互编排：连接状态机 + 任务隔离、轮询循环、心跳编排、**自动重连退避**、动态点位集与分页、xlsx 导入、**自由监控增删改与校验**、网卡扫描绑定、**底栏状态**、最大化溢出补偿；运行日志只剩三处薄包装（编排在 `Ui/DeviceLogPresenter.cs`） |
+| `MainWindow.xaml` | 全部 UI：五页导航、IO 卡片（分段切换 / 导入 / 分页 / 空提示）、**自由监控卡片**（合并输入 + 类型/格式 + 当前值 + 删除，见 ADR-19）、**数据管理页三分段**（采集任务组 / 全局变量 / 系统变量）、采集周期下拉、设置页三卡、**全局底栏**（叠放，见 ADR-16）；面板显隐由 `Nav_Checked` 控制 |
+| `MainWindow.*.cs`（五个 partial） | 主体育连接/心跳/导航/底栏/IO 分页导入；`Monitor` 自由监控、`GlobalVar` 全局变量、`Acquisition` 采集执行与写入下发、`MachineState` 状态机接线、`IoImport` IO 表导入 |
+| `MainWindow.xaml.cs`（主体） | 交互编排：连接状态机 + 任务隔离、轮询循环、心跳编排、**自动重连退避**、动态点位集与分页、网卡扫描绑定、**底栏状态**、最大化溢出补偿；运行日志只剩三处薄包装（编排在 `Ui/DeviceLogPresenter.cs`） |
 | `MonitorItem.cs` | 自由监控项：`DataPoint` 的界面包装（INPC + 行色 + ToolTip）与 `MonitorItemSet`（增删改、落盘、`AfterChange` 重解析） |
-| `XlsxIoTableReader.cs` | xlsx 解析：零依赖（`System.IO.Compression` + `XmlReader`），首个工作表 → sharedStrings/inlineStr → **地址形单元格 → 右邻为注释** |
+| `Io/XlsxIoTableReader.cs` | xlsx 解析：零依赖（`System.IO.Compression` + `XmlReader`），首个工作表 → sharedStrings/inlineStr → **地址形单元格 → 右邻为注释** |
 | `Modeling/DataTypes.cs` | 类型系统：`DataType` / `DisplayFormat` 枚举 + `DataTypeSpec`（位宽、占用寄存器数、可用格式、线圈/寄存器归属） |
 | `Modeling/ValueCodec.cs` | 原始寄存器 ↔ 类型值 的编解码与显示格式化；**字节顺序由入参传入**（不读全局状态） |
 | `Modeling/DataPoint.cs` | 监控项持久化模型 + `data-points.json` 读写（`DataPointStore`）+ 驱动校验解析（含类型/区段/越界检查） |
@@ -352,7 +355,7 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 | Modbus RTU 串口（P4.4，低） | 新建 `ModbusRtuClient`，复用 PDU 构造/解析（MBAP 之外加 CRC16）；`ConnectionTypeComboBox` 已能切换面板 | 协议层 PDU 与传输无关，可抽出共用 |
 | **数据类型系统（P6.4，中）** | 新增类型/格式模型（`DataType` + `DisplayFormat`），点位模型从「bool + 注释」扩展为「类型 + 位宽 + 格式 + 值」 | ✅ **已全部实现**（`Modeling/`：`DataTypes` + `ValueCodec` + `DataPoint`；字序/字符串序真机定案见 §10.3 / §10.4，独立工程 `ModelingCheck/` 100 项断言全通过）。自由监控的读取链路已接通（见下行） |
 | **寄存器读写（P6.4 前置）** | `ModbusTcpClient` 的 FC03/04**读**已就绪；需补 FC06/16**写**。点位模型需支持寄存器组（`DINT` 占 2 个、`STRING[n]` 占 ⌈n/2⌉ 个） | ✅ **读写 API 均已实现**（读 FC01/02/03/04 + 写 FC05/06/16）。⚠️ 两次字序/字符串实测由 XDPPro 写、应用侧只读，**未用应用侧写入**；该缺口已于 2026-10-16 用真机补验（独立裸客户端读回 **15/15** 项符合，见 §10.14） |
-| **采集导出 CSV（P3.1，低）** | 「数据管理」页骨架已建（`AcquisitionConfigPanel`：标题 + 占位卡）；轮询成功回调处挂录制旁路，支持周期/条件触发两种启动方式 | 页面骨架 ✅（2026-10-16）；采集导出待设计（触发细节见 Brief §6-4） |
+| **采集导出 CSV（P3.1，中）** | 「数据管理」页第一分段：任务组 / 数据项配置（`acquisition-tasks.json`）+ 执行引擎（周期式 / 上升沿触发）+ CSV 落盘（按任务组建文件夹、按日期建文件、列变即换 `_2.csv`）；常驻采集，不随页面可见性停 | ✅ **已实现**（模型 `Modeling/AcquisitionTask.cs` / `AcquisitionCsv.cs` / `AcquisitionTaskCheck.cs` / `AcquisitionWrite.cs`；验证见 §10.24 / §10.25 / §10.26 / §10.29 / §10.30 / §10.34） |
 | **MES 上报（P3.2，低）** | 在采集数据基础上做 HTTP + JSON 上报；可复用录制旁路的数据快照 | 待设计 |
 | **自由监控（P2.2，中）** | 「设备监控」页第三分段新增列表式监控区：**方案 2** 合并输入（`TrySplitName`）+ 类型反推（`AreasOfElement`）+ `data-points.json` 即时落盘；**写入需新增 FC05/06/16** | ✅ **已全部实现**（ADR-19 界面；读取 `MonitorItemSet.BuildReadPlan` 跟随可见性、按区分块；写入 FC05/06/16 见 §5.6 与 `AGENTS.md` §5.1） |
 | xlsx 导入 IO 表 | `ImportIoTableButton_Click` → `XlsxIoTableReader.Read` → 逐行按 `_currentDriver` 校验 → 整体替换 `_comments` → `RebuildIoPoints()` + 复位第 1 页 → `SaveComments()` | ✅（解析限制见 §8-8） |
@@ -416,16 +419,18 @@ D[n] = (char[2i] << 8) | char[2i+1]
 - **写入失败弹窗提示**（`MessageBox`）；**不写运行日志** —— 日志只记设备状态（ADR-14），写入失败属操作反馈而非连接状态
 - 持久化 `data-points.json`（`DataPointStore`）：**存储仍是 `Element` + `Index` 两个字段**，界面层负责拼接与拆分 → 既有配置文件无损、无需迁移
 
-**采集导出（P3.1）**
+**采集导出（P3.1）** —— **已实现**（任务组 / 数据项 / 执行方式 / CSV 落盘，见 §10.24 起）
 
-- 配置位置：「数据管理」页（`AcquisitionConfigPanel`，**骨架已建**：标题 + 「采集数据」占位卡；采集项勾选 / 触发方式 / CSV 输出待填）
-- 采集内容：用户勾选要录制的线圈/寄存器项
-- 启动方式：周期式 或 值条件触发 —— 触发细节待定（Brief §6-4）
-- 输出：CSV，列格式待定
+- 配置位置：「数据管理」页第一分段（`AcquisitionConfigPanel`），行包装 `AcquisitionTaskItem.cs`、对话框 `Ui/AcquisitionTaskDialog.cs`
+- 采集内容：任务组内任意数据项（读取任务的「读取变量」、写入任务的「来源变量 + 写入变量」），变量来源为**系统变量或全局变量**
+- 启动方式：**周期式**（每 N 秒）或**触发式**（表达式成立上升沿有效，表达式沿用状态机那一套 lexer/编译/存在性校验）
+- 配置错误拦截：组内有未填 / 查不到 / 类型不符的项、一个数据项都没有，或触发表达式解析不了 → 启用开关自动置灰关闭、整组不执行（判据在 `Modeling/AcquisitionTaskCheck.cs`，纯逻辑）
+- 输出：`{保存路径}\{任务组名称}\{yyyy-MM-dd}.csv`，UTF-8 带 BOM；增删 / 改名数据项时换到 `日期_2.csv`，避免表头与数据行列数不等
 
 ## 8. 已知限制与技术债
 
-1. **单文件 code-behind 仍偏大**：`MainWindow.xaml.cs` 与 `MainWindow.xaml` 都是两千行量级的单文件。P5 结构重构已抽出两块 —— `Polling/`（`ICollectorHost` + `ModbusPoller` + `PollSnapshot`）与 `Io/`（`IoPointSet` + `IoPager` + `IoTableImporter`）；剩余的连接生命周期、心跳编排、导航、**自由监控**、日志、底栏、最大化补偿仍混放。此后 P2.2 读取/写入、P5 设置页（主题 / 日志落盘 / 项目信息）与网卡记忆又陆续加回本文件，规模已回到重构前。
+1. **code-behind 已被 partial 拆分，但总量仍偏大**：P5 结构重构先抽出两块 —— `Polling/`（`ICollectorHost` + `ModbusPoller` + `PollSnapshot`）与 `Io/`（`IoPointSet` + `IoPager` + `IoTableImporter`）；**2026-10-29 又把原单文件按页面拆成五个 partial** —— `MainWindow.MachineState.cs`（状态机画布接线）/ `Acquisition`（采集执行）/ `GlobalVar`（全局变量）/ `Monitor`（自由监控）/ `IoImport`（IO 表导入），主体 `MainWindow.xaml.cs` 只留跨页面的连接生命周期、心跳、导航、底栏、日志、IO 分页。**拆 partial 只解决「改一个功能要滚 4600 行」，不减少总量** —— 各段的成员仍直接操作控件。
+   - `MainWindow.xaml` 仍是单文件大 XML（约三千行量级）：五页全部界面在同一个文件里，靠 `x:Name` 区分；要再小只能拆成 UserControl（目前唯一拆出的例外是状态机画布 `Ui/MachineStateView.xaml`）。
    - ⚠️ **不要在本文件写"现约 N 行"**：该数字曾同时出现 **2590 / 2190 / 2187** 三个互相矛盾的值，且全都与当时实际不符。它对任何判断都不起作用，写上去只会下次再骗人一次 —— 要量化规模就用「两千行量级」这类定性说法。
    - **自由监控是刻意留下的**：它有 12 处直接碰控件（行状态、聚焦、编辑态、ToolTip 去重），抽出去要么把控件带进新类、要么先造一层很薄的视图接口 —— 两者都比它现在的价值贵。原定的「先抽 `DeviceLog` 与底栏（无控件耦合），再考虑自由监控」**前两步已于 2026-10-16 走完**（底栏 = 批次 2、日志 = 批次 4），自由监控仍是唯一明确不抽的一块。
    - 已抽出的两块**刻意不引用 WPF**：`IoPager` 只做数值运算（`IoPagerPanel.Visibility` / `IoPageText.Text` / `IoEmptyHint.Visibility` 三处控件写入留在窗口），`IoTableImporter` 只返回数据（`MessageBox` 留在窗口）。这样它们可被 `ModelingCheck` 式的独立工程链接源码直接验证。
