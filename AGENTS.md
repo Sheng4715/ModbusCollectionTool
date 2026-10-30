@@ -155,7 +155,7 @@ Window
 
 | 导航项 | 面板 | 说明 |
 |---|---|---|
-| `OverviewNav` 总览 | `OverviewPanel` | 视图切换在**页头右侧下拉框**「当前视图」（`FormComboBox`）：「PLC状态机」（P1.2，见 `AGENTS-细节.md` §5.5）/「生产数据」（占位）；卡片内只有画布 + 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
+| `OverviewNav` 总览 | `OverviewPanel` | **无页标题**；视图切换是卡片**左上角的标签条**（Excel 功能区式，`ViewTabRadioButton`）：「PLC状态机」（P1.2，见 `AGENTS-细节.md` §5.5）/「生产数据」（占位）；卡片内只有画布 + 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | 连接表单 |
 | `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1，执行与 CSV 均已实现，见 `AGENTS-细节.md` §5.7）/「全局变量」（P3.3，见 `AGENTS-细节.md` §5.2）/「系统变量」（P3.5，只读清单，见 `AGENTS-细节.md` §5.3） |
@@ -185,13 +185,14 @@ Window
 | `NavRadioButton` | 导航项（灰底背板，选中加粗） |
 | `NavItemTemplate` | 导航项的共享 `ControlTemplate`：外距/内距/高度全从 Style 传，**大导航与（已删的）子导航曾共用它**。要做不同缩进改 Style，别复制模板 |
 | `IoSegmentRadioButton` | 分段控件（IO 页 X/Y/Z、数据管理三档、主题三档都用它） |
+| `ViewTabRadioButton` | **整页视图切换标签条**（Excel 功能区式，总览页用）：一排纯文字，选中项加粗 + 文字正下方一条色条（`Brush.ViewTab.Indicator`）。⚠️ **不要**拿它替 `IoSegmentRadioButton`，两者语义不同（见 `AGENTS-细节.md` §5.5） |
 | `ToggleSwitch` | **开关**（Windows 11 式 ToggleSwitch）：轨道 40×20、柄 12、内缩 4；关＝`Control.Background`、开＝`Accent.Fill`；**状态文字在轨道左侧**，由代码按 `IsChecked` 改写 `Content`（「开」/「关」） |
 | `IoItemTemplate` | IO 点位单元格（灯 10×10、注释 MinWidth 144；`Comment` 为 INPC） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
 | `IoPagerButton` | 分页箭头（26×26，首末页置灰） |
 | `IoCardButton` | **通用文字按钮**（浅灰实底胶囊／圆角 6／高 26／字号 12；底色走 `Brush.Control.Background`） |
 | `FormButton` | 设备连接页按钮，`BasedOn` `IoCardButton`，仅字号 14、内边距 14 |
-| `FormComboBox` | 设备连接页下拉框：**胶囊**（灰底 + 圆角 6 + chevron），字号 14／高 26。默认 `BorderThickness=0`（无框线）；模板已 `TemplateBinding` `BorderBrush`/`BorderThickness`，个别位置需要框线时自己设 1 即可（总览页「当前视图」就是） |
+| `FormComboBox` | 设备连接页下拉框：**胶囊**（灰底 + 圆角 6 + chevron），字号 14／高 26。默认 `BorderThickness=0`（无框线）；模板已 `TemplateBinding` `BorderBrush`/`BorderThickness`，个别位置需要框线时自己设 1 即可（原总览页那个「当前视图」下拉框曾用过，现已删除） |
 | `FormComboItem` | 表单下拉项容器（含 `ItemContainerStyle`，勿漏） |
 | `FormTextBox` | 设备连接页输入框：**框线**（白底 + `Brush.Input.Border` 圆角 4），字号 14／高 26 |
 | `MonitorInlineComboBox` / `MonitorTypeCombo` | 自由监控行内下拉框：胶囊，字号 12／高 22 |
@@ -221,7 +222,7 @@ Window
 
 ### 3.4 页面细节
 
-- **总览**：顶部仅「总览」标题（原状态卡已移除，连接状态统一在全局底栏）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。
+- **总览**：**无页标题**（2026-10-30 删）—— 视图标签条在卡片左上角，卡片直接顶到内容区上沿。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚
 - **设备监控**：见 `AGENTS-细节.md` §5 IO 监控 / `AGENTS-细节.md` §5.1 自由监控。
 - **设备连接**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 `AGENTS-细节.md` §8.1）。连接中锁定表单（`SetInputsEnabled`）——**例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍即生效，锁上反而挡住现场纠正（见 `AGENTS-细节.md` §8.1）。串口模式仅隐藏以太网面板，**功能未实现**。
 

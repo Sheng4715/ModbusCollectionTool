@@ -98,6 +98,11 @@
 
     <SolidColorBrush x:Key="Brush.ScrollBar.Thumb" Color="#C4C4C4"/>
 
+    <!-- 总览页视图标签条的选中色条：照 Excel 功能区那一排（实测 #0F703B）。
+         刻意**不用** Brush.Accent：那支是交互主色（按钮、聚焦），而这里模仿的是 Excel 的
+         功能区强调色，两者语义不同 —— 混用会让「能点的东西」和「当前在哪」长得一样。 -->
+    <SolidColorBrush x:Key="Brush.ViewTab.Indicator" Color="#0F703B"/>
+
     <!-- ================= 半透明叠加 =================
          压在**任意底色**上的微叠加（导航悬停/选中/按下、滚动条悬停）。
          浅色用黑、深色用白 —— 这正是它们必须走主题的原因。 -->

@@ -161,6 +161,49 @@
             </Setter>
         </Style>
 
+        <!-- 总览页视图切换：Excel 功能区式标签条（文字 + 选中项正下方的色条）。
+             做法照 Excel 的「文件 / 开始 / 插入 / 绘图」那一排：
+             **没有胶囊底、没有边框、没有下拉箭头** —— 未选中就是一行普通文字，
+             选中项靠「加粗 + 文字正下方一条色条」区分（参考图实测：文字色选中/未选中相同，
+             色条 #0F703B、高 3px、宽 39px ≈ 文字宽 40px）。
+
+             ⚠️ **色条宽度必须等于文字宽度**：故外框 Padding 的左右给 0、色条 Margin 左右也给 0
+             —— 任一处留了内边距，色条就会比文字宽出几个像素（实测宽 3px 就该修）。
+             点击热区靠外框的透明背景兜住，不受影响。
+
+             ⚠️ 与 IoSegmentRadioButton（灰底胶囊 + 白底浮起）是**两种切换语义**：那种用于
+             「同一页里的并列分段」，这种用于「整页视图切换」，不要互相替代。 -->
+        <Style x:Key="ViewTabRadioButton" TargetType="RadioButton">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="TabBd" Background="Transparent" CornerRadius="4" Padding="0,4">
+                            <StackPanel>
+                                <!-- 色条左右边界 = 文字左右边界：Margin 左右给 0（参考图 39 vs 40 px，多给 2 DIP 就宽出 3 px）。 -->
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <!-- 未选中也占位（Background=Transparent），否则切换时整行高度会跳一下 -->
+                                <Border x:Name="TabIndicator" Height="2" CornerRadius="1"
+                                        Margin="0,3,0,0" Background="Transparent"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="TabBd" Property="Background" Value="{DynamicResource Brush.Overlay.Subtle}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="TabIndicator" Property="Background" Value="{DynamicResource Brush.ViewTab.Indicator}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 开关（Windows 11 式 ToggleSwitch）
              轨道 40x20、柄 12、内缩 4（与 WinUI 的 40/20/12/4 一致）；
              轨道与柄同高同心，关＝Control.Background，开＝Accent.Fill（上面压白柄）。
@@ -1868,50 +1911,54 @@
                         </Grid.RowDefinitions>
 
                         <Grid Grid.Row="0">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>   <!-- 页标题 -->
-                                <RowDefinition Height="*"/>      <!-- 状态机 / 生产数据 -->
-                            </Grid.RowDefinitions>
 
-                            <!-- 页标题行：标题靠左，「当前视图」+ 下拉框靠右。
-                                 下拉框直接用 FormComboBox（与数据管理/设备连接页同一套：高 26、圆角 6、
-                                 灰底 Brush.Control.Background），不另造样式。 -->
-                            <Grid Grid.Row="0" Margin="0,10,0,10">
-                                <TextBlock Text="总览"
-                                           FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
-                                           FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
-                                           VerticalAlignment="Center"/>
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                    <!-- 字号与 FormComboBox 一致（14），否则「当前视图」会比右侧选项小一号 -->
-                                    <TextBlock Text="当前视图"
-                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Secondary}"
-                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <ComboBox x:Name="OverviewViewCombo"
-                                              Style="{StaticResource FormComboBox}"
-                                              Width="132"
-                                              BorderThickness="1"
-                                              BorderBrush="{DynamicResource Brush.Input.Border}"
-                                              SelectedIndex="0"
-                                              SelectionChanged="OverviewView_SelectionChanged">
-                                        <ComboBoxItem Content="PLC状态机"/>
-                                        <ComboBoxItem Content="生产数据"/>
-                                    </ComboBox>
-                                </StackPanel>
-                            </Grid>
+                            <!-- 状态机 / 生产数据：整块卡片，视图标签条在卡片**左上角**。
+                                 页头那个「总览」大标题已删（2026-10-30 用户定案）：
+                                 它下面紧跟一张满宽卡片，标题只是把卡片往下压了一截，
+                                 删掉后卡片直接顶到内容区上沿。
 
-                            <!-- PLC 状态机画布（P1.2）。画布本身是固定设计尺寸，由内部的 Viewbox 缩放到本卡片 -->
-                            <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
+                                 Excel 功能区式标签条（ViewTabRadioButton）：一排纯文字，
+                                 选中项加粗 + 文字正下方一条色条；没有胶囊底、没有边框、没有下拉箭头。 -->
+                            <Border Background="{DynamicResource Brush.Card.Background}"
                                     BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
-                                    CornerRadius="8" Padding="12">
-                                <!-- 视图切换已移到页头右侧的「当前视图」下拉框，卡片里只放内容。
-                                     画布与「规划中」占位叠在同一格，由下拉框切换可见性。 -->
+                                    CornerRadius="8" Padding="12,8,12,12">
                                 <Grid>
-                                    <ui:MachineStateView x:Name="MachineStateViewControl"/>
-                                    <TextBlock x:Name="ProductionDataHint"
-                                               Text="规划中"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
-                                               Visibility="Collapsed"/>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>   <!-- 视图标签条 -->
+                                        <RowDefinition Height="*"/>      <!-- 状态机 / 生产数据 -->
+                                    </Grid.RowDefinitions>
+
+                                    <!-- 标签条左对齐（Excel 页签也从左边起）+ 下方一条分隔线：
+                                         没有这条线，标签会紧贴画布上沿、看着像画布的一部分。 -->
+                                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                            <RadioButton x:Name="MachineViewTab"
+                                                         Content="PLC状态机"
+                                                         GroupName="OverviewView"
+                                                         Style="{StaticResource ViewTabRadioButton}"
+                                                         IsChecked="True"
+                                                         Checked="OverviewViewTab_Checked"/>
+                                            <RadioButton x:Name="ProductionViewTab"
+                                                         Content="生产数据"
+                                                         GroupName="OverviewView"
+                                                         Margin="28,0,0,0"
+                                                         Style="{StaticResource ViewTabRadioButton}"
+                                                         Checked="OverviewViewTab_Checked"/>
+                                        </StackPanel>
+                                        <Border Height="1" Margin="0,6,0,0"
+                                                Background="{DynamicResource Brush.Divider}"/>
+                                    </StackPanel>
+
+                                    <!-- 画布与「规划中」占位叠在同一格，由标签条切换可见性。
+                                         画布本身是固定设计尺寸，由内部的 Viewbox 缩放到本卡片。 -->
+                                    <Grid Grid.Row="1">
+                                        <ui:MachineStateView x:Name="MachineStateViewControl"/>
+                                        <TextBlock x:Name="ProductionDataHint"
+                                                   Text="规划中"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
+                                                   Visibility="Collapsed"/>
+                                    </Grid>
                                 </Grid>
                             </Border>
                         </Grid>
