@@ -163,8 +163,11 @@ namespace DSH_Modbus采集工具
             _acquisitionGlobals = needed;
         }
 
-        /// <summary>当前是否停在「PLC状态机」视图（页头标签条第一项）。</summary>
-        private bool IsMachineViewSelected => MachineViewTab?.IsChecked == true;
+        /// <summary>当前是否停在「PLC状态机」视图（页头下拉框第 0 项）。</summary>
+        private bool IsMachineViewSelected => OverviewViewCombo?.SelectedIndex == 0;
+
+        /// <summary>当前是否停在「数据采集」视图（页头下拉框第 2 项）。</summary>
+        private bool IsAcquisitionViewSelected => OverviewViewCombo?.SelectedIndex == 2;
 
         /// <summary>
         /// 状态机定时器启停：**总览页可见 且 停在「PLC状态机」视图** 才跑。
@@ -281,26 +284,30 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 总览页视图切换（PLC状态机 / 生产数据）。
+        /// 总览页视图切换（PLC状态机 / 生产数据 / 数据采集）。
         /// <para>
-        /// ⚠️ 初始化期间也会触发一次（XAML 里 <c>MachineViewTab</c> 的 <c>IsChecked="True"</c>）——
+        /// ⚠️ 初始化期间也会触发一次（XAML 里的 <c>SelectedIndex="0"</c>）——
         /// 那时 <c>MachineStateViewControl</c> 还没造出来，所以先判空直接返回；
-        /// 初始可见性由 XAML 默认值保证（画布可见、「规划中」折叠），与默认选中项一致。
+        /// 初始可见性由 XAML 默认值保证（画布可见、另两个视图折叠），与第 0 项一致。
         /// </para>
         /// <para>
-        /// ⚠️ 两个标签共用这一个处理器，靠 <see cref="IsMachineViewSelected"/> 判方向，
-        /// 而不是看 sender —— 切到「生产数据」时 sender 是那个标签，切回来时是另一个，
-        /// 分两个处理器写就会把同一段显隐逻辑抄两遍。
+        /// ⚠️ **三态**：早先只有两项，判据是「是不是状态机」（<c>!machineView</c> 就当生产数据）。
+        /// 加了第三项之后那种写法会把「数据采集」也当成生产数据、显示成「规划中」，
+        /// 所以这里必须按 <c>SelectedIndex</c> 逐项判，不能再取反。
         /// </para>
         /// </summary>
-        private void OverviewViewTab_Checked(object sender, RoutedEventArgs e)
+        private void OverviewView_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (MachineStateViewControl == null)
             {
                 return;
             }
 
-            bool machineView = IsMachineViewSelected;
+            int index = OverviewViewCombo?.SelectedIndex ?? 0;
+
+            bool machineView = index == 0;
+            bool productionView = index == 1;
+            bool acqView = index == 2;
 
             MachineStateViewControl.Visibility = machineView
                 ? Visibility.Visible
@@ -308,17 +315,33 @@ namespace DSH_Modbus采集工具
 
             if (ProductionDataHint != null)
             {
-                ProductionDataHint.Visibility = machineView
-                    ? Visibility.Collapsed
-                    : Visibility.Visible;
+                ProductionDataHint.Visibility = productionView
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
             }
 
+            if (AcquisitionDataView != null)
+            {
+                AcquisitionDataView.Visibility = acqView
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            }
+
+            // 两个定时器的起停都收在各自的 Sync 里，切换视图只负责把它们叫醒。
+            // 顺序：先把状态机求值/数据采集视图的内容准备好，再同步定时器 ——
+            // 否则定时器先跑，会对着还没建好的胶囊条空转一拍。
             SyncMachineTimer();
 
             if (machineView)
             {
                 RefreshMachineStates();
             }
+            else if (acqView)
+            {
+                RefreshAcqOverviewView();
+            }
+
+            SyncAcquisitionViewTimer();
         }
 
         /// <summary>

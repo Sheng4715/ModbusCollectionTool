@@ -161,49 +161,6 @@
             </Setter>
         </Style>
 
-        <!-- 总览页视图切换：Excel 功能区式标签条（文字 + 选中项正下方的色条）。
-             做法照 Excel 的「文件 / 开始 / 插入 / 绘图」那一排：
-             **没有胶囊底、没有边框、没有下拉箭头** —— 未选中就是一行普通文字，
-             选中项靠「加粗 + 文字正下方一条色条」区分（参考图实测：文字色选中/未选中相同，
-             色条 #0F703B、高 3px、宽 39px ≈ 文字宽 40px）。
-
-             ⚠️ **色条宽度必须等于文字宽度**：故外框 Padding 的左右给 0、色条 Margin 左右也给 0
-             —— 任一处留了内边距，色条就会比文字宽出几个像素（实测宽 3px 就该修）。
-             点击热区靠外框的透明背景兜住，不受影响。
-
-             ⚠️ 与 IoSegmentRadioButton（灰底胶囊 + 白底浮起）是**两种切换语义**：那种用于
-             「同一页里的并列分段」，这种用于「整页视图切换」，不要互相替代。 -->
-        <Style x:Key="ViewTabRadioButton" TargetType="RadioButton">
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Secondary}"/>
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="TabBd" Background="Transparent" CornerRadius="4" Padding="0,4">
-                            <StackPanel>
-                                <!-- 色条左右边界 = 文字左右边界：Margin 左右给 0（参考图 39 vs 40 px，多给 2 DIP 就宽出 3 px）。 -->
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                <!-- 未选中也占位（Background=Transparent），否则切换时整行高度会跳一下 -->
-                                <Border x:Name="TabIndicator" Height="2" CornerRadius="1"
-                                        Margin="0,3,0,0" Background="Transparent"/>
-                            </StackPanel>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="TabBd" Property="Background" Value="{DynamicResource Brush.Overlay.Subtle}"/>
-                            </Trigger>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="TabIndicator" Property="Background" Value="{DynamicResource Brush.ViewTab.Indicator}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
-                                <Setter Property="FontWeight" Value="SemiBold"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
         <!-- 开关（Windows 11 式 ToggleSwitch）
              轨道 40x20、柄 12、内缩 4（与 WinUI 的 40/20/12/4 一致）；
              轨道与柄同高同心，关＝Control.Background，开＝Accent.Fill（上面压白柄）。
@@ -1737,6 +1694,96 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <!-- ================= 总览「数据采集」视图（P1.4） =================
+
+             DataGrid 是本项目**唯一**用到它的地方：历史表格的列数是动态的（读 CSV 首行表头），
+             而且一天能到上万行 —— 本项目其余表格都是 ItemsControl，**没有任何虚拟化**，
+             那样的表塞上万行会直接卡死。内置 DataGrid 零依赖、自带行列虚拟化，
+             代价是要整套重画样式（默认外观是 Win7 白底蓝框，与 Fluent 风格完全不搭）。
+             下面这四个样式就是把它压回「表头 12 灰字 + 细横线 + 透明底」。 -->
+
+        <!-- 一级任务组胶囊：字号 13，比二级「实时/历史」的 12 大一档，用来区分层级 -->
+        <Style x:Key="AcqGroupChipRadioButton" TargetType="RadioButton"
+               BasedOn="{StaticResource IoSegmentRadioButton}">
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+
+        <Style x:Key="AcqHistoryColumnHeader" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="Padding" Value="8,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridColumnHeader">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{DynamicResource Brush.Divider}"
+                                BorderThickness="0,0,0,1"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="AcqHistoryCell" TargetType="DataGridCell">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <!-- 只读展示，不需要编辑态；Padding 左右 8 与表头对齐 -->
+                        <Border Background="{TemplateBinding Background}" Padding="8,0">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="AcqHistoryRowStyle" TargetType="DataGridRow">
+            <Setter Property="Background" Value="Transparent"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Overlay.Subtle}"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource Brush.Overlay.Medium}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="AcqHistoryDataGrid" TargetType="DataGrid">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="RowBackground" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource Brush.Divider}"/>
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="CanUserAddRows" Value="False"/>
+            <Setter Property="CanUserDeleteRows" Value="False"/>
+            <Setter Property="CanUserResizeRows" Value="False"/>
+            <Setter Property="CanUserReorderColumns" Value="False"/>
+            <Setter Property="CanUserSortColumns" Value="False"/>
+            <Setter Property="SelectionMode" Value="Extended"/>
+            <Setter Property="SelectionUnit" Value="FullRow"/>
+            <Setter Property="RowHeight" Value="28"/>
+            <Setter Property="ColumnHeaderHeight" Value="34"/>
+            <Setter Property="EnableRowVirtualization" Value="True"/>
+            <Setter Property="EnableColumnVirtualization" Value="True"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ColumnHeaderStyle" Value="{StaticResource AcqHistoryColumnHeader}"/>
+            <Setter Property="CellStyle" Value="{StaticResource AcqHistoryCell}"/>
+            <Setter Property="RowStyle" Value="{StaticResource AcqHistoryRowStyle}"/>
+        </Style>
+
         <!-- 日志卡「清空」按钮（文字版，沿用 IoPagerButton 的悬停/按下反馈） -->
         <Style x:Key="LogClearButton" TargetType="Button">
             <Setter Property="Height" Value="24"/>
@@ -1911,50 +1958,122 @@
                         </Grid.RowDefinitions>
 
                         <Grid Grid.Row="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>   <!-- 页标题 -->
+                                <RowDefinition Height="*"/>      <!-- 状态机 / 生产数据 -->
+                            </Grid.RowDefinitions>
 
-                            <!-- 状态机 / 生产数据：整块卡片，视图标签条在卡片**左上角**。
-                                 页头那个「总览」大标题已删（2026-10-30 用户定案）：
-                                 它下面紧跟一张满宽卡片，标题只是把卡片往下压了一截，
-                                 删掉后卡片直接顶到内容区上沿。
+                            <!-- 页标题行：标题靠左，「当前视图」+ 下拉框靠右。
+                                 下拉框直接用 FormComboBox（与数据管理/设备连接页同一套：高 26、圆角 6、
+                                 灰底 Brush.Control.Background），不另造样式。 -->
+                            <Grid Grid.Row="0" Margin="0,10,0,10">
+                                <TextBlock Text="总览"
+                                           FontFamily="Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI"
+                                           FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
+                                           VerticalAlignment="Center"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                    <!-- 字号与 FormComboBox 一致（14），否则「当前视图」会比右侧选项小一号 -->
+                                    <TextBlock Text="当前视图"
+                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Secondary}"
+                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <ComboBox x:Name="OverviewViewCombo"
+                                              Style="{StaticResource FormComboBox}"
+                                              Width="132"
+                                              BorderThickness="1"
+                                              BorderBrush="{DynamicResource Brush.Input.Border}"
+                                              SelectedIndex="0"
+                                              SelectionChanged="OverviewView_SelectionChanged">
+                                        <ComboBoxItem Content="PLC状态机"/>
+                                        <ComboBoxItem Content="生产数据"/>
+                                        <ComboBoxItem Content="数据采集"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </Grid>
 
-                                 Excel 功能区式标签条（ViewTabRadioButton）：一排纯文字，
-                                 选中项加粗 + 文字正下方一条色条；没有胶囊底、没有边框、没有下拉箭头。 -->
-                            <Border Background="{DynamicResource Brush.Card.Background}"
+                            <!-- PLC 状态机画布（P1.2）。画布本身是固定设计尺寸，由内部的 Viewbox 缩放到本卡片 -->
+                            <Border Grid.Row="1" Background="{DynamicResource Brush.Card.Background}"
                                     BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
-                                    CornerRadius="8" Padding="12,8,12,12">
+                                    CornerRadius="8" Padding="12">
+                                <!-- 视图切换已移到页头右侧的「当前视图」下拉框，卡片里只放内容。
+                                     画布与「规划中」占位叠在同一格，由下拉框切换可见性。 -->
                                 <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/>   <!-- 视图标签条 -->
-                                        <RowDefinition Height="*"/>      <!-- 状态机 / 生产数据 -->
-                                    </Grid.RowDefinitions>
+                                    <ui:MachineStateView x:Name="MachineStateViewControl"/>
+                                    <TextBlock x:Name="ProductionDataHint"
+                                               Text="规划中"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
+                                               Visibility="Collapsed"/>
 
-                                    <!-- 标签条左对齐（Excel 页签也从左边起）+ 下方一条分隔线：
-                                         没有这条线，标签会紧贴画布上沿、看着像画布的一部分。 -->
-                                    <StackPanel Grid.Row="0" Margin="0,0,0,8">
-                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                                            <RadioButton x:Name="MachineViewTab"
-                                                         Content="PLC状态机"
-                                                         GroupName="OverviewView"
-                                                         Style="{StaticResource ViewTabRadioButton}"
-                                                         IsChecked="True"
-                                                         Checked="OverviewViewTab_Checked"/>
-                                            <RadioButton x:Name="ProductionViewTab"
-                                                         Content="生产数据"
-                                                         GroupName="OverviewView"
-                                                         Margin="28,0,0,0"
-                                                         Style="{StaticResource ViewTabRadioButton}"
-                                                         Checked="OverviewViewTab_Checked"/>
-                                        </StackPanel>
-                                        <Border Height="1" Margin="0,6,0,0"
+                                    <!-- 数据采集视图（P1.4）：
+                                         任务组胶囊条 → 分隔线 → [实时数据][历史数据] + 文件名 → 内容。
+                                         三个视图叠在同一格里，由「当前视图」下拉框切换可见性。 -->
+                                    <Grid x:Name="AcquisitionDataView" Visibility="Collapsed">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>   <!-- 任务组胶囊条 -->
+                                            <RowDefinition Height="Auto"/>   <!-- 分隔线 -->
+                                            <RowDefinition Height="Auto"/>   <!-- 实时/历史 + 文件名 -->
+                                            <RowDefinition Height="*"/>      <!-- 内容 -->
+                                        </Grid.RowDefinitions>
+
+                                        <!-- 组多时横向滚动、不换行（保持单行高度稳定）。
+                                             ⚠️ 胶囊外观来自外层这圈灰底 Border（与设备监控页同一套：
+                                             Brush.Control.Background + 圆角 6 + 内缩 2），
+                                             IoSegmentRadioButton 自己背景是透明的，少了这层就只剩一行文字。 -->
+                                        <ScrollViewer x:Name="AcqOverviewChipScroller" Grid.Row="0"
+                                                      HorizontalScrollBarVisibility="Auto"
+                                                      VerticalScrollBarVisibility="Disabled">
+                                            <Border Background="{DynamicResource Brush.Control.Background}"
+                                                    CornerRadius="6" Padding="2"
+                                                    HorizontalAlignment="Left" VerticalAlignment="Center">
+                                                <StackPanel x:Name="AcqOverviewGroupChips" Orientation="Horizontal"/>
+                                            </Border>
+                                        </ScrollViewer>
+
+                                        <Border x:Name="AcqOverviewDivider" Grid.Row="1"
+                                                Height="1" Margin="0,8,0,8"
                                                 Background="{DynamicResource Brush.Divider}"/>
-                                    </StackPanel>
 
-                                    <!-- 画布与「规划中」占位叠在同一格，由标签条切换可见性。
-                                         画布本身是固定设计尺寸，由内部的 Viewbox 缩放到本卡片。 -->
-                                    <Grid Grid.Row="1">
-                                        <ui:MachineStateView x:Name="MachineStateViewControl"/>
-                                        <TextBlock x:Name="ProductionDataHint"
+                                        <Grid x:Name="AcqOverviewSubBar" Grid.Row="2" Margin="0,0,0,8">
+                                            <Border Background="{DynamicResource Brush.Control.Background}"
+                                                    CornerRadius="6" Padding="2"
+                                                    HorizontalAlignment="Left" VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <RadioButton x:Name="AcqLiveSegment" Content="实时数据"
+                                                                 GroupName="AcqOverviewSub" IsChecked="True"
+                                                                 Style="{StaticResource IoSegmentRadioButton}"
+                                                                 Checked="AcqSubView_Checked"/>
+                                                    <RadioButton x:Name="AcqHistorySegment" Content="历史数据"
+                                                                 GroupName="AcqOverviewSub"
+                                                                 Style="{StaticResource IoSegmentRadioButton}"
+                                                                 Checked="AcqSubView_Checked"/>
+                                                </StackPanel>
+                                            </Border>
+                                            <TextBlock x:Name="AcqHistoryFileText"
+                                                       HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                       FontSize="12" Foreground="{DynamicResource Brush.Text.Faint}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </Grid>
+
+                                        <!-- 实时数据：本期占位 -->
+                                        <TextBlock x:Name="AcqLiveHint" Grid.Row="3"
                                                    Text="规划中"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"/>
+
+                                        <!-- 历史数据：列随 CSV 表头动态生成 -->
+                                        <Grid x:Name="AcqHistoryPanel" Grid.Row="3" Visibility="Collapsed">
+                                            <DataGrid x:Name="AcqHistoryGrid"
+                                                      Style="{StaticResource AcqHistoryDataGrid}"/>
+                                            <TextBlock x:Name="AcqHistoryHint"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                                                       TextWrapping="Wrap" TextAlignment="Center"
+                                                       Visibility="Collapsed"/>
+                                        </Grid>
+
+                                        <!-- 一个任务组都没有：整块只留这句 -->
+                                        <TextBlock x:Name="AcqNoGroupHint" Grid.Row="3"
+                                                   Text="尚未添加任务组，请到数据管理页新增"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                                    FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
                                                    Visibility="Collapsed"/>

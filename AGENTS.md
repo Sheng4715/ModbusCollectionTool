@@ -10,7 +10,7 @@
 > 原因是本文件曾在 136 KB 时**超过工作区指令预算（65536 字节）而被整体丢弃**，规则一条都没进上下文。
 > **改到上述任一功能时，动手前先读 `AGENTS-细节.md` 的对应章节** —— 那里有成条的 ⚠️ 坑。
 >
-> 📏 **预算红线**：本文件当前约 **59 KB**，加上框架开销（约 365 B）后余量只有 **4.4 KB**。
+> 📏 **预算红线**：本文件当前约 **61 KB**，加上框架开销（约 365 B）后余量只剩 **2.8 KB**。
 > **新增内容前先算一下总字节**（`(Get-Item AGENTS.md).Length`）；超过 64 KB 就又会被静默丢弃。
 > 需要写长段落时放进 `AGENTS-细节.md`，本文件只留一句指向。
 
@@ -26,7 +26,7 @@ dotnet run --project DSH_Modbus采集工具
 
 - **构建前必须先结束进程**，否则 exe 被锁报 MSB3027
 - 窗口最小 1024×640（`MainWindow.xaml` 的 `MinWidth/MinHeight`），默认与最小一致
-- 用户习惯：**构建成功后自动启动应用**；改动完成后及时提交（中文提交信息）
+- 用户习惯：**构建成功后自动启动应用**；**不要自动提交**（2026-10-30 用户定案 —— 改完就停，等用户看过再决定是否提交）；**不做深色主题验证**（同批定案 —— 只验浅色，深色适配由主题键保证，不单独跑一遍切换）
 - **版本号与构建日期在 `DSH_Modbus采集工具.csproj`**：`<VersionPrefix>` 手改（提版本时改这一处），
   `VersionSuffix` 由构建配置决定（Debug 自动带 `-debug`）；`<WriteBuildDate>` 目标每次编译现取
   系统时间写入 `obj/.../BuildInfo.g.cs`。详见 `AGENTS-细节.md` §7.3
@@ -45,6 +45,7 @@ DSH_Modbus采集工具/
 ├── MainWindow.GlobalVar.cs     # partial：全局变量分段
 ├── MainWindow.Monitor.cs       # partial：自由监控分段
 ├── MainWindow.IoImport.cs      # partial：IO 表导入
+├── MainWindow.AcquisitionView.cs # partial：总览「数据采集」视图（2026-10-31，见 `AGENTS-细节.md` §5.8）
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
 ├── GlobalVarItem.cs            # 全局变量：GlobalVariable 的界面包装 + 集合（增删改/落盘）
 ├── AcquisitionTaskItem.cs      # 采集任务组/数据项的界面包装（列随类型变、配置错误态）
@@ -155,7 +156,7 @@ Window
 
 | 导航项 | 面板 | 说明 |
 |---|---|---|
-| `OverviewNav` 总览 | `OverviewPanel` | **无页标题**；视图切换是卡片**左上角的标签条**（Excel 功能区式，`ViewTabRadioButton`）：「PLC状态机」（P1.2，见 `AGENTS-细节.md` §5.5）/「生产数据」（占位）；卡片内只有画布 + 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
+| `OverviewNav` 总览 | `OverviewPanel` | 视图切换在**页头右侧下拉框**「当前视图」（`FormComboBox`），**三项**：`PLC状态机`（P1.2）/ `生产数据`（占位）/ `数据采集`（P1.4，见 `AGENTS-细节.md` §5.5 与 §5.8）；卡片内只有当前视图 + 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | 连接表单 |
 | `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1，执行与 CSV 均已实现，见 `AGENTS-细节.md` §5.7）/「全局变量」（P3.3，见 `AGENTS-细节.md` §5.2）/「系统变量」（P3.5，只读清单，见 `AGENTS-细节.md` §5.3） |
@@ -173,7 +174,7 @@ Window
 
 ### 3.3 关键样式（Window.Resources）
 
-> 全部定义在 `MainWindow.xaml` 的 `Window.Resources` 里（**43 个键**）。改外观先在这里找现成的；
+> 全部定义在 `MainWindow.xaml` 的 `Window.Resources` 里（**48 个键**）。改外观先在这里找现成的；
 > 下表只列**会复用、或踩过坑**的那些，其余是某一行专用的模板（`*ItemTemplate`）。
 
 **先认名字前缀**：`Io*` = IO 页/分页、`Form*` = 设备连接页表单、`Monitor*` = 自由监控行内、
@@ -185,14 +186,13 @@ Window
 | `NavRadioButton` | 导航项（灰底背板，选中加粗） |
 | `NavItemTemplate` | 导航项的共享 `ControlTemplate`：外距/内距/高度全从 Style 传，**大导航与（已删的）子导航曾共用它**。要做不同缩进改 Style，别复制模板 |
 | `IoSegmentRadioButton` | 分段控件（IO 页 X/Y/Z、数据管理三档、主题三档都用它） |
-| `ViewTabRadioButton` | **整页视图切换标签条**（Excel 功能区式，总览页用）：一排纯文字，选中项加粗 + 文字正下方一条色条（`Brush.ViewTab.Indicator`）。⚠️ **不要**拿它替 `IoSegmentRadioButton`，两者语义不同（见 `AGENTS-细节.md` §5.5） |
 | `ToggleSwitch` | **开关**（Windows 11 式 ToggleSwitch）：轨道 40×20、柄 12、内缩 4；关＝`Control.Background`、开＝`Accent.Fill`；**状态文字在轨道左侧**，由代码按 `IsChecked` 改写 `Content`（「开」/「关」） |
 | `IoItemTemplate` | IO 点位单元格（灯 10×10、注释 MinWidth 144；`Comment` 为 INPC） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
 | `IoPagerButton` | 分页箭头（26×26，首末页置灰） |
 | `IoCardButton` | **通用文字按钮**（浅灰实底胶囊／圆角 6／高 26／字号 12；底色走 `Brush.Control.Background`） |
 | `FormButton` | 设备连接页按钮，`BasedOn` `IoCardButton`，仅字号 14、内边距 14 |
-| `FormComboBox` | 设备连接页下拉框：**胶囊**（灰底 + 圆角 6 + chevron），字号 14／高 26。默认 `BorderThickness=0`（无框线）；模板已 `TemplateBinding` `BorderBrush`/`BorderThickness`，个别位置需要框线时自己设 1 即可（原总览页那个「当前视图」下拉框曾用过，现已删除） |
+| `FormComboBox` | 设备连接页下拉框：**胶囊**（灰底 + 圆角 6 + chevron），字号 14／高 26。默认 `BorderThickness=0`（无框线）；模板已 `TemplateBinding` `BorderBrush`/`BorderThickness`，个别位置需要框线时自己设 1 即可（总览页「当前视图」就是） |
 | `FormComboItem` | 表单下拉项容器（含 `ItemContainerStyle`，勿漏） |
 | `FormTextBox` | 设备连接页输入框：**框线**（白底 + `Brush.Input.Border` 圆角 4），字号 14／高 26 |
 | `MonitorInlineComboBox` / `MonitorTypeCombo` | 自由监控行内下拉框：胶囊，字号 12／高 22 |
@@ -222,7 +222,7 @@ Window
 
 ### 3.4 页面细节
 
-- **总览**：**无页标题**（2026-10-30 删）—— 视图标签条在卡片左上角，卡片直接顶到内容区上沿。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚
+- **总览**：顶部「总览」标题 + 右侧「当前视图」下拉框（三项，见 §3.1）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。`数据采集` 视图是卡片内第二层（任务组胶囊条 / 分隔线 / 实时-历史 / 表格），见 `AGENTS-细节.md` §5.8
 - **设备监控**：见 `AGENTS-细节.md` §5 IO 监控 / `AGENTS-细节.md` §5.1 自由监控。
 - **设备连接**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 `AGENTS-细节.md` §8.1）。连接中锁定表单（`SetInputsEnabled`）——**例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍即生效，锁上反而挡住现场纠正（见 `AGENTS-细节.md` §8.1）。串口模式仅隐藏以太网面板，**功能未实现**。
 
@@ -327,7 +327,7 @@ Window
 
 | 区块 | 关键成员 |
 |---|---|
-| **处理器在哪个 partial** | `MainWindow.xaml.cs`＝连接/心跳/导航/底栏/IO 分页·导入·`SetInputsEnabled`/`AppendDeviceLog`/`SetStatus`/`ScanNetworkAdapters`；`MainWindow.Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`MainWindow.GlobalVar.cs`＝`GlobalVar*`·`RefreshMachineGlobals`；`MainWindow.Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`MainWindow.MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`MainWindow.IoImport.cs`＝IO 表导入 |
+| **处理器在哪个 partial** | `MainWindow.xaml.cs`＝连接/心跳/导航/底栏/IO 分页·导入·`SetInputsEnabled`/`AppendDeviceLog`/`SetStatus`/`ScanNetworkAdapters`；`MainWindow.Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`MainWindow.GlobalVar.cs`＝`GlobalVar*`·`RefreshMachineGlobals`；`MainWindow.Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`MainWindow.MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`MainWindow.IoImport.cs`＝IO 表导入；`MainWindow.AcquisitionView.cs`＝总览「数据采集」视图（胶囊条 / 历史表格 / 1 秒增量刷新） |
 | 连接状态机 | `ConnectButton_Click`（表单校验 + 按钮三态）/ `TryConnectAsync` / `Disconnect()` / `Disconnect(status,color)` / `SetInputsEnabled`；**身份与生命周期在 `Polling/ConnectionSession.cs`**（`IsConnecting` / `IsCurrent` / `MarkConnected` / `ReleaseClient` / `ForgetTarget` / 重连计数）+ `RunConnectionTasksAsync` / `IsCurrentConnection` |
 | 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect`（**循环留在窗口**，逐秒刷状态栏/锁表单是界面驱动）；目标快照 `ReconnectTarget` 与退避表 `ReconnectPolicy` 在 `Polling/` |
 | 轮询（入口在本类，实现在 `Polling/`） | `_poller.PollLoopAsync` → `Polling/ModbusPoller.cs`（`PollOnceAsync` 按地址区分块 + 2000 点切窗 / `PollFreeMonitorAsync` 自由监控，按区选 FC01/03/04） |
@@ -577,4 +577,5 @@ public sealed class MyDialog : DialogWindow
 - git 仓库（分支 `main`），`.gitignore` 排除 `bin/ obj/ .vs/ *.user`
 - 身份为仓库级配置（`G.Sheng`）
 - **提交信息用中文**；提交前先 `git diff` 确认范围，**不要整文件盲加**（会把别人的 WIP 一起带走）
+- **不要自动提交**（2026-10-30 用户定案）：改完就停，等用户看过再决定是否提交。
 - **提交前的验证只跑两样（2026-10-29 用户定案）**：`dotnet build DSH_Modbus采集工具.sln` + `.tmp/ExpressionCheck`（跑 exe，不用 `dotnet run`）。其余断言套件不再全量复跑，详见 §2 末尾的同名说明。

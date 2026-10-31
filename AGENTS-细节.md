@@ -273,42 +273,38 @@
 
 ### 5.5 PLC 状态机（P1.2，总览页第一分段）
 
-总览页**没有页标题**，视图切换是**卡片左上角的标签条**（Excel 功能区式），卡片里放内容：
+视图切换是**页头右侧的下拉框**，卡片里只放内容：
 
 ```
+总览                                    当前视图 [PLC状态机 ▾]
 ┌ 卡片 ──────────────────────────────────────────┐
-│ PLC状态机  生产数据                             │
-│ ━━━━━━━                                        │
-│ ─────────────────────────────────────────────  │
 │                                                 │
 │              画布 / 规划中                       │
 └────────────────────────────────────────────────┘
 ```
 
-- **「总览」大标题已删**（2026-10-30 用户定案）：它下面就是一张满宽卡片，标题只是把卡片
-  往下压了一截，删掉后卡片直接顶到内容区上沿。**其余四页的标题不动**。
-- 标签条用 `ViewTabRadioButton`（`MainWindow.xaml` 的 `Window.Resources`）：一排纯文字，
-  选中项**加粗 + 文字正下方一条色条**，**没有胶囊底、没有边框、没有下拉箭头**。
-  - 尺寸照参考图实测：色条 `#0F703B`（浅色）/ `#43B77E`（深色，键 `Brush.ViewTab.Indicator`）、
-    高 2 DIP、宽 ≈ 文字宽（39 vs 40 px）。
-  - ⚠️ **色条必须与文字等宽**：外框 `Padding` 左右给 0、色条 `Margin` 左右也给 0。
-    任一处留内边距，色条就比文字宽出几个像素（实测宽 3 px 就该修）。
-  - ⚠️ 刻意**不复用** `IoSegmentRadioButton`（灰底胶囊 + 白底浮起）：那是「同一页里的并列分段」，
-    这个是「整页视图切换」，两套语义混用会让人分不清「点它是换页还是换筛选」。
-- 标签用 `GroupName="OverviewView"` **自动互斥**，不必在代码里手工取消另一个的选中。
+- 页头是两栏 `Grid`：左「总览」标题、右 `StackPanel`（右对齐）里放
+  「当前视图」标签 + `OverviewViewCombo`。标签字号 **14**，必须与 `FormComboBox` 的
+  `FontSize` 一致 —— 早先写 13，比右侧选项小一号，一眼就能看出来。
+- 下拉框直接用 `FormComboBox`（数据管理 / 设备连接页同一套：高 26、圆角 6、灰底）。
+  **不要**为它另造样式，否则以后调外观会各走各的。
+  - 总览页这一个额外加了 `BorderThickness="1"` + `BorderBrush="{DynamicResource Brush.Input.Border}"`，
+    因为它悬在页头空白处、没有卡片衬底，不加框线看不出来是个控件。
+  - ⚠️ `FormComboBox` 的模板原本**完全忽略** `BorderBrush`/`BorderThickness`，写上去没效果。
+    现已改成 `TemplateBinding`，并在 Style 里补 `BorderThickness=0` 作为默认值 ——
+    不补这一条，其余 8 个下拉框会跟着一起长出框线。
 - 「生产数据」目前只有一句「规划中」占位；`ProductionDataHint` 与画布叠在同一个格子里，
-  由 `OverviewViewTab_Checked` 切换两者可见性（两个标签共用这一个处理器，
-  靠 `IsMachineViewSelected` 判方向，而不是看 sender）。
-- ⚠️ 初始化顺序：XAML 里 `MachineViewTab` 的 `IsChecked="True"` 会在 `InitializeComponent`
-  期间就触发 `Checked`，那时 `MachineStateViewControl` 还没造出来，处理器必须**先判空返回**；
-  初始可见性由 XAML 默认值保证（画布可见、「规划中」折叠），与默认选中项一致。
+  由 `OverviewView_SelectionChanged` 切换两者可见性。
+- ⚠️ 初始化顺序：XAML 里的 `SelectedIndex="0"` 会在 `InitializeComponent` 期间就触发一次
+  `SelectionChanged`，那时 `MachineStateViewControl` 还没造出来，处理器必须**先判空返回**；
+  初始可见性由 XAML 默认值保证（画布可见、「规划中」折叠），与第 0 项一致。
 - 卡片下方 1/4 固定给「运行日志」卡片（`Grid.Row="1"`），
-  日志卡片带 `Margin="0,6,0,0"` —— 不留缝的话两张卡片各自的 1 DIP 边框会叠成一条 2.67 DIP 的粗线。
+  日志卡片带 `Margin="0,4,0,0"` —— 不留缝的话两张卡片各自的 1 DIP 边框会叠成一条 2.67 DIP 的粗线。
 
 > **历史（别重复踩）**：2026-10-24 这条分段换过好几版 —— 卡片内横排胶囊 → 卡片左侧竖排 +
 > 大导航同款样式（`cafa332` → `96f8fd4` → `92cfbae`）→ 导航挪到卡片外 + 竖分隔线
-> + 两张卡片对齐（`e859f86`）→ 还原成横排胶囊（`71bba37`）→ 页头下拉框 → **卡片左上角标签条**。
-> 当前形态是 2026-10-30 用户给的 Excel 功能区参考图（最初实现成页头右对齐，用户要求改成卡片左上角）。
+> + 两张卡片对齐（`e859f86`）→ 还原成横排胶囊（`71bba37`）→ 现在的页头下拉框。
+> 用户最终选定下拉框版，`SubNavRadioButton` 样式已删（`NavItemTemplate` 保留，大导航仍在用）。
 > 若日后又要竖排，去 `e859f86` 取回；那条路的两个坑：**列定义必须提到外层网格**
 > 才能让两张卡片真正对齐（不能靠 `Margin` 凑），**分隔线要 `RowSpan="2"`**
 > 否则会在日志卡片处断掉。
@@ -682,6 +678,66 @@
   ② `AcquisitionWrite.TryBuild` 兜底拒写（给旧数据 / 手改 json 用）。
   行内也标：`AcquisitionTaskItem.HasVariableError` 与 `VariableHint` 都会报「属于只读区（输入元件）」。
   ⚠️ 判定只有 `GlobalVariableStore.IsReadOnlyElement` **一处来源**，写入侧只管读 `IsReadOnly` 标志
+
+### 5.8 总览「数据采集」视图（P1.4，2026-10-31）
+
+总览页「当前视图」下拉框的**第三项**。卡片内自成两层：
+
+```
+[心跳] [任务组2] [任务组N…]         ← 一级：任务组胶囊（字号 13，可横向滚动）
+────────────────────────────────
+[实时数据] [历史数据]      2026-10-31.csv   ← 二级（字号 12）+ 右侧当前文件名
+┌──────────────────────────────────────┐
+│ 时间   任务类型   压力    …（列随表头变） │   ← 历史数据：DataGrid，1 秒增量刷新
+└──────────────────────────────────────┘
+```
+
+代码全在 `MainWindow.AcquisitionView.cs`（新 partial），CSV 解析在
+`Modeling/AcquisitionCsv.cs` 的 `ParseLine` / `FindLatestRecordFile`（纯逻辑，可离线断言）。
+
+**⚠️ 七条容易踩的**：
+
+1. **下拉框从两态变三态**：原来 `OverviewView_SelectionChanged` 只判
+   `IsMachineViewSelected`，非状态机就当「生产数据」。加第三项后这么写会让「数据采集」
+   显示成「规划中」。现在按 `OverviewViewCombo.SelectedIndex` **逐项判**，
+   别再取反。新视图的判据是 `IsAcquisitionViewSelected`（索引 2）。
+2. **`DataGrid` 是本项目唯一的例外**，其余表格都是 `ItemsControl + DataTemplate`、
+   **没有任何虚拟化**。历史表格列数是运行时的（读 CSV 首行表头）、一天能到上万行，
+   用 ItemsControl 会直接卡死，所以这里用内置 `DataGrid`（零依赖、自带行列虚拟化）。
+   代价是必须整套重画样式（`AcqHistoryDataGrid` / `AcqHistoryColumnHeader` /
+   `AcqHistoryCell` / `AcqHistoryRowStyle`），否则是 Win7 白底蓝框的默认外观。
+3. **⚠️ 滚动补偿不能乘行高**：`DataGrid` 启用虚拟化后内部 `ScrollViewer` 是
+   **按条滚动**（`CanContentScroll=True`），`VerticalOffset` 的单位是**行数**不是像素。
+   曾按「插入行数 × 行高(28)」补偿，实测视图直接往下甩了约 **57 行**。
+   正确做法：插入前记下视口顶部那一行（`CanContentScroll` 时索引 = `VerticalOffset`），
+   插完 `ScrollToVerticalOffset(该行新索引)` 把它滚回顶部。像素滚动时才用行高乘。
+4. **末尾半行不能吃**：采集侧正在往同一个文件追加，读到半行是常态。
+   只消费到**最后一个 `\n` 为止**的字节，把 `consumed` 游标停在行边界上；
+   把半行也解析了会多出一行垃圾，而且游标停在行中间，下一拍接着读就全错位。
+5. **UTF-8 BOM 要跳过**：写盘侧带 BOM（Excel 双击中文不乱码），
+   `offset == 0` 时若不跳 3 个字节，首列表头会变成 `\uFEFF时间`，与后面读到的表头对不上。
+6. **刷新要有三档**：① 长度没变 → 整轮跳过（连文件都不读）；
+   ② 文件换了（跨天 / 表头变出 `_2.csv`）→ 整表重载并重建列；
+   ③ 同一文件 → 只解析新增字节、新行插到顶部。**先比 `FileInfo.Length`**，
+   否则每拍都在读文件、白烧磁盘。
+   - 定时器只在「总览页 + 数据采集视图 + 历史数据页签」三者同时成立时跑，
+     切走立刻 `Stop()`；数据采集视图也不是状态机时的那条 `SyncMachineTimer`，
+     两条互不影响（同时只可能跑一条）。
+   - 连续读取失败只在**首次**显示红字（`_acqHistoryErrorShown`），恢复后清掉 ——
+     否则文件被 Excel 独占时每秒刷一条错误。
+7. **⚠️ 胶囊外观靠外层灰底 `Border`，不在 `IoSegmentRadioButton` 里**：
+   那个样式的模板背景是 `Transparent`，选中态才给 `Brush.Control.Selected`（白）。
+   「灰底轨道 + 白色浮起」的观感来自外面这圈容器：
+   `Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"`。
+   漏掉它两排页签就退化成纯文字（首版就是这样，被用户一眼看出「没有胶囊样式」）。
+   一级胶囊条与二级页签都要各自套一层；轨道内各项**不加间距**，与设备监控页一致。
+
+**其它口径**：行数上限 `AcqHistoryMaxRows = 500`（倒序，最新在最上）；
+列从文件首行**动态生成**，`Width=Auto` + `MinWidth=80`，列多时横向滚动；
+时间列就是文件里的 `HH:mm:ss`，日期靠标题的文件名承担；
+任务组胶囊列**全部**组（读 + 写），禁用的名称后加「（停用）」；
+0 个组时二级页签与表格整块收起，只留「尚未添加任务组，请到数据管理页新增」；
+空/出错时把 `DataGrid` 也收起 —— 没有列时它仍画一条表头下边框，悬在提示文字上方像条野线。
 
 ## 6. 心跳与连接生命周期
 

@@ -79,10 +79,6 @@
 
     <SolidColorBrush x:Key="Brush.ScrollBar.Thumb" Color="#555555"/>
 
-    <!-- 视图标签条的选中色条：浅色是 Excel 的 #0F703B，深色底上必须提亮，
-         否则那条 2px 的线在 #1E1E1E / #2B2B2B 上几乎看不见（同 IO 灯色的处境）。 -->
-    <SolidColorBrush x:Key="Brush.ViewTab.Indicator" Color="#43B77E"/>
-
     <!-- ================= 半透明叠加（深色压白） ================= -->
     <SolidColorBrush x:Key="Brush.Overlay.Subtle" Color="#14FFFFFF"/>
     <SolidColorBrush x:Key="Brush.Overlay.Medium" Color="#1FFFFFFF"/>

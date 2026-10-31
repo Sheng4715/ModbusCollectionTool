@@ -635,6 +635,9 @@ namespace DSH_Modbus采集工具
             // 否则停在总览页也不刷新（整张图一直是灰的）。
             _overviewPageActive = OverviewNav?.IsChecked == true;
             SyncMachineTimer();
+
+            // 数据采集视图的 1 秒刷新：只有停在「总览 + 数据采集 + 历史数据」时才跑
+            SyncAcquisitionViewTimer();
         }
 
         private void Nav_Checked(object sender, RoutedEventArgs e)
@@ -646,6 +649,9 @@ namespace DSH_Modbus采集工具
             // 状态机只在总览页可见时求值（离开就停，别白白每 50ms 算一遍）
             _overviewPageActive = ReferenceEquals(sender, OverviewNav);
             SyncMachineTimer();
+
+            // 数据采集视图的 1 秒刷新：只有停在「总览 + 数据采集 + 历史数据」时才跑
+            SyncAcquisitionViewTimer();
 
             if (OverviewPanel != null)
             {

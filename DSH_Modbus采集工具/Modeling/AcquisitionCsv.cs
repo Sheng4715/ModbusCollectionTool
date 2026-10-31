@@ -367,5 +367,118 @@ namespace DSH_Modbus采集工具.Modeling
 
             return "\"" + text.Replace("\"", "\"\"") + "\"";
         }
+
+        // ================= 读取（总览页「数据采集」视图的历史表格） =================
+
+        /// <summary>
+        /// 把一行 CSV 文本拆回字段，是 <see cref="FormatLine"/> 的逆运算。
+        /// <para>
+        /// ⚠️ 必须处理**引号内的逗号**：变量值里出现一个逗号（STRING 注释、带千分位的数）
+        /// 就会把整行错位，而错得很隐蔽 —— Excel 打开只是列对不上、不报错。
+        /// 所以这里不能用 <c>Split(',')</c>。
+        /// </para>
+        /// </summary>
+        public static List<string> ParseLine(string? line)
+        {
+            var fields = new List<string>();
+            if (line == null)
+            {
+                fields.Add(string.Empty);
+                return fields;
+            }
+
+            var sb = new StringBuilder();
+            bool inQuotes = false;
+
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+
+                if (inQuotes)
+                {
+                    if (c == '"')
+                    {
+                        // 连续两个引号 = 一个字面引号；单个引号 = 引号段结束
+                        if (i + 1 < line.Length && line[i + 1] == '"')
+                        {
+                            sb.Append('"');
+                            i++;
+                        }
+                        else
+                        {
+                            inQuotes = false;
+                        }
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                }
+                else if (c == '"')
+                {
+                    inQuotes = true;
+                }
+                else if (c == ',')
+                {
+                    fields.Add(sb.ToString());
+                    sb.Clear();
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+
+            fields.Add(sb.ToString());
+            return fields;
+        }
+
+        /// <summary>
+        /// 该任务组在 <paramref name="now"/> 当天**序号最大**的记录文件；没有就 <c>null</c>。
+        /// <para>
+        /// 与写入侧的 <see cref="ResolveFilePath"/> 刻意不同：那边要拿**当前表头**去比对、
+        /// 决定续写还是开新文件；这边只是「把最新那份拿出来看」，
+        /// 表头变了本来就会出现 <c>_2.csv</c> 且序号更大 —— 直接取最大序号即可，
+        /// 不必（也不该）因为表头对不上就退回旧文件。
+        /// </para>
+        /// </summary>
+        public static string? FindLatestRecordFile(AcquisitionTask? task, DateTime now)
+        {
+            if (task == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                string folder = AcquisitionTaskRules.ResolveRecordDirectory(task);
+                if (!Directory.Exists(folder))
+                {
+                    return null;
+                }
+
+                string stem = AcquisitionTaskRules.DateStem(now);
+                string? latest = null;
+                int latestIndex = 0;
+
+                foreach (string file in Directory.EnumerateFiles(
+                             folder, stem + "*" + AcquisitionTaskRules.RecordExtension))
+                {
+                    int index = AcquisitionTaskRules.ParseRecordFileIndex(stem, file);
+                    if (index > latestIndex)
+                    {
+                        latestIndex = index;
+                        latest = file;
+                    }
+                }
+
+                return latest;
+            }
+            catch
+            {
+                // 目录读不了就当没有：视图显示空状态，比抛异常砸到 UI 线程好
+                return null;
+            }
+        }
     }
 }
