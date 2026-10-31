@@ -82,19 +82,14 @@ namespace DSH_Modbus采集工具
                 ClearAcquisitionTasksButton.IsEnabled = n > 0;
             }
 
-            if (AcquisitionTaskCountText != null)
-            {
-                AcquisitionTaskCountText.Text = n == 0 ? string.Empty : $"共 {n} 组";
-            }
-
             // 任务组增删后要重算「哪些变量需要常驻采集」—— 漏掉这里的话，
             // 新加的组要等到下次改表达式才真正开始采
             RefreshAcquisitionGlobals();
 
-            // 总览页「数据采集」视图的胶囊条也按当前配置重画（改名/停用/增删即时反映）
+            // 总览页「数据采集」视图的任务组下拉框也按当前配置重填（改名/停用/增删即时反映）
             if (AcquisitionDataView != null && AcquisitionDataView.Visibility == Visibility.Visible)
             {
-                RefreshAcqGroupChips();
+                RefreshAcqGroupCombo();
             }
         }
 

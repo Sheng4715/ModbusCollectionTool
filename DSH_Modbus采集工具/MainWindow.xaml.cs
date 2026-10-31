@@ -444,7 +444,6 @@ namespace DSH_Modbus采集工具
             // 系统变量（P3.5）：清单写死在 Modeling/SystemVariable.cs —— 没有加载、
             // 没有保存、也没有增删，绑定一次就完事（与两个可编辑表格的区别正在于此）
             SystemVarItemsControl.ItemsSource = SystemVariable.All;
-            SystemVarCountText.Text = $"共 {SystemVariable.All.Count} 个";
 
             // PLC 状态机（P1.2）：从 machine-state.json 读 9 个状态的文字/颜色/表达式，
             // 再把固定布局画出来。求值由 _machineTimer 驱动，这里只负责首次绑定。
@@ -461,7 +460,6 @@ namespace DSH_Modbus采集工具
             // 系统变量监控（P2.3）：同一份清单，行对象多一个「当前值」；
             // 定时器先不启动 —— 由「分段可见 + 页面可见」两个条件共同决定（见 SyncSystemVarTimer）
             SystemVarMonitorItemsControl.ItemsSource = _sysVarRows;
-            SystemVarMonitorCountText.Text = $"共 {_sysVarRows.Count} 个";
             _sysVarTimer.Tick += (_, _) => RefreshSystemVarValues();
 
             // 采集执行（P3.1）：与上面三个定时器不同，这个**不随页面可见性启停**，

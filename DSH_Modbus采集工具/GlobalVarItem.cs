@@ -19,6 +19,8 @@ namespace DSH_Modbus采集工具
     public sealed class GlobalVarItem : INotifyPropertyChanged
     {
         private string _resolveError = string.Empty;
+        private int _id;
+        private bool _isSelected;
 
         public GlobalVarItem(GlobalVariable model)
         {
@@ -28,7 +30,24 @@ namespace DSH_Modbus采集工具
         public GlobalVariable Model { get; }
 
         /// <summary>序号（界面左侧显示，1 起）</summary>
-        public int Id { get; set; }
+        /// <remarks>
+        /// ⚠️ 必须通知：拖动排序后 <c>Reindex()</c> 会重排一批行的序号，
+        /// 不通知的话画面上的 # 会停在旧值，与真实顺序对不上。
+        /// </remarks>
+        public int Id
+        {
+            get => _id;
+            set
+            {
+                if (_id == value)
+                {
+                    return;
+                }
+
+                _id = value;
+                Raise();
+            }
+        }
 
         public string Name
         {
@@ -89,6 +108,25 @@ namespace DSH_Modbus采集工具
                 }
 
                 _resolveError = value ?? string.Empty;
+                Raise();
+            }
+        }
+
+        /// <summary>
+        /// 是否是当前选中行（只影响底色，纯界面态，不落盘）。
+        /// <para>表头的 ↑↓ 排序作用于选中行，故需要一个可见的「当前行」。</para>
+        /// </summary>
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value)
+                {
+                    return;
+                }
+
+                _isSelected = value;
                 Raise();
             }
         }
@@ -168,6 +206,46 @@ namespace DSH_Modbus采集工具
             _set.Remove(item.Model);
             Reindex();
             Save();
+        }
+
+        /// <summary>
+        /// 拖动排序：把 <paramref name="item"/> 放到 <paramref name="newIndex"/>。
+        /// <para>
+        /// ⚠️ 必须**同时**改两边：界面的 <c>_items</c>（ObservableCollection，决定画面顺序）
+        /// 与模型的 <c>_set</c>（List，决定落盘顺序）。只改一边的话，画面动了但重启就变回原样；
+        /// 或者存对了但界面不刷新。
+        /// </para>
+        /// </summary>
+        public void Move(GlobalVarItem item, int newIndex)
+        {
+            int oldIndex = _items.IndexOf(item);
+            if (oldIndex < 0)
+            {
+                return;
+            }
+
+            if (newIndex < 0)
+            {
+                newIndex = 0;
+            }
+
+            if (newIndex > _items.Count - 1)
+            {
+                newIndex = _items.Count - 1;
+            }
+
+            if (newIndex == oldIndex)
+            {
+                return;
+            }
+
+            _items.Move(oldIndex, newIndex);
+
+            if (_set.Move(item.Model, newIndex))
+            {
+                Reindex();
+                Save();
+            }
         }
 
         public void Clear()

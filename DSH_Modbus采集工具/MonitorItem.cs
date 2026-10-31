@@ -60,9 +60,30 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private bool _isMemoryVariable;
 
+        private bool _isSelected;
+
         public MonitorItem(DataPoint model)
         {
             Model = model ?? throw new ArgumentNullException(nameof(model));
+        }
+
+        /// <summary>
+        /// 是否是当前选中行（只影响底色，纯界面态，不落盘）。
+        /// <para>表头的 ↑↓ 排序作用于选中行，故需要一个可见的「当前行」。</para>
+        /// </summary>
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value)
+                {
+                    return;
+                }
+
+                _isSelected = value;
+                OnPropertyChanged();
+            }
         }
 
         /// <summary>注入变量查找器（见 <see cref="_variableLookup"/>）。</summary>
@@ -72,7 +93,15 @@ namespace DSH_Modbus采集工具
         public DataPoint Model { get; }
 
         /// <summary>序号，界面左侧显示。</summary>
+        /// <remarks>
+        /// ⚠️ 排序后要让界面重读：<c>Model.Id</c> 变了不会自动通知，故由
+        /// <see cref="RaiseIdChanged"/> 显式发一次 <c>PropertyChanged</c>。
+        /// 少了它，拖动/上移下移之后左边那列 # 会停在旧值。
+        /// </remarks>
         public int Id => Model.Id;
+
+        /// <summary>序号被重新分配后通知绑定（见 <see cref="MonitorItemSet.Move"/>）。</summary>
+        internal void RaiseIdChanged() => OnPropertyChanged(nameof(Id));
 
         /// <summary>元件符号，如 <c>D</c> / <c>HD</c> / <c>M</c>。</summary>
         public string Element => Model.Element;
@@ -695,6 +724,56 @@ namespace DSH_Modbus采集工具
             {
                 Save();
             }
+        }
+
+        /// <summary>
+        /// 把一项挪到新位置（用户点表头 ↑↓ 排序）。
+        /// <para>
+        /// ⚠️ 这里的 <c>_items</c> **同时**是界面集合与落盘顺序（`DataPointStore` 按它写盘、
+        /// 按文件顺序读回），所以一次 <c>Move</c> 两边都改了 —— 不需要像全局变量那样
+        /// 维护两份列表。改完顺序重启也是新顺序。
+        /// </para>
+        /// <para>越界会被夹到两端；位置没变时直接返回 false（调用方据它决定要不要落盘）。</para>
+        /// </summary>
+        public bool Move(MonitorItem item, int newIndex)
+        {
+            int oldIndex = _items.IndexOf(item);
+            if (oldIndex < 0)
+            {
+                return false;
+            }
+
+            if (newIndex < 0)
+            {
+                newIndex = 0;
+            }
+
+            if (newIndex > _items.Count - 1)
+            {
+                newIndex = _items.Count - 1;
+            }
+
+            if (newIndex == oldIndex)
+            {
+                return false;
+            }
+
+            _items.Move(oldIndex, newIndex);
+
+            // 顺序变了，行号也要跟着重排：从 1 连续编号，
+            // 否则会出现「显示 3、6、7」这种跟实际位置对不上的序号
+            for (int i = 0; i < _items.Count; i++)
+            {
+                MonitorItem row = _items[i];
+                if (row.Model.Id != i + 1)
+                {
+                    row.Model.Id = i + 1;
+                    row.RaiseIdChanged();
+                }
+            }
+
+            Save();
+            return true;
         }
 
         /// <summary>清空全部监控项并落盘（「全部删除」按钮）。调用方负责先做二次确认。</summary>

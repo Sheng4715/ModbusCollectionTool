@@ -74,10 +74,9 @@ namespace DSH_Modbus采集工具
                 ClearGlobalVarsButton.IsEnabled = n > 0;
             }
 
-            if (GlobalVarCountText != null)
-            {
-                GlobalVarCountText.Text = n == 0 ? string.Empty : $"共 {n} 个";
-            }
+            // 行数变了（增/删/清空）也要重算 ↑↓ 的可用性：
+            // 删掉末行后原来那条「不能下移」的判断就过期了
+            UpdateGlobalVarMoveButtons();
         }
 
         private void AddGlobalVar_Click(object sender, RoutedEventArgs e)
@@ -105,6 +104,12 @@ namespace DSH_Modbus采集工具
         {
             if (sender is FrameworkElement fe && fe.DataContext is GlobalVarItem item)
             {
+                // 删掉的正好是选中行 → 清掉选中，免得 ↑↓ 作用在一个已经不在列表里的对象上
+                if (ReferenceEquals(_selectedGlobalVar, item))
+                {
+                    _selectedGlobalVar = null;
+                }
+
                 _globalVarSet.Remove(item);
                 RefreshGlobalVarView();
 
@@ -128,6 +133,7 @@ namespace DSH_Modbus采集工具
             }
 
             _globalVarSet.Clear();
+            _selectedGlobalVar = null;
             RefreshGlobalVarView();
 
             // 全部删完，所有监控变量行都会变成「变量不存在」
@@ -258,6 +264,112 @@ namespace DSH_Modbus采集工具
             }
 
             return null;
+        }
+
+        // ---------- 排序（2026-10-31）：表头 ↑↓ 作用于选中行 ----------
+
+        /// <summary>当前选中的行（null = 没选）。排序按钮就作用于它。</summary>
+        private GlobalVarItem? _selectedGlobalVar;
+
+        /// <summary>点行内任意处即选中该行（点输入框时也会走到这里，但不影响编辑）。</summary>
+        private void GlobalVarRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.DataContext is GlobalVarItem item)
+            {
+                SelectGlobalVar(item);
+            }
+        }
+
+        /// <summary>
+        /// 设置选中行并刷新按钮可用性。
+        /// <para>
+        /// 选中态只是**界面态**，不进模型、不落盘 —— 重启后没有选中行，
+        /// 这不是缺陷：排序按钮本来就该在「没选东西」时置灰。
+        /// </para>
+        /// </summary>
+        private void SelectGlobalVar(GlobalVarItem? item)
+        {
+            if (ReferenceEquals(_selectedGlobalVar, item))
+            {
+                return;
+            }
+
+            _selectedGlobalVar = item;
+
+            // 行底色绑的是 IsSelected（见 GlobalVarItemTemplate 的 DataTrigger），
+            // 故这里只需把所有行的该标志重算一遍
+            if (_globalVarSet?.Items != null)
+            {
+                foreach (GlobalVarItem row in _globalVarSet.Items)
+                {
+                    row.IsSelected = ReferenceEquals(row, item);
+                }
+            }
+
+            UpdateGlobalVarMoveButtons();
+        }
+
+        /// <summary>
+        /// 刷新 ↑↓ 的可用性：没选中 → 都灰；已在首行 → ↑ 灰；已在末行 → ↓ 灰。
+        /// <para>
+        /// 三个条件只在这里判一次，而不是散到 Click 里 —— 置灰与点击拦截必须同源，
+        /// 否则会出现「按钮亮着但点了没反应」。
+        /// </para>
+        /// </summary>
+        private void UpdateGlobalVarMoveButtons()
+        {
+            int count = _globalVarSet?.Items?.Count ?? 0;
+
+            int index = _selectedGlobalVar == null || _globalVarSet?.Items == null
+                ? -1
+                : _globalVarSet.Items.IndexOf(_selectedGlobalVar);
+
+            bool has = index >= 0;
+
+            if (MoveGlobalVarUpButton != null)
+            {
+                MoveGlobalVarUpButton.IsEnabled = has && index > 0;
+            }
+
+            if (MoveGlobalVarDownButton != null)
+            {
+                MoveGlobalVarDownButton.IsEnabled = has && index < count - 1;
+            }
+        }
+
+        private void MoveGlobalVarUp_Click(object sender, RoutedEventArgs e) => MoveSelectedGlobalVar(-1);
+
+        private void MoveGlobalVarDown_Click(object sender, RoutedEventArgs e) => MoveSelectedGlobalVar(+1);
+
+        /// <summary>把选中行上移 / 下移一格，移完保持选中并让它留在视野里。</summary>
+        private void MoveSelectedGlobalVar(int delta)
+        {
+            if (_selectedGlobalVar == null || _globalVarSet?.Items == null)
+            {
+                return;
+            }
+
+            int from = _globalVarSet.Items.IndexOf(_selectedGlobalVar);
+            if (from < 0)
+            {
+                return;
+            }
+
+            int to = from + delta;
+            if (to < 0 || to > _globalVarSet.Items.Count - 1)
+            {
+                return;
+            }
+
+            GlobalVarItem moving = _selectedGlobalVar;
+
+            // Move 同时改 ObservableCollection（画面重排）、模型 List（落盘顺序）并 Reindex
+            _globalVarSet.Move(moving, to);
+
+            UpdateGlobalVarMoveButtons();
+
+            GlobalVarItemsControl?.UpdateLayout();
+            FocusGlobalVarRow(moving);
         }
 
         /// <summary>

@@ -872,6 +872,10 @@
             <Setter Property="Height" Value="26"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <!-- 底色走 Style 而不是模板里的字面常量：模板要能吃 TemplateBinding Background，
+                 才允许个别下拉框（如总览页任务组）改成「只有框线、不要底色」。
+                 对既有 8 个下拉框来说这个 Setter 与原来模板里的定值完全等价。 -->
+            <Setter Property="Background" Value="{DynamicResource Brush.Control.Background}"/>
             <Setter Property="Padding" Value="12,0"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -892,7 +896,7 @@
                                 所以其余下拉框外观不变；需要「框出来」的地方自己设 1 + Brush.Input.Border。
                                 模板里原本完全不看这两个属性，写上去也没效果。
                             -->
-                            <Border x:Name="Bd" Background="{DynamicResource Brush.Control.Background}"
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
                                     CornerRadius="6">
@@ -1099,9 +1103,20 @@
         <!-- 自由监控的一行 -->
         <DataTemplate x:Key="MonitorItemTemplate">
             <Border Height="30" Margin="0,0,0,2"
-                    Background="Transparent"
                     BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1"
-                    Loaded="MonitorRow_Loaded">
+                    Loaded="MonitorRow_Loaded"
+                    PreviewMouseLeftButtonDown="MonitorRow_PreviewMouseLeftButtonDown">
+                <!-- 选中态走 Style.Triggers：行里有输入框/下拉框，选中只改底色，不影响编辑 -->
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
@@ -1178,11 +1193,59 @@
             · 映射地址只读展示解析结果 —— 用户输入的是元件名（如 HD100），
               绝对地址由驱动解析，不在此显示。
         -->
+        <!-- 全局变量表头的上移 / 下移按钮（2026-10-31）。
+             与其它表头图标按钮的区别：它不是"增删"，而是"挪位置"，故悬停用中性灰底
+             （Overlay.Medium）而不是红/主色 —— 两种都是错的语义。
+             排序对象是**当前选中行**；没选中或已在两端时置灰。 -->
+        <Style x:Key="GlobalVarMoveButton" TargetType="Button">
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Tertiary}"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Overlay.Medium}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Overlay.Strong}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled.Faint}"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <DataTemplate x:Key="GlobalVarItemTemplate">
             <Border Height="30" Margin="0,0,0,2"
-                    Background="Transparent"
                     BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1"
-                    Loaded="GlobalVarRow_Loaded">
+                    Loaded="GlobalVarRow_Loaded"
+                    PreviewMouseLeftButtonDown="GlobalVarRow_PreviewMouseLeftButtonDown">
+                <!-- 选中态走 Style.Triggers 而不是直接绑 Background：
+                     行内容里有输入框，选中整行时底色要变、但不能影响编辑。 -->
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>
@@ -1702,10 +1765,16 @@
              代价是要整套重画样式（默认外观是 Win7 白底蓝框，与 Fluent 风格完全不搭）。
              下面这四个样式就是把它压回「表头 12 灰字 + 细横线 + 透明底」。 -->
 
-        <!-- 一级任务组胶囊：字号 13，比二级「实时/历史」的 12 大一档，用来区分层级 -->
-        <Style x:Key="AcqGroupChipRadioButton" TargetType="RadioButton"
-               BasedOn="{StaticResource IoSegmentRadioButton}">
-            <Setter Property="FontSize" Value="13"/>
+        <!-- 任务组下拉框：只有框线、没有底色（2026-10-31 用户定案）。
+             BasedOn FormComboBox，只覆盖 Background / Border 两项 ——
+             模板已经改成 Background 走 TemplateBinding，故这一覆盖能生效。
+             ⚠️ 悬停/展开态仍是模板里的 Brush.Control.Hover（浅灰），
+                那是交互反馈，不属「背景」，保留。 -->
+        <Style x:Key="AcqGroupCombo" TargetType="ComboBox"
+               BasedOn="{StaticResource FormComboBox}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Input.Border}"/>
         </Style>
 
         <Style x:Key="AcqHistoryColumnHeader" TargetType="DataGridColumnHeader">
@@ -2005,63 +2074,72 @@
                                                Visibility="Collapsed"/>
 
                                     <!-- 数据采集视图（P1.4）：
-                                         任务组胶囊条 → 分隔线 → [实时数据][历史数据] + 文件名 → 内容。
-                                         三个视图叠在同一格里，由「当前视图」下拉框切换可见性。 -->
+                                         [实时数据][历史数据] + 文件名 ←→ 任务组下拉框 → 分隔线 → 内容。
+                                         三个视图叠在同一格里，由「当前视图」下拉框切换可见性。
+
+                                         2026-10-31 改版（用户定案）：任务组切换由胶囊条改**下拉框**，
+                                         放卡片右侧；页签挪回原来胶囊条的位置（第一行）。
+                                         文件名只在「历史数据」页签下显示，紧挨页签右侧。 -->
                                     <Grid x:Name="AcquisitionDataView" Visibility="Collapsed">
                                         <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>   <!-- 任务组胶囊条 -->
+                                            <RowDefinition Height="Auto"/>   <!-- 页签 + 文件名 | 任务组下拉框 -->
                                             <RowDefinition Height="Auto"/>   <!-- 分隔线 -->
-                                            <RowDefinition Height="Auto"/>   <!-- 实时/历史 + 文件名 -->
                                             <RowDefinition Height="*"/>      <!-- 内容 -->
                                         </Grid.RowDefinitions>
 
-                                        <!-- 组多时横向滚动、不换行（保持单行高度稳定）。
-                                             ⚠️ 胶囊外观来自外层这圈灰底 Border（与设备监控页同一套：
-                                             Brush.Control.Background + 圆角 6 + 内缩 2），
-                                             IoSegmentRadioButton 自己背景是透明的，少了这层就只剩一行文字。 -->
-                                        <ScrollViewer x:Name="AcqOverviewChipScroller" Grid.Row="0"
-                                                      HorizontalScrollBarVisibility="Auto"
-                                                      VerticalScrollBarVisibility="Disabled">
-                                            <Border Background="{DynamicResource Brush.Control.Background}"
-                                                    CornerRadius="6" Padding="2"
-                                                    HorizontalAlignment="Left" VerticalAlignment="Center">
-                                                <StackPanel x:Name="AcqOverviewGroupChips" Orientation="Horizontal"/>
-                                            </Border>
-                                        </ScrollViewer>
+                                        <Grid x:Name="AcqOverviewTopBar" Grid.Row="0" Margin="0,0,0,8">
+                                            <!-- 左：二级页签（胶囊）+ 当前文件名 -->
+                                            <StackPanel Orientation="Horizontal"
+                                                        HorizontalAlignment="Left" VerticalAlignment="Center">
+                                                <!-- ⚠️ 胶囊外观来自外层这圈灰底 Border（与设备监控页同一套：
+                                                     Brush.Control.Background + 圆角 6 + 内缩 2），
+                                                     IoSegmentRadioButton 自己背景是透明的，少了这层就只剩一行文字。 -->
+                                                <Border Background="{DynamicResource Brush.Control.Background}"
+                                                        CornerRadius="6" Padding="2"
+                                                        VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <RadioButton x:Name="AcqLiveSegment" Content="实时数据"
+                                                                     GroupName="AcqOverviewSub" IsChecked="True"
+                                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                                     Checked="AcqSubView_Checked"/>
+                                                        <RadioButton x:Name="AcqHistorySegment" Content="历史数据"
+                                                                     GroupName="AcqOverviewSub"
+                                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                                     Checked="AcqSubView_Checked"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <!-- 只在历史数据页签下显示（由代码控制可见性） -->
+                                                <TextBlock x:Name="AcqHistoryFileText"
+                                                           VerticalAlignment="Center" Margin="12,0,0,0"
+                                                           FontSize="12" Foreground="{DynamicResource Brush.Text.Faint}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Visibility="Collapsed"/>
+                                            </StackPanel>
 
-                                        <Border x:Name="AcqOverviewDivider" Grid.Row="1"
-                                                Height="1" Margin="0,8,0,8"
-                                                Background="{DynamicResource Brush.Divider}"/>
-
-                                        <Grid x:Name="AcqOverviewSubBar" Grid.Row="2" Margin="0,0,0,8">
-                                            <Border Background="{DynamicResource Brush.Control.Background}"
-                                                    CornerRadius="6" Padding="2"
-                                                    HorizontalAlignment="Left" VerticalAlignment="Center">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <RadioButton x:Name="AcqLiveSegment" Content="实时数据"
-                                                                 GroupName="AcqOverviewSub" IsChecked="True"
-                                                                 Style="{StaticResource IoSegmentRadioButton}"
-                                                                 Checked="AcqSubView_Checked"/>
-                                                    <RadioButton x:Name="AcqHistorySegment" Content="历史数据"
-                                                                 GroupName="AcqOverviewSub"
-                                                                 Style="{StaticResource IoSegmentRadioButton}"
-                                                                 Checked="AcqSubView_Checked"/>
-                                                </StackPanel>
-                                            </Border>
-                                            <TextBlock x:Name="AcqHistoryFileText"
-                                                       HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                       FontSize="12" Foreground="{DynamicResource Brush.Text.Faint}"
-                                                       TextTrimming="CharacterEllipsis"/>
+                                            <!-- 右：任务组下拉框。
+                                                 2026-10-31 用户定案：去掉左侧「任务组」标签（卡片里
+                                                 只有这一个选择器，语义自明）；外观为**只有框线、无底色**
+                                                 （见 AcqGroupCombo 样式）。
+                                                 组多时靠下拉展开，不需要横向滚动。 -->
+                                            <ComboBox x:Name="AcqOverviewGroupCombo"
+                                                      Style="{StaticResource AcqGroupCombo}"
+                                                      Width="132"
+                                                      HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                      SelectionChanged="AcqGroupCombo_SelectionChanged"/>
                                         </Grid>
 
+                                        <Border x:Name="AcqOverviewDivider" Grid.Row="1"
+                                                Height="1" Margin="0,0,0,8"
+                                                Background="{DynamicResource Brush.Divider}"/>
+
                                         <!-- 实时数据：本期占位 -->
-                                        <TextBlock x:Name="AcqLiveHint" Grid.Row="3"
+                                        <TextBlock x:Name="AcqLiveHint" Grid.Row="2"
                                                    Text="规划中"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                                    FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"/>
 
                                         <!-- 历史数据：列随 CSV 表头动态生成 -->
-                                        <Grid x:Name="AcqHistoryPanel" Grid.Row="3" Visibility="Collapsed">
+                                        <Grid x:Name="AcqHistoryPanel" Grid.Row="2" Visibility="Collapsed">
                                             <DataGrid x:Name="AcqHistoryGrid"
                                                       Style="{StaticResource AcqHistoryDataGrid}"/>
                                             <TextBlock x:Name="AcqHistoryHint"
@@ -2072,7 +2150,7 @@
                                         </Grid>
 
                                         <!-- 一个任务组都没有：整块只留这句 -->
-                                        <TextBlock x:Name="AcqNoGroupHint" Grid.Row="3"
+                                        <TextBlock x:Name="AcqNoGroupHint" Grid.Row="2"
                                                    Text="尚未添加任务组，请到数据管理页新增"
                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                                    FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
@@ -2326,19 +2404,30 @@
 
                                             <!--
                                                 表头操作区：靠右叠放，**不参与**列表头的列布局。
-                                                顺序按用户要求：计数 → 🗑 全部删除 → + 新增（+ 在最右）。
+                                                顺序按用户要求：↑↓ 排序 → 🗑 全部删除 → + 新增（+ 在最右）。
+                                                排序作用于**选中的那一行**（与全局变量表同一套交互）。
                                             -->
                                             <StackPanel Orientation="Horizontal"
                                                         HorizontalAlignment="Right"
                                                         Margin="0,0,7,0"
                                                         VerticalAlignment="Center">
-                                                <TextBlock x:Name="MonitorCountText"
-                                                           FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
-                                                           VerticalAlignment="Center"
-                                                           Margin="0,0,8,0"/>
+                                                <!-- ⚠️ 图标用 E74A / E74B（带竖杆的箭头），
+                                                     不要用 E70E / E70D（chevron 尖角）—— 那是展开/收起。 -->
+                                                <Button x:Name="MoveMonitorUpButton"
+                                                        Content="&#xE74A;"
+                                                        ToolTip="上移选中监控项"
+                                                        Style="{StaticResource GlobalVarMoveButton}"
+                                                        Click="MoveMonitorUp_Click"/>
+                                                <Button x:Name="MoveMonitorDownButton"
+                                                        Content="&#xE74B;"
+                                                        ToolTip="下移选中监控项"
+                                                        Margin="4,0,0,0"
+                                                        Style="{StaticResource GlobalVarMoveButton}"
+                                                        Click="MoveMonitorDown_Click"/>
                                                 <Button x:Name="ClearMonitorItemsButton"
                                                         Content="&#xE74D;"
                                                         ToolTip="删除全部监控项"
+                                                        Margin="12,0,0,0"
                                                         Style="{StaticResource MonitorClearAllButton}"
                                                         Click="ClearMonitorItems_Click"/>
                                                 <Button x:Name="AddMonitorItemButton"
@@ -2416,13 +2505,6 @@
                                                 <TextBlock Grid.Column="3" Text="当前值" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                 <TextBlock Grid.Column="4" Text="注释" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                             </Grid>
-
-                                            <!-- 只有计数：清单写死，既不能增也不能删 -->
-                                            <TextBlock x:Name="SystemVarMonitorCountText"
-                                                       FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
-                                                       HorizontalAlignment="Right"
-                                                       Margin="0,0,7,0"
-                                                       VerticalAlignment="Center"/>
                                         </Grid>
                                     </Border>
 
@@ -2587,10 +2669,6 @@
                                                             HorizontalAlignment="Right"
                                                             Margin="0,0,7,0"
                                                             VerticalAlignment="Center">
-                                                    <TextBlock x:Name="AcquisitionTaskCountText"
-                                                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
-                                                               VerticalAlignment="Center"
-                                                               Margin="0,0,8,0"/>
                                                     <Button x:Name="ClearAcquisitionTasksButton"
                                                             Content="&#xE74D;"
                                                             AutomationProperties.Name="删除全部任务组"
@@ -2670,13 +2748,28 @@
                                                             HorizontalAlignment="Right"
                                                             Margin="0,0,7,0"
                                                             VerticalAlignment="Center">
-                                                    <TextBlock x:Name="GlobalVarCountText"
-                                                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
-                                                               VerticalAlignment="Center"
-                                                               Margin="0,0,8,0"/>
+                                                    <!-- 排序：作用于**选中的那一行**。
+                                                         与"全表操作"那一簇挨着，又不会被误当成单行操作。
+
+                                                         ⚠️ 图标用 E74A / E74B（**带竖杆的箭头**），
+                                                         不要用 E70E / E70D（chevron 尖角）—— 后者是
+                                                         下拉框和折叠面板的"展开/收起"符号，摆在表头上
+                                                         会被读成"展开这一行"（用户 2026-10-31 指出）。 -->
+                                                    <Button x:Name="MoveGlobalVarUpButton"
+                                                            Content="&#xE74A;"
+                                                            ToolTip="上移选中变量"
+                                                            Style="{StaticResource GlobalVarMoveButton}"
+                                                            Click="MoveGlobalVarUp_Click"/>
+                                                    <Button x:Name="MoveGlobalVarDownButton"
+                                                            Content="&#xE74B;"
+                                                            ToolTip="下移选中变量"
+                                                            Margin="4,0,0,0"
+                                                            Style="{StaticResource GlobalVarMoveButton}"
+                                                            Click="MoveGlobalVarDown_Click"/>
                                                     <Button x:Name="ClearGlobalVarsButton"
                                                             Content="&#xE74D;"
                                                             ToolTip="删除全部变量"
+                                                            Margin="12,0,0,0"
                                                             Style="{StaticResource MonitorClearAllButton}"
                                                             Click="ClearGlobalVars_Click"/>
                                                     <Button x:Name="AddGlobalVarButton"
@@ -2743,13 +2836,6 @@
                                                     <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" Margin="6,0,0,0" VerticalAlignment="Center"/>
                                                     <TextBlock Grid.Column="3" Text="注释" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                 </Grid>
-
-                                                <!-- 只有计数：清单写死，既不能增也不能删 -->
-                                                <TextBlock x:Name="SystemVarCountText"
-                                                           FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
-                                                           HorizontalAlignment="Right"
-                                                           Margin="0,0,7,0"
-                                                           VerticalAlignment="Center"/>
                                             </Grid>
                                         </Border>
 

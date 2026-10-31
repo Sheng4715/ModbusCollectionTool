@@ -174,7 +174,7 @@ Window
 
 ### 3.3 关键样式（Window.Resources）
 
-> 全部定义在 `MainWindow.xaml` 的 `Window.Resources` 里（**48 个键**）。改外观先在这里找现成的；
+> 全部定义在 `MainWindow.xaml` 的 `Window.Resources` 里（**49 个键**）。改外观先在这里找现成的；
 > 下表只列**会复用、或踩过坑**的那些，其余是某一行专用的模板（`*ItemTemplate`）。
 
 **先认名字前缀**：`Io*` = IO 页/分页、`Form*` = 设备连接页表单、`Monitor*` = 自由监控行内、
@@ -199,11 +199,11 @@ Window
 | `MonitorComboItem` | 行内下拉项容器 |
 | `MonitorTypeItemTemplate` | 类型下拉的**展开项**模板，绑 `{Binding DisplayName}` —— 数据源必须是 `DataTypeSpec` 对象，放字符串会整列空白（见 `AGENTS-细节.md` §5.2） |
 | `MonitorInlineTextBox` / `MonitorValueTextBox` | 自由监控行内输入框：框线，字号 12／高 22 |
-| `MonitorItemTemplate` | 自由监控整行（名称/类型/格式/当前值/删除） |
+| `MonitorItemTemplate` | 自由监控整行（名称/类型/格式/当前值/删除）；`IsSelected` 时整行底色变 `Brush.Accent.Subtle` |
 | `MonitorIconButton` | 监控行尾删除 ×（**悬停红**＝删除语义） |
 | `MonitorHeaderIconButton` | 表头新增 ＋（**悬停主色**＝新增语义） |
 | `MonitorClearAllButton` | 表头「🗑 清空」 |
-| `GlobalVarItemTemplate` | 全局变量整行（序号/名称/类型/映射地址/注释/删除） |
+| `GlobalVarItemTemplate` | 全局变量整行（序号/名称/类型/映射地址/注释/删除）；`IsSelected` 时整行底色变 `Brush.Accent.Subtle` |
 | `SystemVarItemTemplate` | 系统变量清单行（只读，无输入框） |
 | `SystemVarMonitorItemTemplate` | 系统变量监控行（多一列「当前值」） |
 | `AcqRowIconButton` | **采集任务组行内图标按钮**（… ↑↓）：22×22，悬停中性灰底 + 深字。**刻意不复用** `MonitorIconButton`（悬停红＝删除）和 `MonitorHeaderIconButton`（悬停主色＝新增）—— 同一行里混两种语义会读错 |
@@ -222,7 +222,7 @@ Window
 
 ### 3.4 页面细节
 
-- **总览**：顶部「总览」标题 + 右侧「当前视图」下拉框（三项，见 §3.1）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。`数据采集` 视图是卡片内第二层（任务组胶囊条 / 分隔线 / 实时-历史 / 表格），见 `AGENTS-细节.md` §5.8
+- **总览**：顶部「总览」标题 + 右侧「当前视图」下拉框（三项，见 §3.1）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。`数据采集` 视图是卡片内第二层（左：实时-历史页签 + 文件名 / 右：任务组下拉框 / 分隔线 / 表格），见 `AGENTS-细节.md` §5.8
 - **设备监控**：见 `AGENTS-细节.md` §5 IO 监控 / `AGENTS-细节.md` §5.1 自由监控。
 - **设备连接**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 `AGENTS-细节.md` §8.1）。连接中锁定表单（`SetInputsEnabled`）——**例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍即生效，锁上反而挡住现场纠正（见 `AGENTS-细节.md` §8.1）。串口模式仅隐藏以太网面板，**功能未实现**。
 
@@ -327,7 +327,7 @@ Window
 
 | 区块 | 关键成员 |
 |---|---|
-| **处理器在哪个 partial** | `MainWindow.xaml.cs`＝连接/心跳/导航/底栏/IO 分页·导入·`SetInputsEnabled`/`AppendDeviceLog`/`SetStatus`/`ScanNetworkAdapters`；`MainWindow.Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`MainWindow.GlobalVar.cs`＝`GlobalVar*`·`RefreshMachineGlobals`；`MainWindow.Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`MainWindow.MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`MainWindow.IoImport.cs`＝IO 表导入；`MainWindow.AcquisitionView.cs`＝总览「数据采集」视图（胶囊条 / 历史表格 / 1 秒增量刷新） |
+| **处理器在哪个 partial** | `MainWindow.xaml.cs`＝连接/心跳/导航/底栏/IO 分页·导入·`SetInputsEnabled`/`AppendDeviceLog`/`SetStatus`/`ScanNetworkAdapters`；`MainWindow.Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`MainWindow.GlobalVar.cs`＝`GlobalVar*`·`RefreshMachineGlobals`；`MainWindow.Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`MainWindow.MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`MainWindow.IoImport.cs`＝IO 表导入；`MainWindow.AcquisitionView.cs`＝总览「数据采集」视图（任务组下拉框 / 历史表格 / 1 秒增量刷新） |
 | 连接状态机 | `ConnectButton_Click`（表单校验 + 按钮三态）/ `TryConnectAsync` / `Disconnect()` / `Disconnect(status,color)` / `SetInputsEnabled`；**身份与生命周期在 `Polling/ConnectionSession.cs`**（`IsConnecting` / `IsCurrent` / `MarkConnected` / `ReleaseClient` / `ForgetTarget` / 重连计数）+ `RunConnectionTasksAsync` / `IsCurrentConnection` |
 | 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect`（**循环留在窗口**，逐秒刷状态栏/锁表单是界面驱动）；目标快照 `ReconnectTarget` 与退避表 `ReconnectPolicy` 在 `Polling/` |
 | 轮询（入口在本类，实现在 `Polling/`） | `_poller.PollLoopAsync` → `Polling/ModbusPoller.cs`（`PollOnceAsync` 按地址区分块 + 2000 点切窗 / `PollFreeMonitorAsync` 自由监控，按区选 FC01/03/04） |
@@ -336,7 +336,7 @@ Window
 | IO 点位集（实现在 `Io/`） | `RebuildIoPoints`（薄包装）→ `IoPointSet.Rebuild` / `TryCreatePoint` / `NormalizePointName` / `TryValidatePoint` |
 | 分页 | `ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（算术在 `IoPager`；控件写入留本类） |
 | 导入 | `ImportIoTableButton_Click` → `IoTableImporter.Read`（`MessageBox` 留本类） |
-| **自由监控** | `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 `AGENTS-细节.md` §5.1） |
+| **自由监控** | `MoveMonitorUp_Click` / `MoveMonitorDown_Click` / `UpdateMonitorMoveButtons` / `MonitorRow_PreviewMouseLeftButtonDown` / `SelectMonitorItem` / `AddMonitorItemButton_Click` / `RemoveMonitorItem_Click` / `MonitorName_TextChanged` / `MonitorName_LostFocus` / `SyncMonitorTypeWithElement` / `ApplyMonitorRowState` / `RefreshMonitorView` / `FocusMonitorRowName` / `RowOf` / `MonitorValue_GotFocus` / `MonitorValue_LostFocus` / `MonitorValue_KeyDown` / `CommitMonitorValueAsync` / `WriteToDeviceAsync` / `ClassifyWriteError`（见 `AGENTS-细节.md` §5.1） |
 | **系统变量（P3.5）** | 清单写死在 `Modeling/SystemVariable.cs`；窗口侧只有 `AcqView_Checked` 切面板 + 构造期一次绑定，**没有任何编辑处理器**（见 `AGENTS-细节.md` §5.3） |
 | **全局变量（P3.3）** | `AddGlobalVar_Click` / `RemoveGlobalVar_Click` / `ClearGlobalVars_Click` / `GlobalVarName_TextChanged` / `GlobalVarName_LostFocus` / `GlobalVarAddress_LostFocus` / `GlobalVarComment_LostFocus` / `GlobalVarType_SelectionChanged` / `RefreshGlobalVarView` / `FocusGlobalVarRow` / `AcqView_Checked`（见 `AGENTS-细节.md` §5.2；**只管理定义，不读不写**） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
@@ -545,7 +545,7 @@ public sealed class MyDialog : DialogWindow
 | **PLC 状态机（P1.2，总览页）** | `Expressions/`（表达式引擎）+ `Modeling/MachineState.cs`（布局/模型/持久化）+ `Ui/MachineStateView.xaml(.cs)`（画布）+ 窗口 `RefreshMachineStates` / `SyncMachineTimer`（见 **`AGENTS-细节.md` §5.5**） |
 | **状态机指示灯 Error / Fault** | `MachineStateLamp`（含 Color/DotSize/FontSize）+ `MachineStateLayout.Lamps`/`LampDotSize`/`LampFontSize`（`Modeling/MachineState.cs`）+ 画布 `BuildLamps`/`ApplyLampState`/`LampVisual`（`Ui/MachineStateView.xaml.cs`）+ `Ui/MachineLampEditDialog.cs`（见 **`AGENTS-细节.md` §5.5**） |
 | **系统变量监控（P2.3，第四分段）** | `SystemVarRow.cs` + `SystemVariableValues.cs` + 窗口 `RefreshSystemVarValues` / `SyncSystemVarTimer` / `IoView_Checked`（见 **`AGENTS-细节.md` §5.4**） |
-| **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化）+ `GlobalVarItem.cs`（界面包装）+ 窗口 `GlobalVar*` 处理器（见 **`AGENTS-细节.md` §5.2**；不读不写） |
+| **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化/`GlobalVariableSet.Move`）+ `GlobalVarItem.cs`（界面包装 + `GlobalVarItemSet.Move`）+ 窗口 `GlobalVar*` 处理器；**排序** = 表头 ↑↓ 作用于选中行（见 **`AGENTS-细节.md` §5.2**；不读不写） |
 | **采集数据（P3.1，任务组/数据项/执行/CSV）** | 模型 `Modeling/AcquisitionTask.cs`（+ `AcquisitionTaskRules` 文案与类型规则）+ 行包装 `AcquisitionTaskItem.cs` + 对话框 `Ui/AcquisitionTaskDialog.cs`；执行与落盘 `Modeling/AcquisitionCsv.cs` + 窗口 `RunAcquisitionTick` / `RefreshAcquisitionGlobals`（50ms 常驻定时器，**不随页面可见性停**，见 **`AGENTS-细节.md` §5.7**） |
 | **采集任务「配置错误」关开关/拦截** | 判据 `Modeling/AcquisitionTaskCheck.cs`（纯逻辑）+ 行属性 `HasConfigError` / `EffectiveEnabled` / `CanToggleEnabled`；提示在 `AcquisitionTaskRowTemplate` 第 4 列开关右侧；执行侧只判 `EffectiveEnabled`（`RefreshAcquisitionGlobals` 与 `RunAcquisitionTick`，见 **`AGENTS-细节.md` §5.7**） |
 | **采集「写入任务」真正下发** | `Modeling/AcquisitionWrite.cs`（TryBuild / DescribeFailure）+ `RunWriteTaskAsync`；Skipped=无地址静默跳过、失败不短路；CSV 只记写入变量回读值。**只读区（X / 离散输入 / 输入寄存器）只拦「写」不拦「映射」** —— 判定唯一来源是 `GlobalVariableStore.IsReadOnlyElement`（见 `AGENTS-细节.md` §5.7） |

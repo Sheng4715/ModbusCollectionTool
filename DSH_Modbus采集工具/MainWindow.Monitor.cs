@@ -56,9 +56,107 @@ namespace DSH_Modbus采集工具
                 ClearMonitorItemsButton.IsEnabled = n > 0;
             }
 
-            if (MonitorCountText != null)
+            // 行数变了（增/删/清空）也要重算 ↑↓ 的可用性
+            UpdateMonitorMoveButtons();
+        }
+
+        // ---------- 排序（2026-10-31）：表头 ↑↓ 作用于选中行 ----------
+
+        /// <summary>当前选中的监控行（null = 没选）。</summary>
+        private MonitorItem? _selectedMonitorItem;
+
+        /// <summary>点行内任意处即选中该行（点输入框时也会走到这里，但不影响编辑）。</summary>
+        private void MonitorRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.DataContext is MonitorItem item)
             {
-                MonitorCountText.Text = n == 0 ? string.Empty : $"共 {n} 项";
+                SelectMonitorItem(item);
+            }
+        }
+
+        /// <summary>设置选中行并刷新按钮可用性（选中态不进模型、不落盘）。</summary>
+        private void SelectMonitorItem(MonitorItem? item)
+        {
+            if (ReferenceEquals(_selectedMonitorItem, item))
+            {
+                return;
+            }
+
+            _selectedMonitorItem = item;
+
+            if (_monitorSet?.Items != null)
+            {
+                foreach (MonitorItem row in _monitorSet.Items)
+                {
+                    row.IsSelected = ReferenceEquals(row, item);
+                }
+            }
+
+            UpdateMonitorMoveButtons();
+        }
+
+        /// <summary>
+        /// 刷新 ↑↓ 的可用性：没选中 → 都灰；首行 → ↑ 灰；末行 → ↓ 灰。
+        /// <para>置灰与点击拦截必须同源，否则会出现「按钮亮着但点了没反应」。</para>
+        /// </summary>
+        private void UpdateMonitorMoveButtons()
+        {
+            int count = _monitorSet?.Items?.Count ?? 0;
+
+            int index = _selectedMonitorItem == null || _monitorSet?.Items == null
+                ? -1
+                : _monitorSet.Items.IndexOf(_selectedMonitorItem);
+
+            bool has = index >= 0;
+
+            if (MoveMonitorUpButton != null)
+            {
+                MoveMonitorUpButton.IsEnabled = has && index > 0;
+            }
+
+            if (MoveMonitorDownButton != null)
+            {
+                MoveMonitorDownButton.IsEnabled = has && index < count - 1;
+            }
+        }
+
+        private void MoveMonitorUp_Click(object sender, RoutedEventArgs e) => MoveSelectedMonitor(-1);
+
+        private void MoveMonitorDown_Click(object sender, RoutedEventArgs e) => MoveSelectedMonitor(+1);
+
+        /// <summary>
+        /// 把选中行上移 / 下移一格。
+        /// <para>
+        /// ⚠️ 除了顺序，还要让**轮询计划**跟着重算：`MonitorItemSet.Items` 的顺序
+        /// 就是读块拼接的顺序，且行号变了序号也要重排（`Move` 内部已做）。
+        /// </para>
+        /// </summary>
+        private void MoveSelectedMonitor(int delta)
+        {
+            if (_selectedMonitorItem == null || _monitorSet?.Items == null)
+            {
+                return;
+            }
+
+            int from = _monitorSet.Items.IndexOf(_selectedMonitorItem);
+            if (from < 0)
+            {
+                return;
+            }
+
+            int to = from + delta;
+            if (to < 0 || to > _monitorSet.Items.Count - 1)
+            {
+                return;
+            }
+
+            MonitorItem moving = _selectedMonitorItem;
+
+            if (_monitorSet.Move(moving, to))
+            {
+                UpdateMonitorMoveButtons();
+                MonitorItemsControl?.UpdateLayout();
+                FocusMonitorRowName(moving);
             }
         }
 
@@ -88,6 +186,7 @@ namespace DSH_Modbus采集工具
             }
 
             _monitorSet.Clear();
+            _selectedMonitorItem = null;
             RefreshMonitorView();
         }
 
@@ -183,6 +282,12 @@ namespace DSH_Modbus采集工具
         {
             if (sender is FrameworkElement fe && fe.DataContext is MonitorItem item)
             {
+                // 删掉的正好是选中行 → 清掉选中，免得 ↑↓ 作用在一个已不在列表里的对象上
+                if (ReferenceEquals(_selectedMonitorItem, item))
+                {
+                    _selectedMonitorItem = null;
+                }
+
                 _monitorSet.Remove(item);
                 RefreshMonitorView();
             }

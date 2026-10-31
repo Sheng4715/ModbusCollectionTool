@@ -557,6 +557,43 @@ namespace DSH_Modbus采集工具.Modeling
             _items.Remove(v);
         }
 
+        /// <summary>
+        /// 把一条变量挪到新位置（用户拖动排序）。
+        /// <para>
+        /// 顺序就是 <c>GlobalVar.json</c> 的数组顺序 —— <see cref="GlobalVariableStore.Save"/>
+        /// 直接按 <c>_items</c> 写盘、<see cref="GlobalVariableStore.Load"/> 按文件顺序读回，
+        /// 所以这里改完顺序，落盘后重启也是新顺序，不需要额外的排序字段。
+        /// </para>
+        /// <para>越界会被夹到两端；位置没变时直接返回 false（调用方据它决定要不要落盘）。</para>
+        /// </summary>
+        public bool Move(GlobalVariable v, int newIndex)
+        {
+            int oldIndex = _items.IndexOf(v);
+            if (oldIndex < 0)
+            {
+                return false;
+            }
+
+            if (newIndex < 0)
+            {
+                newIndex = 0;
+            }
+
+            if (newIndex > _items.Count - 1)
+            {
+                newIndex = _items.Count - 1;
+            }
+
+            if (newIndex == oldIndex)
+            {
+                return false;
+            }
+
+            _items.RemoveAt(oldIndex);
+            _items.Insert(newIndex, v);
+            return true;
+        }
+
         public void Clear()
         {
             _items.Clear();

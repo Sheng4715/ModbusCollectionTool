@@ -14,7 +14,7 @@ using DSH_Modbus采集工具.Modeling;
 
 // ============================================================
 // 总览页「数据采集」视图（P1.4）
-//   任务组胶囊条 → 分隔线 → [实时数据][历史数据] → 内容
+//   左边 [实时数据][历史数据]（+ 文件名）  ←→  右边 任务组下拉框 → 分隔线 → 内容
 //   实时数据本期只有「规划中」；历史数据真读 CSV，1 秒增量刷新。
 // ============================================================
 
@@ -61,8 +61,8 @@ namespace DSH_Modbus采集工具
         /// <summary>防重入：刷新过程中要动控件，被 UI 事件重入会乱。</summary>
         private bool _acqHistoryRefreshing;
 
-        /// <summary>重建胶囊条期间屏蔽 Checked —— 清空再新建会连打一串事件。</summary>
-        private bool _acqChipRebuilding;
+        /// <summary>重填任务组下拉框期间屏蔽 SelectionChanged —— 清空再逐项 Add 会连打一串事件。</summary>
+        private bool _acqComboRebuilding;
 
         /// <summary>当前视图 + 子页签是否满足「该刷历史表格」的条件。</summary>
         private bool IsAcqHistoryActive =>
@@ -111,11 +111,11 @@ namespace DSH_Modbus采集工具
             return timer;
         }
 
-        /// <summary>切到「数据采集」视图时调一次：把任务组胶囊条按当前配置重画。</summary>
+        /// <summary>切到「数据采集」视图时调一次：把任务组下拉框按当前配置重填。</summary>
         private void RefreshAcqOverviewView()
         {
             BindAcqHistoryGridSource();
-            RefreshAcqGroupChips();
+            RefreshAcqGroupCombo();
         }
 
         private void BindAcqHistoryGridSource()
@@ -132,15 +132,15 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 按 <c>_acqTaskSet</c> 重建任务组胶囊条。
+        /// 按 <c>_acqTaskSet</c> 重填任务组下拉框（2026-10-31 由胶囊条改来）。
         /// <para>
         /// 列**全部**任务组（读取 + 写入都列），禁用的也照列、名称后加「（停用）」——
         /// 藏起来会让「我在数据管理页明明建了这一组」变成悬案。
         /// </para>
         /// </summary>
-        private void RefreshAcqGroupChips()
+        private void RefreshAcqGroupCombo()
         {
-            if (AcqOverviewGroupChips == null)
+            if (AcqOverviewGroupCombo == null)
             {
                 return;
             }
@@ -152,63 +152,68 @@ namespace DSH_Modbus采集工具
             int count = items?.Count ?? 0;
             string previous = _acqHistoryGroup;
 
-            _acqChipRebuilding = true;
+            // 重填期间必须挡住 SelectionChanged：Items.Clear() 与逐项 Add 都会触发它，
+            // 会被当成「用户换了组」，于是在重建的中途就去读文件（读到空表又要再清一次）
+            _acqComboRebuilding = true;
             try
             {
-                AcqOverviewGroupChips.Children.Clear();
+                AcqOverviewGroupCombo.Items.Clear();
 
                 for (int i = 0; i < count; i++)
                 {
                     AcquisitionTask task = items![i].Model;
                     string name = task.Name ?? string.Empty;
 
-                    var chip = new RadioButton
+                    // 显示名带「（停用）」后缀，但 Tag 存**真名** —— 回查任务组用真名，
+                    // 拿显示名去比会永远比不到（后缀是纯展示）
+                    AcqOverviewGroupCombo.Items.Add(new ComboBoxItem
                     {
                         Content = task.Enabled ? name : name + "（停用）",
-                        GroupName = "AcqOverviewGroup",
                         Tag = name,
-                        // 贴在灰底轨道里、彼此不留缝 —— 与设备监控那排分段同一个观感
-                    };
+                    });
+                }
 
-                    chip.SetResourceReference(StyleProperty, "AcqGroupChipRadioButton");
-                    chip.Checked += AcqGroupChip_Checked;
-                    AcqOverviewGroupChips.Children.Add(chip);
+                bool hasGroup = count > 0;
+
+                // 没有任务组时，页签与表格整块收起，只留一句提示
+                SetVisibility(AcqOverviewTopBar, hasGroup);
+                SetVisibility(AcqOverviewDivider, hasGroup);
+                SetVisibility(AcqNoGroupHint, !hasGroup);
+
+                if (!hasGroup)
+                {
+                    _acqHistoryGroup = string.Empty;
+                    ResetAcqHistory();
+                    return;
+                }
+
+                // 尽量停在原来那一组；组被删了就退回第一组
+                int pick = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    if (string.Equals(items![i].Model.Name, previous, StringComparison.Ordinal))
+                    {
+                        pick = i;
+                        break;
+                    }
+                }
+
+                AcqOverviewGroupCombo.SelectedIndex = pick;
+
+                // ⚠️ 重建期间事件是被挡住的，所以「当前选中组」必须在这里**手工同步**。
+                // 漏了这步的后果：下拉框明明显示「心跳」，表格却说「请先选择一个任务组」——
+                // 因为 _acqHistoryGroup 还停在空串上（实测踩到过）。
+                string picked = items![pick].Model.Name ?? string.Empty;
+                if (!string.Equals(_acqHistoryGroup, picked, StringComparison.Ordinal))
+                {
+                    // 原组被删/改名 → 落到别的组上，旧表格的行和列都不能留着
+                    _acqHistoryGroup = picked;
+                    ResetAcqHistory();
                 }
             }
             finally
             {
-                _acqChipRebuilding = false;
-            }
-
-            bool hasGroup = count > 0;
-
-            // 没有任务组时，二级分段与表格整块收起，只留一句提示
-            SetVisibility(AcqOverviewChipScroller, hasGroup);
-            SetVisibility(AcqOverviewDivider, hasGroup);
-            SetVisibility(AcqOverviewSubBar, hasGroup);
-            SetVisibility(AcqNoGroupHint, !hasGroup);
-
-            if (!hasGroup)
-            {
-                _acqHistoryGroup = string.Empty;
-                ResetAcqHistory();
-                return;
-            }
-
-            // 尽量停在原来那一组；组被删了就退回第一组
-            int pick = 0;
-            for (int i = 0; i < count; i++)
-            {
-                if (string.Equals(items![i].Model.Name, previous, StringComparison.Ordinal))
-                {
-                    pick = i;
-                    break;
-                }
-            }
-
-            if (AcqOverviewGroupChips.Children[pick] is RadioButton target)
-            {
-                target.IsChecked = true;
+                _acqComboRebuilding = false;
             }
         }
 
@@ -220,15 +225,18 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        private void AcqGroupChip_Checked(object sender, RoutedEventArgs e)
+        /// <summary>任务组下拉框换选中项。</summary>
+        private void AcqGroupCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_acqChipRebuilding || sender is not RadioButton chip)
+            if (_acqComboRebuilding)
             {
                 return;
             }
 
-            string name = chip.Tag as string ?? string.Empty;
-            if (string.Equals(_acqHistoryGroup, name, StringComparison.Ordinal))
+            string name = (AcqOverviewGroupCombo?.SelectedItem as ComboBoxItem)?.Tag as string
+                ?? string.Empty;
+
+            if (name.Length == 0 || string.Equals(_acqHistoryGroup, name, StringComparison.Ordinal))
             {
                 return;
             }
@@ -252,12 +260,30 @@ namespace DSH_Modbus采集工具
             SetVisibility(AcqLiveHint, !history);
             SetVisibility(AcqHistoryPanel, history);
 
+            // 文件名只跟着「历史数据」走：它说明的是「表里这些行来自哪个文件」，
+            // 摆在实时数据页签下会让人以为实时数据也出自该文件
+            SyncAcqHistoryFileTextVisibility();
+
             SyncAcquisitionViewTimer();
 
             if (history)
             {
                 RefreshAcqHistoryTable(force: false);
             }
+        }
+
+        /// <summary>文件名文本：仅当停在「历史数据」且确实有文件时才显示。</summary>
+        private void SyncAcqHistoryFileTextVisibility()
+        {
+            if (AcqHistoryFileText == null)
+            {
+                return;
+            }
+
+            bool show = AcqHistorySegment?.IsChecked == true
+                && AcqHistoryFileText.Text.Length > 0;
+
+            AcqHistoryFileText.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         }
 
         // ---------- 历史表格 ----------
@@ -295,6 +321,7 @@ namespace DSH_Modbus采集工具
             if (AcqHistoryFileText != null)
             {
                 AcqHistoryFileText.Text = string.Empty;
+                SyncAcqHistoryFileTextVisibility();
             }
         }
 
@@ -588,6 +615,9 @@ namespace DSH_Modbus采集工具
             {
                 AcqHistoryFileText.Text = Path.GetFileName(path);
             }
+
+            // 文本变了要顺带重算可见性：切到「历史数据」时文件可能还没解析出来
+            SyncAcqHistoryFileTextVisibility();
         }
 
         private void ShowAcqHistoryHint(string message, bool error = false)
