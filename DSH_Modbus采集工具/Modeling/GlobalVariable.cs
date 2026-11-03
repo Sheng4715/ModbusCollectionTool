@@ -62,6 +62,23 @@ namespace DSH_Modbus采集工具.Modeling
         [JsonIgnore]
         public string Value { get; set; } = "0";
 
+        /// <summary>
+        /// 当前值的**数值形态**（P1.4 实时数据用）。**不持久化**。
+        /// <para>
+        /// 存在的理由：<see cref="Value"/> 是**按显示格式转好的文本** —— 一个 INT/Hex 的变量
+        /// 它的值是 <c>"2A"</c> 而不是 <c>"42"</c>，BOOL 是 <c>"1"</c>/<c>"0"</c>。
+        /// 实时卡片一律按十进制显示（用户定案 2026-10-31），若从 <see cref="Value"/>
+        /// 反解回数值，<c>STRING</c> 里恰好是 <c>"2A"</c> 这种内容就会被误当十六进制 ——
+        /// 字符串没法反解。故在回填处顺手存一份数值，卡片直接读，不反解。
+        /// </para>
+        /// <para>
+        /// <c>null</c> = 没有数值形态（<c>STRING</c>，或从未采到过）。
+        /// BOOL 存 0 / 1；其余数值类型存原值。
+        /// </para>
+        /// </summary>
+        [JsonIgnore]
+        public double? Numeric { get; set; }
+
         /// <summary>解析后的 Modbus 绝对地址；未关联或解析失败时为 −1。**不持久化**。</summary>
         [JsonIgnore]
         public int ResolvedAddress { get; set; } = -1;
@@ -519,6 +536,10 @@ namespace DSH_Modbus采集工具.Modeling
             foreach (GlobalVariable v in _items)
             {
                 v.Value = GlobalVariableRules.InitialValue(v.Type);
+
+                // 数值形态要一起清，否则「重置了但实时卡片还显示旧数」——
+                // 卡片读的是 Numeric，不是 Value
+                v.Numeric = null;
             }
         }
 

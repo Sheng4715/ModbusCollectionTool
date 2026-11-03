@@ -10,7 +10,7 @@
 > 原因是本文件曾在 136 KB 时**超过工作区指令预算（65536 字节）而被整体丢弃**，规则一条都没进上下文。
 > **改到上述任一功能时，动手前先读 `AGENTS-细节.md` 的对应章节** —— 那里有成条的 ⚠️ 坑。
 >
-> 📏 **预算红线**：本文件当前约 **61 KB**，加上框架开销（约 365 B）后余量只剩 **2.8 KB**。
+> 📏 **预算红线**：本文件当前约 **62 KB**，加上框架开销（约 365 B）后余量只剩 **1.4 KB**。
 > **新增内容前先算一下总字节**（`(Get-Item AGENTS.md).Length`）；超过 64 KB 就又会被静默丢弃。
 > 需要写长段落时放进 `AGENTS-细节.md`，本文件只留一句指向。
 
@@ -41,11 +41,12 @@ DSH_Modbus采集工具/
 ├── MainWindow.xaml             # 全部 UI（单窗口，唯一例外是状态机画布 MachineStateView）
 ├── MainWindow.xaml.cs          # 交互逻辑主体（见 §4 分工）
 ├── MainWindow.MachineState.cs  # partial：状态机画布接线（2026-10-29 拆分，见 §4）
-├── MainWindow.Acquisition.cs   # partial：采集数据分段
+├── MainWindow.Acquisition.cs   # partial：数据采集分段（任务组/数据项/执行）
 ├── MainWindow.GlobalVar.cs     # partial：全局变量分段
 ├── MainWindow.Monitor.cs       # partial：自由监控分段
 ├── MainWindow.IoImport.cs      # partial：IO 表导入
-├── MainWindow.AcquisitionView.cs # partial：总览「数据采集」视图（2026-10-31，见 `AGENTS-细节.md` §5.8）
+├── MainWindow.AcquisitionView.cs # partial：总览「数据采集」视图骨架（2026-10-31，见 `AGENTS-细节.md` §5.8）
+├── MainWindow.AcquisitionLive.cs # partial：实时数据画布（卡片拖动/缩放/背景图，2026-11-02，见 `AGENTS-细节.md` §5.8.1）
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
 ├── GlobalVarItem.cs            # 全局变量：GlobalVariable 的界面包装 + 集合（增删改/落盘）
 ├── AcquisitionTaskItem.cs      # 采集任务组/数据项的界面包装（列随类型变、配置错误态）
@@ -85,9 +86,11 @@ DSH_Modbus采集工具/
 │   ├── SystemVariableValues.cs # 系统变量取值（脉冲 / 时钟 / 运行时长，纯函数）
 │   ├── MachineState.cs         # 状态机模型 + 布局常量 + Lamps + machine-state.json 持久化
 │   ├── AcquisitionTask.cs      # 采集任务组/数据项模型 + 规则 + acquisition-tasks.json
+│   ├── LiveImageStore.cs       # 实时背景图拷贝规则（同名加序号 / 同内容复用，纯文件操作）
 │   ├── AcquisitionCsv.cs       # CSV 建文件 / 表头 / 追加 / 列变换文件
 │   ├── AcquisitionSource.cs    # 来源变量解析（系统变量优先于全局变量）
 │   ├── AcquisitionTaskCheck.cs # 配置错误判据（纯逻辑）
+│   ├── LiveCoordinateText.cs   # 实时卡片坐标框文本规则（只接受整数，纯逻辑）
 │   └── AcquisitionWrite.cs     # 写入任务的编码与 TryBuild（纯逻辑）
 ├── Logging/                    # 日志落盘与文案规则（不含 WPF 类型）
 │   ├── DeviceLogFileWriter.cs  # 按天追加纯文本 .log + 跨天换文件 + 失败自愈
@@ -107,6 +110,8 @@ DSH_Modbus采集工具/
 │   ├── MachineStateEditDialog.cs  # 状态框编辑窗
 │   ├── MachineLampEditDialog.cs   # 指示灯编辑窗（见 `AGENTS-细节.md` §5.5）
 │   ├── AcquisitionTaskDialog.cs   # 任务选项对话框（名称/类型/执行方式/表达式/记录）
+│   ├── AcquireLiveCardOptionDialog.cs # 实时卡片选项：两个字号 + X/Y 坐标（只到整数）+ 重置位置
+│   ├── LiveImagePicker.cs      # 实时背景图选择弹框（两个入口共用）
 │   └── NumberInputDialog.cs    # STRING 长度等单值输入弹窗
 └── Drivers/
     ├── CommDriver.cs           # 模型：ModbusArea / NumberBase / AddressArea / CommDriver（含字节顺序枚举）
@@ -159,7 +164,7 @@ Window
 | `OverviewNav` 总览 | `OverviewPanel` | 视图切换在**页头右侧下拉框**「当前视图」（`FormComboBox`），**三项**：`PLC状态机`（P1.2）/ `生产数据`（占位）/ `数据采集`（P1.4，见 `AGENTS-细节.md` §5.5 与 §5.8）；卡片内只有当前视图 + 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | 连接表单 |
-| `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「采集数据」（P3.1，执行与 CSV 均已实现，见 `AGENTS-细节.md` §5.7）/「全局变量」（P3.3，见 `AGENTS-细节.md` §5.2）/「系统变量」（P3.5，只读清单，见 `AGENTS-细节.md` §5.3） |
+| `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，执行与 CSV 均已实现，见 `AGENTS-细节.md` §5.7）/「全局变量」（P3.3，见 `AGENTS-细节.md` §5.2）/「系统变量」（P3.5，只读清单，见 `AGENTS-细节.md` §5.3） |
 | `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 自动连接（见 `AGENTS-细节.md` §7.2）+ 日志保存（P5.2）+ 项目信息（P5.3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
@@ -211,7 +216,8 @@ Window
 | `AcqEnableSwitch` | 采集任务组「启用」开关，`BasedOn` `ToggleSwitch`，只补「文案随 `IsChecked` 变」（开/关）。⚠️ 必须在 `Style.Triggers` 里换 `Content`，模板触发器压不过局部值 |
 | `AcquisitionSourceBox` / `AcquisitionTargetBox` | 采集写入任务的「来源变量」/「写入变量」输入框，`BasedOn` `MonitorInlineTextBox`，只加「有错时字变红」。⚠️ `BasedOn` 要求被继承者**先定义** |
 | `AcquisitionTaskRowTemplate` | 采集任务组行（7 列：#/名称/类型/执行方式/启用/共N项/… × ↑↓）+ 展开的数据项子表（浅底块） |
-| `AcquisitionItemRowTemplate` | 采集数据项行（序号 / 项名称 / 变量名称 / **数据类型只读** / 删除） |
+| `AcquisitionItemRowTemplate` | 数据采集项行（序号 / 项名称 / 变量名称 / **数据类型只读** / 删除） |
+| `AcqLiveCard`（代码构造） | 实时数据卡片：`Border` + 项名称 + 数值，直接放 Canvas 里拖动（见 `AGENTS-细节.md` §5.8.1） |
 | `LogClearButton` | 日志卡「清空」按钮 |
 | `DeviceLogItemTemplate` | 日志行（时间戳灰 + 消息按级别着色） |
 | `DeviceLogListStyle` | 日志列表（透明底/无边框/无选中底色） |
@@ -222,7 +228,7 @@ Window
 
 ### 3.4 页面细节
 
-- **总览**：顶部「总览」标题 + 右侧「当前视图」下拉框（三项，见 §3.1）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。`数据采集` 视图是卡片内第二层（左：实时-历史页签 + 文件名 / 右：任务组下拉框 / 分隔线 / 表格），见 `AGENTS-细节.md` §5.8
+- **总览**：顶部「总览」标题 + 右侧「当前视图」下拉框（三项，见 §3.1）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**，另两页照滚。`数据采集` 视图是卡片内第二层（顶栏顺序：任务组下拉框 → 实时-历史页签 → 完整文件路径 / 分隔线 / 表格；卡片画布见 §5.8.1），见 `AGENTS-细节.md` §5.8
 - **设备监控**：见 `AGENTS-细节.md` §5 IO 监控 / `AGENTS-细节.md` §5.1 自由监控。
 - **设备连接**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 32 位浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（见 `AGENTS-细节.md` §8.1）。连接中锁定表单（`SetInputsEnabled`）——**例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍即生效，锁上反而挡住现场纠正（见 `AGENTS-细节.md` §8.1）。串口模式仅隐藏以太网面板，**功能未实现**。
 
@@ -327,7 +333,7 @@ Window
 
 | 区块 | 关键成员 |
 |---|---|
-| **处理器在哪个 partial** | `MainWindow.xaml.cs`＝连接/心跳/导航/底栏/IO 分页·导入·`SetInputsEnabled`/`AppendDeviceLog`/`SetStatus`/`ScanNetworkAdapters`；`MainWindow.Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`MainWindow.GlobalVar.cs`＝`GlobalVar*`·`RefreshMachineGlobals`；`MainWindow.Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`MainWindow.MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`MainWindow.IoImport.cs`＝IO 表导入；`MainWindow.AcquisitionView.cs`＝总览「数据采集」视图（任务组下拉框 / 历史表格 / 1 秒增量刷新） |
+| **处理器在哪个 partial** | `MainWindow.xaml.cs`＝连接/心跳/导航/底栏/IO 分页·导入·`SetInputsEnabled`/`AppendDeviceLog`/`SetStatus`/`ScanNetworkAdapters`；`MainWindow.Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`MainWindow.GlobalVar.cs`＝`GlobalVar*`·`RefreshMachineGlobals`；`MainWindow.Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`MainWindow.MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`MainWindow.IoImport.cs`＝IO 表导入；`MainWindow.AcquisitionView.cs`＝总览「数据采集」视图骨架（任务组下拉框 / 历史表格 / 1 秒增量刷新）；`MainWindow.AcquisitionLive.cs`＝实时画布（卡片拖动 / 缩放 / 背景图） |
 | 连接状态机 | `ConnectButton_Click`（表单校验 + 按钮三态）/ `TryConnectAsync` / `Disconnect()` / `Disconnect(status,color)` / `SetInputsEnabled`；**身份与生命周期在 `Polling/ConnectionSession.cs`**（`IsConnecting` / `IsCurrent` / `MarkConnected` / `ReleaseClient` / `ForgetTarget` / 重连计数）+ `RunConnectionTasksAsync` / `IsCurrentConnection` |
 | 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect`（**循环留在窗口**，逐秒刷状态栏/锁表单是界面驱动）；目标快照 `ReconnectTarget` 与退避表 `ReconnectPolicy` 在 `Polling/` |
 | 轮询（入口在本类，实现在 `Polling/`） | `_poller.PollLoopAsync` → `Polling/ModbusPoller.cs`（`PollOnceAsync` 按地址区分块 + 2000 点切窗 / `PollFreeMonitorAsync` 自由监控，按区选 FC01/03/04） |
@@ -546,7 +552,7 @@ public sealed class MyDialog : DialogWindow
 | **状态机指示灯 Error / Fault** | `MachineStateLamp`（含 Color/DotSize/FontSize）+ `MachineStateLayout.Lamps`/`LampDotSize`/`LampFontSize`（`Modeling/MachineState.cs`）+ 画布 `BuildLamps`/`ApplyLampState`/`LampVisual`（`Ui/MachineStateView.xaml.cs`）+ `Ui/MachineLampEditDialog.cs`（见 **`AGENTS-细节.md` §5.5**） |
 | **系统变量监控（P2.3，第四分段）** | `SystemVarRow.cs` + `SystemVariableValues.cs` + 窗口 `RefreshSystemVarValues` / `SyncSystemVarTimer` / `IoView_Checked`（见 **`AGENTS-细节.md` §5.4**） |
 | **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化/`GlobalVariableSet.Move`）+ `GlobalVarItem.cs`（界面包装 + `GlobalVarItemSet.Move`）+ 窗口 `GlobalVar*` 处理器；**排序** = 表头 ↑↓ 作用于选中行（见 **`AGENTS-细节.md` §5.2**；不读不写） |
-| **采集数据（P3.1，任务组/数据项/执行/CSV）** | 模型 `Modeling/AcquisitionTask.cs`（+ `AcquisitionTaskRules` 文案与类型规则）+ 行包装 `AcquisitionTaskItem.cs` + 对话框 `Ui/AcquisitionTaskDialog.cs`；执行与落盘 `Modeling/AcquisitionCsv.cs` + 窗口 `RunAcquisitionTick` / `RefreshAcquisitionGlobals`（50ms 常驻定时器，**不随页面可见性停**，见 **`AGENTS-细节.md` §5.7**） |
+| **数据采集（P3.1，任务组/数据项/执行/CSV）** | 模型 `Modeling/AcquisitionTask.cs`（+ `AcquisitionTaskRules` 文案与类型规则）+ 行包装 `AcquisitionTaskItem.cs` + 对话框 `Ui/AcquisitionTaskDialog.cs`；执行与落盘 `Modeling/AcquisitionCsv.cs` + 窗口 `RunAcquisitionTick` / `RefreshAcquisitionGlobals`（50ms 常驻定时器，**不随页面可见性停**，见 **`AGENTS-细节.md` §5.7**） |
 | **采集任务「配置错误」关开关/拦截** | 判据 `Modeling/AcquisitionTaskCheck.cs`（纯逻辑）+ 行属性 `HasConfigError` / `EffectiveEnabled` / `CanToggleEnabled`；提示在 `AcquisitionTaskRowTemplate` 第 4 列开关右侧；执行侧只判 `EffectiveEnabled`（`RefreshAcquisitionGlobals` 与 `RunAcquisitionTick`，见 **`AGENTS-细节.md` §5.7**） |
 | **采集「写入任务」真正下发** | `Modeling/AcquisitionWrite.cs`（TryBuild / DescribeFailure）+ `RunWriteTaskAsync`；Skipped=无地址静默跳过、失败不短路；CSV 只记写入变量回读值。**只读区（X / 离散输入 / 输入寄存器）只拦「写」不拦「映射」** —— 判定唯一来源是 `GlobalVariableStore.IsReadOnlyElement`（见 `AGENTS-细节.md` §5.7） |
 | **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |

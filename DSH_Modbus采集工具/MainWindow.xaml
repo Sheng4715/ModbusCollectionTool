@@ -581,7 +581,7 @@
         </Style>
 
         <!--
-            采集数据「来源变量」框：名字查不到时**字变红**。
+            数据采集「来源变量」框：名字查不到时**字变红**。
             ⚠️ 不能只靠 ToolTip 提示 —— 用户不知道它错，就不会去悬停，等于没有任何反馈。
             与右侧「数据类型」列的红字同一套语义。
             ⚠️ 必须定义在 MonitorInlineTextBox **之后**：BasedOn 走 StaticResource，
@@ -596,7 +596,7 @@
         </Style>
 
         <!--
-            采集数据「写入变量」框：两种状态都要看得见。
+            数据采集「写入变量」框：两种状态都要看得见。
             · **不可编辑**（写入类型下还没填来源变量）：靠 MonitorInlineTextBox 模板自带的
               IsEnabled=False 触发器变灰（底色 Brush.Input.Background.Disabled + 字色 Muted），
               这里不必再补一套；
@@ -2088,15 +2088,26 @@
                                         </Grid.RowDefinitions>
 
                                         <Grid x:Name="AcqOverviewTopBar" Grid.Row="0" Margin="0,0,0,8">
-                                            <!-- 左：二级页签（胶囊）+ 当前文件名 -->
+                                            <!-- 任务组下拉框在左，二级页签**紧跟其右**（2026-11-03 用户定案）。
+                                                 用左对齐的横向 StackPanel 顺排：两者间距固定 12，
+                                                 **不**把页签推到窗口右缘 —— 那样在小窗口下离得太远，
+                                                 眼睛要在同一行上横扫一遍才能把「哪一组」和「看什么」连起来。
+                                                 顺序也是视觉层级：任务组是主选择器，页签是次一级。 -->
                                             <StackPanel Orientation="Horizontal"
                                                         HorizontalAlignment="Left" VerticalAlignment="Center">
-                                                <!-- ⚠️ 胶囊外观来自外层这圈灰底 Border（与设备监控页同一套：
+                                                <ComboBox x:Name="AcqOverviewGroupCombo"
+                                                          Style="{StaticResource AcqGroupCombo}"
+                                                          Width="132"
+                                                          VerticalAlignment="Center"
+                                                          SelectionChanged="AcqGroupCombo_SelectionChanged"/>
+
+                                                <!-- 二级页签（胶囊）：贴在任务组下拉框右边。
+                                                     ⚠️ 胶囊外观来自外层这圈灰底 Border（与设备监控页同一套：
                                                      Brush.Control.Background + 圆角 6 + 内缩 2），
                                                      IoSegmentRadioButton 自己背景是透明的，少了这层就只剩一行文字。 -->
                                                 <Border Background="{DynamicResource Brush.Control.Background}"
                                                         CornerRadius="6" Padding="2"
-                                                        VerticalAlignment="Center">
+                                                        Margin="12,0,0,0" VerticalAlignment="Center">
                                                     <StackPanel Orientation="Horizontal">
                                                         <RadioButton x:Name="AcqLiveSegment" Content="实时数据"
                                                                      GroupName="AcqOverviewSub" IsChecked="True"
@@ -2108,35 +2119,70 @@
                                                                      Checked="AcqSubView_Checked"/>
                                                     </StackPanel>
                                                 </Border>
-                                                <!-- 只在历史数据页签下显示（由代码控制可见性） -->
+
+                                                <!-- 当前文件名：**在页签右侧**（2026-11-03 用户定案），
+                                                     只在「历史数据」页签下显示（由代码控制可见性）。
+                                                     放右边的好处：页签位置固定不动 —— 若放左边，
+                                                     切到历史页签时文件名一出现就把页签整体右推，看着在跳。
+                                                     ⚠️ **MaxWidth 不能省**（2026-11-03 起显示完整路径）：
+                                                     横向 StackPanel 按内容宽度排，不封顶时一条长路径
+                                                     会把页签挤出可视区；封顶后由 TextTrimming 出省略号。 -->
                                                 <TextBlock x:Name="AcqHistoryFileText"
                                                            VerticalAlignment="Center" Margin="12,0,0,0"
                                                            FontSize="12" Foreground="{DynamicResource Brush.Text.Faint}"
+                                                           MaxWidth="420"
                                                            TextTrimming="CharacterEllipsis"
+                                                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
                                                            Visibility="Collapsed"/>
+                                                <!-- 背景图入口**不在这里**（2026-11-03 用户定案删掉此处的
+                                                     「导入图片」按钮）：它与「数据管理 → 数据采集 → 任务组
+                                                     → 任务选项 → 实时背景图」是**同一件事**，都写
+                                                     AcquisitionTask.LiveImagePath。同一个字段两个入口，
+                                                     用户不知道该用哪个，且原按钮能力更弱（不能清除、看不到
+                                                     当前图名）。**只保留任务组选项那一处。** -->
                                             </StackPanel>
-
-                                            <!-- 右：任务组下拉框。
-                                                 2026-10-31 用户定案：去掉左侧「任务组」标签（卡片里
-                                                 只有这一个选择器，语义自明）；外观为**只有框线、无底色**
-                                                 （见 AcqGroupCombo 样式）。
-                                                 组多时靠下拉展开，不需要横向滚动。 -->
-                                            <ComboBox x:Name="AcqOverviewGroupCombo"
-                                                      Style="{StaticResource AcqGroupCombo}"
-                                                      Width="132"
-                                                      HorizontalAlignment="Right" VerticalAlignment="Center"
-                                                      SelectionChanged="AcqGroupCombo_SelectionChanged"/>
                                         </Grid>
 
                                         <Border x:Name="AcqOverviewDivider" Grid.Row="1"
                                                 Height="1" Margin="0,0,0,8"
                                                 Background="{DynamicResource Brush.Divider}"/>
 
-                                        <!-- 实时数据：本期占位 -->
-                                        <TextBlock x:Name="AcqLiveHint" Grid.Row="2"
-                                                   Text="规划中"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                   FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"/>
+                                        <!-- 实时数据（P1.4，2026-10-31；2026-11-02 改为自适应缩放）：
+                                             逻辑坐标**始终是 1280×720**（已保存的布局坐标因此永不失效），
+                                             但显示尺寸按可用区域**等比缩放、完整可见**，不出滚动条。
+                                             ⚠️ 卡片字号**不跟着缩**（用户定案）：只按比例换位置，
+                                             卡片本身保持原大小 —— 窗口小时也看得清。
+                                             缩放由 ApplyAcqLiveLayout() 在 SizeChanged 时重算。 -->
+                                        <Grid x:Name="AcqLivePanel" Grid.Row="2"
+                                              SizeChanged="AcqLivePanel_SizeChanged">
+                                            <!-- 画布尺寸由代码设，居中对齐；可用区域比 16:9 更宽/更高时两侧留空 -->
+                                            <!-- ⚠️ 不要给 Canvas 设 HorizontalAlignment=Center/VerticalAlignment=Center：
+                                                 那会让它在 Grid 里按**内容**测量，ActualWidth/ActualHeight 变成 0，
+                                                 于是画布没有命中区域 —— 卡片看得见但**点不到、拖不动**
+                                                 （2026-11-02 实测踩到，探针一直不打）。
+                                                 保持默认 Stretch，尺寸由代码设成面板大小。 -->
+                                            <Canvas x:Name="AcqLiveCanvas"
+                                                    Background="Transparent">
+                                                <!-- 背景图：由代码填 Source；没配图时整块不显示。
+                                                     Stretch=Uniform —— 原图长宽比与 16:9 不同时**不拉伸变形**，
+                                                     整张图完整可见（用户要求「完全显示整张图」）。 -->
+                                                <Image x:Name="AcqLiveBackground"
+                                                       Canvas.Left="0" Canvas.Top="0"
+                                                       Stretch="Uniform"
+                                                       Visibility="Collapsed"/>
+                                                <!-- 卡片由代码动态塞进这里（都在同一个 Canvas 里，
+                                                     没有 ItemsControl 那层 ContentPresenter —— 拖动时不会踩到
+                                                     「already the logical child of another element」） -->
+                                            </Canvas>
+
+                                            <!-- 空状态：没有任务组 / 组里没有数据项 / 没配图片 -->
+                                            <TextBlock x:Name="AcqLiveHint"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       FontSize="13" Foreground="{DynamicResource Brush.Text.Muted}"
+                                                       TextWrapping="Wrap" TextAlignment="Center"
+                                                       IsHitTestVisible="False"
+                                                       Visibility="Collapsed"/>
+                                        </Grid>
 
                                         <!-- 历史数据：列随 CSV 表头动态生成 -->
                                         <Grid x:Name="AcqHistoryPanel" Grid.Row="2" Visibility="Collapsed">
@@ -2566,7 +2612,7 @@
                     </Grid>
 
                     <!-- ================= 数据管理 =================
-                         两个分段：采集数据（P3.1，占位）/ 全局变量（P3.3，已实现）。
+                         两个分段：数据采集（P3.1，占位）/ 全局变量（P3.3，已实现）。
                          分段的写法照抄设备监控页（IoSegmentRadioButton + 同格叠放），
                          保持两页的切换手感一致。
 
@@ -2596,13 +2642,13 @@
                                     <RowDefinition Height="*"/>      <!-- 内容（占满剩余） -->
                                 </Grid.RowDefinitions>
 
-                                <!-- 分段切换（采集数据 / 全局变量） -->
+                                <!-- 分段切换（数据采集 / 全局变量） -->
                                 <Grid Grid.Row="0" Margin="0,0,0,8">
                                     <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
                                             HorizontalAlignment="Left" VerticalAlignment="Center">
                                         <StackPanel Orientation="Horizontal">
                                             <RadioButton x:Name="AcquisitionDataSegment"
-                                                         Content="采集数据"
+                                                         Content="数据采集"
                                                          GroupName="AcqView"
                                                          IsChecked="True"
                                                          Style="{StaticResource IoSegmentRadioButton}"
@@ -2624,7 +2670,7 @@
                                 <Border Grid.Row="1" Height="1" Background="{DynamicResource Brush.Divider}" Margin="0,0,0,8"/>
 
                                 <Grid Grid.Row="2">
-                                    <!-- 采集数据（P3.1）
+                                    <!-- 数据采集（P3.1）
                                          表格式：表头 + 任务组（可展开成数据项子表），
                                          与全局变量表同为「表头常驻、只让列表滚动」，故不写 MaxHeight。
                                          ⚠️ 本版只做 UI：采集/CSV 落盘都还没接（见 Brief P3.1）。 -->

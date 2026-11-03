@@ -134,8 +134,13 @@ namespace DSH_Modbus采集工具
         /// <summary>
         /// 按 <c>_acqTaskSet</c> 重填任务组下拉框（2026-10-31 由胶囊条改来）。
         /// <para>
-        /// 列**全部**任务组（读取 + 写入都列），禁用的也照列、名称后加「（停用）」——
-        /// 藏起来会让「我在数据管理页明明建了这一组」变成悬案。
+        /// **只列能采的组**（2026-10-31 用户定案）：停用、配置错误、一个数据项都没有的组都不出现。
+        /// 理由是这两类组根本不会有数据 —— 列出来点进去只会看到一片占位，
+        /// 用户会以为「功能坏了」，而真正的原因是组没开。
+        /// </para>
+        /// <para>
+        /// ⚠️ 与历史数据页签**共用**这个下拉框，所以历史数据也只能看能采的组 ——
+        /// 这是同一处改动的副作用，已确认可接受（停用的组不产新数据，看旧文件的诉求走文件系统）。
         /// </para>
         /// </summary>
         private void RefreshAcqGroupCombo()
@@ -149,8 +154,21 @@ namespace DSH_Modbus采集工具
             // 免得后面每次下标访问都要再空判一遍
             ObservableCollection<AcquisitionTaskItem>? items = _acqTaskSet?.Items;
 
-            int count = items?.Count ?? 0;
+            int total = items?.Count ?? 0;
             string previous = _acqHistoryGroup;
+
+            // 可采集的组：启用且无配置错误（EffectiveEnabled 同时覆盖两者）
+            var usable = new List<AcquisitionTaskItem>();
+            for (int i = 0; i < total; i++)
+            {
+                AcquisitionTaskItem candidate = items![i];
+                if (candidate.EffectiveEnabled)
+                {
+                    usable.Add(candidate);
+                }
+            }
+
+            int count = usable.Count;
 
             // 重填期间必须挡住 SelectionChanged：Items.Clear() 与逐项 Add 都会触发它，
             // 会被当成「用户换了组」，于是在重建的中途就去读文件（读到空表又要再清一次）
@@ -161,37 +179,48 @@ namespace DSH_Modbus采集工具
 
                 for (int i = 0; i < count; i++)
                 {
-                    AcquisitionTask task = items![i].Model;
+                    AcquisitionTask task = usable[i].Model;
                     string name = task.Name ?? string.Empty;
 
-                    // 显示名带「（停用）」后缀，但 Tag 存**真名** —— 回查任务组用真名，
-                    // 拿显示名去比会永远比不到（后缀是纯展示）
+                    // Tag 存**真名** —— 回查任务组用真名
                     AcqOverviewGroupCombo.Items.Add(new ComboBoxItem
                     {
-                        Content = task.Enabled ? name : name + "（停用）",
+                        Content = name,
                         Tag = name,
                     });
                 }
 
                 bool hasGroup = count > 0;
 
-                // 没有任务组时，页签与表格整块收起，只留一句提示
+                // 没得选的时，页签与内容整块收起，只留一句提示
                 SetVisibility(AcqOverviewTopBar, hasGroup);
                 SetVisibility(AcqOverviewDivider, hasGroup);
-                SetVisibility(AcqNoGroupHint, !hasGroup);
 
                 if (!hasGroup)
                 {
+                    // 提示语要区分「一个组都没建」与「建了但都不能用」——
+                    // 两种情况用户要做的事完全不同
+                    SetVisibility(AcqNoGroupHint, true);
+                    if (AcqNoGroupHint != null)
+                    {
+                        AcqNoGroupHint.Text = total == 0
+                            ? "尚未添加任务组，请到数据管理页新增"
+                            : "没有可用的任务组（需启用且无配置错误）";
+                    }
+
                     _acqHistoryGroup = string.Empty;
                     ResetAcqHistory();
+                    RebuildAcqLiveCanvas();
                     return;
                 }
 
-                // 尽量停在原来那一组；组被删了就退回第一组
+                SetVisibility(AcqNoGroupHint, false);
+
+                // 尽量停在原来那一组；组被删/禁用/改错后就退回第一组
                 int pick = 0;
                 for (int i = 0; i < count; i++)
                 {
-                    if (string.Equals(items![i].Model.Name, previous, StringComparison.Ordinal))
+                    if (string.Equals(usable[i].Model.Name, previous, StringComparison.Ordinal))
                     {
                         pick = i;
                         break;
@@ -203,13 +232,15 @@ namespace DSH_Modbus采集工具
                 // ⚠️ 重建期间事件是被挡住的，所以「当前选中组」必须在这里**手工同步**。
                 // 漏了这步的后果：下拉框明明显示「心跳」，表格却说「请先选择一个任务组」——
                 // 因为 _acqHistoryGroup 还停在空串上（实测踩到过）。
-                string picked = items![pick].Model.Name ?? string.Empty;
+                string picked = usable[pick].Model.Name ?? string.Empty;
                 if (!string.Equals(_acqHistoryGroup, picked, StringComparison.Ordinal))
                 {
                     // 原组被删/改名 → 落到别的组上，旧表格的行和列都不能留着
                     _acqHistoryGroup = picked;
                     ResetAcqHistory();
                 }
+
+                RebuildAcqLiveCanvas();
             }
             finally
             {
@@ -249,7 +280,7 @@ namespace DSH_Modbus采集工具
         /// <summary>二级页签：实时数据 / 历史数据。</summary>
         private void AcqSubView_Checked(object sender, RoutedEventArgs e)
         {
-            if (AcqLiveHint == null || AcqHistoryPanel == null)
+            if (AcqLivePanel == null || AcqHistoryPanel == null)
             {
                 // 初始化期间就会触发一次（XAML 里 IsChecked="True"），那时控件还没造全
                 return;
@@ -257,7 +288,7 @@ namespace DSH_Modbus采集工具
 
             bool history = AcqHistorySegment?.IsChecked == true;
 
-            SetVisibility(AcqLiveHint, !history);
+            SetVisibility(AcqLivePanel, !history);
             SetVisibility(AcqHistoryPanel, history);
 
             // 文件名只跟着「历史数据」走：它说明的是「表里这些行来自哪个文件」，
@@ -269,6 +300,12 @@ namespace DSH_Modbus采集工具
             if (history)
             {
                 RefreshAcqHistoryTable(force: false);
+            }
+            else
+            {
+                // 切回实时数据：卡片是按需重建的，这里补一次（期间数据项可能变过）
+                RebuildAcqLiveCanvas();
+                RefreshAcqLiveValues();
             }
         }
 
@@ -613,7 +650,11 @@ namespace DSH_Modbus采集工具
         {
             if (AcqHistoryFileText != null)
             {
-                AcqHistoryFileText.Text = Path.GetFileName(path);
+                // 显示**完整路径**（2026-11-03 用户要求改回全路径，早前只显示文件名）：
+                // 同一任务组的历史数据按日期分文件、还可能落在自定义保存目录里，
+                // 光看文件名分不清「哪个目录下的哪一天」。
+                // 路径太长时由 TextTrimming 出省略号，不会把布局撑开。
+                AcqHistoryFileText.Text = path;
             }
 
             // 文本变了要顺带重算可见性：切到「历史数据」时文件可能还没解析出来

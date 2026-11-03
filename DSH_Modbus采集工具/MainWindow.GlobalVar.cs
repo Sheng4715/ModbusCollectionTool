@@ -423,7 +423,7 @@ namespace DSH_Modbus采集工具
             // 放在下面的早退之前：没有监控行时也要更新状态机的清单与采集项的类型列
             RefreshMachineGlobals();
 
-            // 采集数据项的「数据类型」是从变量表反推的，变量改名/换类型后这里会变成旧值
+            // 数据采集项的「数据类型」是从变量表反推的，变量改名/换类型后这里会变成旧值
             _acqTaskSet.RefreshVariables();
 
             if (_monitorSet.Items.Count == 0)

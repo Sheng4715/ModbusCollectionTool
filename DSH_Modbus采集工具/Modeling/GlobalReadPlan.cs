@@ -144,7 +144,11 @@ public static class GlobalReadPlan
                         continue;
                     }
 
-                    e.Variable.Value = ValueCodec.FormatCoil(coils[e.Offset]);
+                    bool on = coils[e.Offset];
+                    e.Variable.Value = ValueCodec.FormatCoil(on);
+
+                    // 数值形态：实时卡片显示 TRUE/FALSE 靠它（见 AcquisitionLiveText）
+                    e.Variable.Numeric = on ? 1d : 0d;
                 }
                 else
                 {
@@ -156,6 +160,9 @@ public static class GlobalReadPlan
                     ReadOnlySpan<ushort> slice = registers.AsSpan(e.Offset, e.Units);
                     e.Variable.Value = ValueCodec.FormatRegisters(
                         e.Variable.Type, slice, e.Variable.Format, orders, e.Variable.Length);
+
+                    // 顺手存一份数值：实时卡片一律十进制，不能从 Value 反解（见 Numeric 的注释）
+                    e.Variable.Numeric = ValueCodec.DecodeNumber(e.Variable.Type, slice, orders);
                 }
             }
             catch (Exception)

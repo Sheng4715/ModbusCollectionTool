@@ -183,6 +183,29 @@ namespace DSH_Modbus采集工具.Modeling
             return FormatInteger(type, raw, format);
         }
 
+        /// <summary>
+        /// 把寄存器原始值解成**数值**（与显示格式无关）。P1.4 实时数据用。
+        /// <para>
+        /// 与 <see cref="FormatRegisters"/> 分开：那个出的是给人看的文本（可能是 Hex / Bin），
+        /// 实时卡片一律十进制显示，从文本反解会遇到「STRING 内容恰好是 2A」这种歧义。
+        /// </para>
+        /// </summary>
+        /// <returns>数值；<c>STRING</c> 没有数值形态，返回 <c>null</c>。</returns>
+        public static double? DecodeNumber(DataType type, ReadOnlySpan<ushort> regs, ByteOrderSettings orders)
+        {
+            if (type == DataType.String)
+            {
+                return null;
+            }
+
+            if (type == DataType.Real)
+            {
+                return DecodeReal(regs, orders.Float);
+            }
+
+            return DecodeInteger(type, regs, orders.Int32);
+        }
+
         /// <summary>把 <see cref="DecodeInteger"/> 的位模式按声明类型解释并格式化。</summary>
         public static string FormatInteger(DataType type, long raw, DisplayFormat format)
         {

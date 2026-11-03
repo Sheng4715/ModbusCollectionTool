@@ -470,7 +470,13 @@ namespace DSH_Modbus采集工具
         /// <summary>新增一个数据项并返回（默认名「项N」）</summary>
         public AcquisitionItemRow AddItem()
         {
-            var model = new AcquisitionItem { Name = AcquisitionTaskRules.NextItemName(Model.Items) };
+            var model = new AcquisitionItem
+            {
+                Name = AcquisitionTaskRules.NextItemName(Model.Items),
+
+                // 稳定标识：实时画布的布局按它存（改项名不会丢位置）
+                Id = AcquisitionTaskSet.NewItemId(),
+            };
             Model.Items.Add(model);
 
             var row = new AcquisitionItemRow(model, _findVariable);
@@ -534,7 +540,8 @@ namespace DSH_Modbus采集工具
             string? expression,
             bool logEnabled,
             bool recordEnabled,
-            string? savePath)
+            string? savePath,
+            string? liveImagePath = null)
         {
             Model.Kind = kind;
             Model.Trigger = trigger;
@@ -543,6 +550,7 @@ namespace DSH_Modbus采集工具
             Model.LogEnabled = logEnabled;
             Model.RecordEnabled = recordEnabled;
             Model.SavePath = savePath ?? string.Empty;
+            Model.LiveImagePath = liveImagePath ?? string.Empty;
 
             // 从写入切回读取时，「来源变量」不再有意义。留着不清的话，切回写入会
             // 冒出上次的残留值，而用户中途早改过别的项了，看见只会困惑。

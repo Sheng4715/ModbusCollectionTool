@@ -67,6 +67,12 @@ namespace DSH_Modbus采集工具.Ui
         private readonly RadioButton _recordOffRadio;
         private readonly RadioButton _recordOnRadio;
         private readonly TextBox _pathBox;
+
+        /// <summary>实时背景图（相对 exe 的路径）；只读，走「选择…」改。</summary>
+        private readonly TextBox _liveImageBox;
+
+        /// <summary>当前选中的实时背景图相对路径（空串 = 没配）。</summary>
+        private string _liveImagePath = string.Empty;
         private readonly Button _browseButton;
         private readonly TextBlock _error;
 
@@ -249,6 +255,46 @@ namespace DSH_Modbus采集工具.Ui
 
             Place(root, _expressionBox, row++, new Thickness(0), stretch: true);
 
+            // 实时数据背景图（P1.4，2026-10-31）：**每个任务组一张**，随组切换。
+            // 选了之后会**拷贝**进 exe 旁的 Images\ 并只存相对路径 ——
+            // 存绝对路径的话对方机器换个盘符图就没了，而且用户完全不知道
+            // （表现为实时页一片空白）。
+            AddLabel(root, "实时背景图", row, bottomMargin: 0);
+
+            _liveImagePath = task.LiveImagePath ?? string.Empty;
+            _liveImageBox = MakeTextBox(_liveImagePath)
+            ;
+            _liveImageBox.IsReadOnly = true;   // 只能通过「选择…」改，免得手打出一个不存在的路径
+            _liveImageBox.Margin = new Thickness(0, 0, 8, 0);
+
+            var imageLine = new Grid();
+            imageLine.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            imageLine.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(_liveImageBox, 0);
+            imageLine.Children.Add(_liveImageBox);
+
+            var browseImage = MakeButton("选择…", primary: false);
+            browseImage.Margin = new Thickness(0);
+            browseImage.Click += (_, _) => PickLiveImage();
+            Grid.SetColumn(browseImage, 1);
+            imageLine.Children.Add(browseImage);
+
+            if ((task.LiveImagePath ?? string.Empty).Length > 0)
+            {
+                var clearImage = MakeButton("清除", primary: false);
+                clearImage.Margin = new Thickness(8, 0, 0, 0);
+                clearImage.Click += (_, _) =>
+                {
+                    _liveImagePath = string.Empty;
+                    _liveImageBox.Text = string.Empty;
+                };
+                Grid.SetColumn(clearImage, 2);
+                imageLine.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                imageLine.Children.Add(clearImage);
+            }
+
+            Place(root, imageLine, row++, new Thickness(0), stretch: true);
+
             // 只在「触发」下可填的两项：置灰而不是隐藏 —— 隐藏会让对话框在两档之间
             // 忽高忽低，用户点一下就得重新找控件在哪。
             _periodRadio.Checked += (_, _) => SyncModeEnabled();
@@ -354,6 +400,9 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>保存路径（父目录）。空串 = 用默认的 DeviceData。</summary>
         public string SavePathValue => _pathBox.Text.Trim();
 
+        /// <summary>实时背景图相对路径（空串 = 没配图）。</summary>
+        public string LiveImagePathValue => _liveImagePath;
+
         /// <summary>弹出对话框；用户取消返回 <c>null</c>。</summary>
         public static AcquisitionTaskDialog? Ask(
             Window owner,
@@ -403,6 +452,33 @@ namespace DSH_Modbus采集工具.Ui
             if (dialog.ShowDialog(this) == true)
             {
                 _pathBox.Text = dialog.FolderName;
+            }
+        }
+
+        /// <summary>
+        /// 选实时背景图：走 <see cref="LiveImagePicker"/> ——
+        /// 两处入口（本对话框 / 总览页「导入图片」按钮）共用同一份拷贝规则。
+        /// </summary>
+        private void PickLiveImage()
+        {
+            try
+            {
+                // 已配过图就从那张图所在目录开始找，否则每次都要从头翻
+                string? relative = LiveImagePicker.Pick(this, _liveImagePath);
+                if (relative == null)
+                {
+                    return;   // 用户取消
+                }
+
+                _liveImagePath = relative;
+                _liveImageBox.Text = relative;
+                _error.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                // 内联报错（不用 MessageBox：抢焦点、不跟主题）
+                _error.Text = "图片拷贝失败：" + ex.Message;
+                _error.Visibility = Visibility.Visible;
             }
         }
 

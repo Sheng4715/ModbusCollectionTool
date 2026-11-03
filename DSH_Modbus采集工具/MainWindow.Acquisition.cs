@@ -33,7 +33,7 @@ namespace DSH_Modbus采集工具
     {
         // ---------- 数据管理页分段（P3.1 / P3.3） ----------
 
-        /// <summary>数据管理页分段切换：采集数据 / 全局变量 / 系统变量。</summary>
+        /// <summary>数据管理页分段切换：数据采集 / 全局变量 / 系统变量。</summary>
         private void AcqView_Checked(object sender, RoutedEventArgs e)
         {
             if (AcquisitionDataPanel == null || GlobalVarPanel == null || SystemVarPanel == null
@@ -87,10 +87,13 @@ namespace DSH_Modbus采集工具
             RefreshAcquisitionGlobals();
 
             // 总览页「数据采集」视图的任务组下拉框也按当前配置重填（改名/停用/增删即时反映）
-            if (AcquisitionDataView != null && AcquisitionDataView.Visibility == Visibility.Visible)
-            {
-                RefreshAcqGroupCombo();
-            }
+            //
+            // ⚠️ **不要加「视图可见才刷新」的判断**（2026-11-03 修）：用户正是在
+            // **数据管理页**改任务组，那一刻 AcquisitionDataView 一定是 Collapsed，
+            // 加了判断等于永不生效 —— 表现为「改完名称要切一次当前视图才刷新」。
+            // 重填只是把若干 ComboBoxItem 换一遍，且内部已经用 _acqComboRebuilding
+            // 挡住了 SelectionChanged 的副作用，开销可以忽略。
+            RefreshAcqGroupCombo();
         }
 
         private void AddAcquisitionTask_Click(object sender, RoutedEventArgs e)
@@ -217,6 +220,11 @@ namespace DSH_Modbus采集工具
 
             // 启停会改变「要不要采这个组引用的变量」，必须重算
             RefreshAcquisitionGlobals();
+
+            // 启停也决定这个组能不能出现在总览页的下拉框里（只列 EffectiveEnabled 的组），
+            // 所以下拉框要跟着重填。以前漏了：停用一组后，下拉框里它还在，
+            // 切过去只显示「没有可用的任务组」而看不出原因。
+            RefreshAcqGroupCombo();
         }
 
         private void OpenAcquisitionTaskDialog_Click(object sender, RoutedEventArgs e)
@@ -243,7 +251,8 @@ namespace DSH_Modbus采集工具
             _acqTaskSet.Rename(task, dialog.TaskName, out _);
             task.ApplyDialogResult(
                 dialog.KindValue, dialog.TriggerValue, dialog.PeriodSecondsValue, dialog.ExpressionText,
-                dialog.LogEnabledValue, dialog.RecordEnabledValue, dialog.SavePathValue);
+                dialog.LogEnabledValue, dialog.RecordEnabledValue, dialog.SavePathValue,
+                dialog.LiveImagePathValue);
 
             // 改名不搬家：文件夹按名称建，改完新数据进新文件夹，旧的原样留着。
             // 不提示一句的话，用户会以为历史数据也跟着过去了
@@ -262,6 +271,22 @@ namespace DSH_Modbus采集工具
             // 类型 / 启用 / 表达式 / 数据项引用都可能变，常驻清单与运行态都要重算
             RefreshAcquisitionGlobals();
             _acqRuntime.Clear();
+
+            // 总览页「数据采集」的任务组下拉框要跟着刷新（2026-11-03 用户反馈修）。
+            // 以前漏了这一步：改完名称必须切一次「当前视图」才刷新，因为下拉框只在
+            // RefreshAcqGroupCombo() 里重填，而它只被切视图 / 切页签时调用。
+            // 改的不只是名称：启用状态、配置错误也会决定这组能否出现在下拉框里。
+            //
+            // ⚠️ 必须先同步 _acqHistoryGroup：RefreshAcqGroupCombo 靠它「尽量停在原来那一组」，
+            // 而它还记着**旧名字**；不同步的话会匹配失败、退回第 0 组 ——
+            // 多组时表现为「改个名，下拉框自己跳到第一组去了」。
+            if (!string.Equals(oldName, task.Name, StringComparison.Ordinal)
+                && string.Equals(_acqHistoryGroup, oldName, StringComparison.Ordinal))
+            {
+                _acqHistoryGroup = task.Name;
+            }
+
+            RefreshAcqGroupCombo();
         }
 
         // ---------- 采集执行（P3.1） ----------
@@ -363,6 +388,14 @@ namespace DSH_Modbus采集工具
                         ? AcquisitionTaskRules.DescribeLogSuccess(task, item.Index)
                         : AcquisitionTaskRules.DescribeLogFailure(task, item.Index, error),
                     error.Length == 0 ? DeviceLogLevel.Neutral : DeviceLogLevel.Warning);
+            }
+
+            // 实时卡片跟着采集节拍刷新数值（P1.4）。
+            // ⚠️ 放在循环外：这次读的是**共享的** GlobalVariable 值，与本拍哪个组该采无关，
+            // 所以不必按组刷；而且只更新文本，不重建控件（重建会打断正在拖的卡片）
+            if (IsAcqLiveVisible)
+            {
+                RefreshAcqLiveValues();
             }
         }
 
@@ -663,6 +696,15 @@ namespace DSH_Modbus采集工具
 
             // 变量名改了 → 该组引用的变量集合变了 → 常驻采集清单要跟着变
             RefreshAcquisitionGlobals();
+
+            // 项名称 / 变量名也会影响实时卡片显示的文字（名称，以及名称为空时的回退变量名），
+            // 而卡片文字是**建的时候一次性写进去**的，不重建就一直是旧值。
+            //
+            // ⚠️ 这里**不能**加 `IsAcqLiveVisible` 之类的可见性判断（2026-11-03）：
+            // 用户此时正在「数据管理」页编辑，实时视图一定是不可见的 ——
+            // 加了判断等于永不生效，于是改完名称要切一次「当前视图」才刷新（用户反馈的正是这个）。
+            // 重建的代价很小（卡片只有几张，不碰网络、不读盘），见下方注释。
+            RebuildAcqLiveCanvas();
         }
 
         /// <summary>

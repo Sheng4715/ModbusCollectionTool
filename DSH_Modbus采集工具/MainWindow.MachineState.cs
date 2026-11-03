@@ -158,6 +158,22 @@ namespace DSH_Modbus采集工具
                         Take(row.SourceVariableName);
                     }
                 }
+
+                // 触发式的**表达式引用**也要收（2026-10-31 修）。
+                // 漏了它就会出现：表达式写着 sys_X > 0 → 等变量变成 1 才触发，
+                // 但那个变量根本没被采，永远停在初始值 0，触发沿永远等不到。
+                // 编译是惰性的（正常拍里由 EvaluateTrigger 触发），故这里按源文本现编一次，
+                // 编不出来就跳过 —— 表达式非法时不该把整组变量拖上总线
+                if (task.Model.Trigger == AcquisitionTriggerMode.Edge
+                    && !string.IsNullOrWhiteSpace(task.Model.Expression)
+                    && CompiledExpression.TryParse(task.Model.Expression, out CompiledExpression? compiled, out _)
+                    && compiled != null)
+                {
+                    foreach (var (name, _) in compiled.UsedNames)
+                    {
+                        Take(name);
+                    }
+                }
             }
 
             _acquisitionGlobals = needed;
