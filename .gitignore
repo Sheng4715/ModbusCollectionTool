@@ -6,6 +6,9 @@ obj/
 *.suo
 *.userprefs
 
+# 发布输出目录（dotnet publish -o Release，框架依赖产物）
+Release/
+
 # 运行与日志
 *.log
 *.pdb
