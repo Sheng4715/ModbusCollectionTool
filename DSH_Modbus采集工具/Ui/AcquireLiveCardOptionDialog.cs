@@ -68,7 +68,7 @@ namespace DSH_Modbus采集工具.Ui
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(LabelColumnWidth) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            // 四行表单固定行高（AGENTS-细节.md §9.3 第 8 条：行距对齐 = 行高固定，
+            // 四行表单固定行高（AGENTS.md §9.3 第 8 条：行距对齐 = 行高固定，
             // 不是每行留一样的下边距）；按钮行留 Auto
             for (int i = 0; i < 4; i++)
             {

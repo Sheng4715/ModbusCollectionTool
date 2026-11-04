@@ -232,10 +232,16 @@ namespace DSH_Modbus采集工具.Modeling
         public const double LiveCanvasHeight = 720;
 
         /// <summary>卡片「项名称」默认字号。</summary>
-        public const double DefaultLiveNameFontSize = 12;
+        public const double DefaultLiveNameFontSize = 20;
 
-        /// <summary>卡片「数值」默认字号（比名称大得多 —— 数值要一眼看清）。</summary>
-        public const double DefaultLiveValueFontSize = 24;
+        /// <summary>
+        /// 卡片「数值」默认字号。
+        /// <para>
+        /// 2026-11-04 用户定为与名称**同字号**（20），早前是名称 12 / 数值 24。
+        /// 于是两者靠「名称灰、数值黑 + 加粗」和数值外那圈框区分，不再靠字号差。
+        /// </para>
+        /// </summary>
+        public const double DefaultLiveValueFontSize = 20;
 
         /// <summary>可选字号档位（选项框下拉框用）。</summary>
         public static readonly double[] LiveFontSizes = { 8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48 };
