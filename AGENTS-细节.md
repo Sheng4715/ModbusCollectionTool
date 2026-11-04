@@ -1302,3 +1302,31 @@ OrderProbe <ip> <port> <unitId> <localIp|-> <addr:count> [addr:count ...]
 它打印原始十六进制 + 按 4 种字序 / 2 种字符串序各解一遍，一次读取即可判定（不用试错）。
 测试值建议：`DINT=305419896`（`0x12345678`，4 个字节互不相同）、`REAL=123.45`、
 `STRING[4]='ABCD'`；32 位与浮点**必须分开测**（两套字序独立，见上）。
+
+### 8.2 目标网卡（TargetNic）选择
+
+设备连接页的「目标网卡」下拉框决定 `ConnectButton_Click` 里 `new IPEndPoint(nic.Ip, 0)` 的**本地端点**
+（即绑定哪块网卡出去）。规则与坑：
+
+- **存的是网卡名**（如 `WLAN`），不是下拉框显示文本 `WLAN(192.168.1.15)` —— 文本里嵌着 IP，而同一块网卡换个网络
+  IP 就变（笔记本的 WLAN 在家 `192.168.1.x`、在公司 `10.0.0.x`），按文本匹配**恰好在最需要它的场景下失效**
+- 还原优先级：**本次扫描前的选择 → 上次运行记住的 → 第 0 项**（`Net/NicScanner.RestoreIndex`）
+- 规则本体在 `Net/NicScanner.cs`；窗口侧只有 `ScanNetworkAdapters`（闸门 + 填下拉框）与
+  `TargetNicComboBox_SelectionChanged`。持久化字段 `TargetNic` 与 `TargetIp` / `TargetPort` 同在 `app-settings.json`
+  （整对象保存，归一化只放 `Save()` 里 —— 见 `AGENTS.md` §9.2 第一条）
+- ⚠️ **扫描过程必须整体罩在 `_restoringNicSelection` 里**：`Items.Clear()` 在原本有选中项时就会触发
+  `SelectionChanged`，只罩最后那次赋值挡不住。挡掉的意义不只是「别写盘」—— 若某块网卡临时消失
+  （VPN 断开 / 网线拔掉），扫描会回退到第 0 项；把这次回退也写进偏好，用户原先的选择就被**悄悄抹掉**了。
+  实测：预置一块不存在的网卡名，启动后下拉框回退到第 0 项，而 json 里仍是原值
+- **为什么必须持久化**：绑错网卡（如绑到 Tailscale 却去连 `192.168.1.100`）会立刻报 `WSAENETUNREACH`，
+  界面上显示成「连接失败：… 网络不可达」—— 看着像网络故障，其实是**上次的选择没被记住**。
+  自动重连不受影响（`ReconnectTarget` 已快照本地端点），**只有启动后的第一次连接会踩到**
+
+⚠️ **同网段双网卡时症状会变**（2026-10-16 真机实测）：本机 `以太网 192.168.1.80` 与 `WLAN 192.168.1.15`
+**同为 `192.168.1.x/24`**，而 PLC 只从有线侧可达。此时选错网卡**不会**报 `WSAENETUNREACH` ——
+路由表认为该网段直连、SYN 正常发出，只是发到了没有 PLC 的那块网卡，于是表现为**连接超时**（约 3s）。
+故**「连接超时」在多网卡现场不能直接推断为「PLC 没响应」**，先确认路由选中的网卡与下拉框一致：
+
+```powershell
+Find-NetRoute -RemoteIPAddress <PLC>
+```
