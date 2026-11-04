@@ -33,9 +33,18 @@ namespace DSH_Modbus采集工具
     {
         // ---------- 数据管理页分段（P3.1 / P3.3） ----------
 
-        /// <summary>数据管理页分段切换：数据采集 / 全局变量 / 系统变量。</summary>
+        /// <summary>
+        /// 数据管理页分段切换：数据采集 / 全局变量 / 系统变量。
+        /// <para>
+        /// ⚠️ 2026-11-04 起**只有三档**：原第四档「扫码器」已并入
+        /// 「设备连接 → 扫码器连接」（连接与交互参数同处一行的展开块，见
+        /// <c>MainWindow.Scanner.cs</c>）。不要再把第四档加回来。
+        /// </para>
+        /// </summary>
         private void AcqView_Checked(object sender, RoutedEventArgs e)
         {
+            // InitializeComponent 期间这个处理器会被 IsChecked 触发，
+            // 那时靠后的面板还没创建 —— 全部判空，缺一个就整体跳过（下面各控件也都有兜底）
             if (AcquisitionDataPanel == null || GlobalVarPanel == null || SystemVarPanel == null
                 || AcquisitionDataSegment == null)
             {

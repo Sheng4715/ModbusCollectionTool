@@ -545,6 +545,8 @@
             <Setter Property="Height" Value="22"/>
             <Setter Property="Background" Value="{DynamicResource Brush.Input.Background}"/>
             <Setter Property="Foreground" Value="{Binding RowBrush}"/>
+            <!-- 边框走 TemplateBinding（同 FormTextBox）：控件上设 BorderBrush 才有效 -->
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Input.Border}"/>
             <Setter Property="Padding" Value="4,0"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -553,7 +555,7 @@
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="{DynamicResource Brush.Input.Border}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="4">
                             <ScrollViewer x:Name="PART_ContentHost"
@@ -986,6 +988,12 @@
             <Setter Property="Height" Value="26"/>
             <Setter Property="Background" Value="{DynamicResource Brush.Input.Background}"/>
             <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <!--
+                边框画刷**必须**是局部值 + TemplateBinding（2026-11-04 改）：
+                原先模板里写死 DynamicResource，控件上设 BorderBrush 一律看不见，
+                「填错的格子变红」就没法实现。默认值与原字面量同色，外观不变。
+            -->
+            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Input.Border}"/>
             <Setter Property="Padding" Value="4,0"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -994,7 +1002,7 @@
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="{DynamicResource Brush.Input.Border}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="4">
                             <ScrollViewer x:Name="PART_ContentHost"
@@ -1019,6 +1027,40 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <!--
+            扫码器展开块的两个输入框样式（2026-11-04）：
+            **填错的格子自己变红**，顶部不再有红字（用户原话：「去掉红色的提示文字，
+            相关配置错误给输入框标红即可」）。
+
+            做法是把「这一栏有没有错」用附加属性 `ui:ScannerErrorMark.IsError` 挂到框上
+            （`ui:ScannerErrorMark.IsError="{Binding IpError}"` 这样），样式里一个自引用该
+            附加属性的 DataTrigger 统一处理 —— 12 个框各写一份 DataTrigger 会让模板膨胀，
+            且以后加一栏必然漏一处。
+            ⚠️ 不要改用 `Tag` 传这个标志：`Tag` 的类型是 `object`，`Value="True"` 经转换后与
+            boxed bool 比不相等，触发器永远不亮。附加属性声明成 `bool` 才有类型转换。
+            ⚠️ 必须写在 FormTextBox / MonitorInlineTextBox **之后**：BasedOn 走 StaticResource，
+            资源字典按顺序解析，放前面解析期就抛。
+        -->
+        <Style x:Key="ScannerFieldTextBox" TargetType="TextBox"
+               BasedOn="{StaticResource FormTextBox}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=(ui:ScannerErrorMark.IsError)}"
+                             Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Danger}"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ScannerNameTextBox" TargetType="TextBox"
+               BasedOn="{StaticResource MonitorInlineTextBox}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=(ui:ScannerErrorMark.IsError)}"
+                             Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Danger}"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <!--
@@ -2612,7 +2654,10 @@
                     </Grid>
 
                     <!-- ================= 数据管理 =================
-                         两个分段：数据采集（P3.1，占位）/ 全局变量（P3.3，已实现）。
+                         三个分段：数据采集（P3.1）/ 全局变量（P3.3）/ 系统变量（P3.5 只读清单）。
+                         ⚠️ 扫码器**不在这里**（2026-11-04 用户定案：「把数据管理→扫码器直接与设备连接→
+                         扫码器界面合并起来，分为两列，左侧连接相关的参数，右边是交互相关的参数，
+                         中间加分割线」）—— 连接参数与交互参数同处一行，见页末「扫码器连接」。
                          分段的写法照抄设备监控页（IoSegmentRadioButton + 同格叠放），
                          保持两页的切换手感一致。
 
@@ -2642,7 +2687,8 @@
                                     <RowDefinition Height="*"/>      <!-- 内容（占满剩余） -->
                                 </Grid.RowDefinitions>
 
-                                <!-- 分段切换（数据采集 / 全局变量） -->
+                                <!-- 分段切换（数据采集 / 全局变量 / 系统变量）
+                                     ⚠️ 扫码器分段已删除（2026-11-04 合并到设备连接页），不要再加回来。 -->
                                 <Grid Grid.Row="0" Margin="0,0,0,8">
                                     <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
                                             HorizontalAlignment="Left" VerticalAlignment="Center">
@@ -2900,6 +2946,7 @@
                                             </ItemsControl>
                                         </ScrollViewer>
                                     </Grid>
+
                                 </Grid>
                             </Grid>
                         </Border>
@@ -2918,6 +2965,31 @@
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8" Padding="20">
                             <StackPanel>
+
+                                <!-- 页签：PLC 连接 / 扫码器连接（P4.5）
+                                     两档都是「连接」，故用分段控件而不是开关；GroupName 显式给，
+                                     否则 WPF 会按逻辑父容器分组、两档各自成组可同时选中。 -->
+                                <Grid Margin="0,0,0,16">
+                                    <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
+                                            HorizontalAlignment="Left" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal">
+                                            <RadioButton x:Name="PlcConnectionSegment"
+                                                         Content="PLC连接"
+                                                         GroupName="DeviceView"
+                                                         IsChecked="True"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="DeviceView_Checked"/>
+                                            <RadioButton x:Name="ScannerConnectionSegment"
+                                                         Content="扫码器连接"
+                                                         GroupName="DeviceView"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="DeviceView_Checked"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <!-- ===== PLC 连接（原设备连接表单，整段原样保留） ===== -->
+                                <StackPanel x:Name="PlcConnectionPanel">
 
                                 <!-- 连接方式 -->
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
@@ -3146,6 +3218,405 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </Grid>
+                                </StackPanel>
+                                <!-- ===== /PLC 连接 ===== -->
+
+                                <!-- ===== 扫码器（P4.5 连接 + P3.5 交互，2026-11-04 合并为一页）
+                                     裸 TCP 客户端（无 MBAP），最多 16 台，各持独立连接与重连循环。
+                                     布局：一行一台，行尾箭头展开该台的全部参数（与采集任务组同款）——
+                                     **左列连接参数 / 竖线 / 右列交互参数**（用户定案 2026-11-04：
+                                     「把数据管理→扫码器直接与设备连接→扫码器界面合并起来，分为两列，
+                                     左侧连接相关的参数，右边是交互相关的参数，中间加分割线」）。
+                                     结果帧结束符下放到每台（不同品牌回报不一样）。 -->
+                                <StackPanel x:Name="ScannerConnectionPanel" Visibility="Collapsed">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>   <!-- 表头（常驻） -->
+                                            <RowDefinition Height="*"/>      <!-- 列表（自身滚动）+ 空状态 -->
+                                        </Grid.RowDefinitions>
+
+                                        <Border Grid.Row="0"
+                                                    Height="46"
+                                                    Margin="0,0,0,2"
+                                                    Background="Transparent"
+                                                    BorderBrush="{DynamicResource Brush.Divider}"
+                                                    BorderThickness="0,0,0,1">
+                                                <Grid>
+                                                    <!-- 列定义必须与下方 DataTemplate 完全一致 -->
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="30"/>   <!-- # -->
+                                                        <ColumnDefinition Width="*"/>    <!-- 扫码器名称 -->
+                                                        <ColumnDefinition Width="124"/>  <!-- 启用 + 配置错误 -->
+                                                        <ColumnDefinition Width="30"/>   <!-- 删除 -->
+                                                        <ColumnDefinition Width="30"/>   <!-- 展开 / 收起 -->
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="1" Text="扫码器名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="2" Text="启用" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+
+                                                    <!-- 新增放在表头最右，与全局变量 / 采集任务同款语义 -->
+                                                    <Button x:Name="AddScannerButton"
+                                                            Grid.Column="3" Grid.ColumnSpan="2"
+                                                            Content="&#xE710;"
+                                                            ToolTip="新增扫码器"
+                                                            Style="{StaticResource MonitorHeaderIconButton}"
+                                                            HorizontalAlignment="Right"
+                                                            Margin="0,0,7,0"
+                                                            Click="AddScanner_Click"/>
+                                                </Grid>
+                                            </Border>
+
+                                            <ScrollViewer Grid.Row="1"
+                                                          VerticalScrollBarVisibility="Auto"
+                                                          HorizontalScrollBarVisibility="Disabled">
+                                                <ItemsControl x:Name="ScannerItemsControl"
+                                                              HorizontalContentAlignment="Stretch">
+                                                    <ItemsControl.ItemContainerStyle>
+                                                        <Style TargetType="ContentPresenter">
+                                                            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+                                                        </Style>
+                                                    </ItemsControl.ItemContainerStyle>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="0,0,0,2">
+                                                                <Grid.RowDefinitions>
+                                                                    <RowDefinition Height="Auto"/>   <!-- 主行 -->
+                                                                    <RowDefinition Height="Auto"/>   <!-- 连接参数（展开块） -->
+                                                                </Grid.RowDefinitions>
+
+                                                                <Border Grid.Row="0"
+                                                                        Height="42"
+                                                                        BorderBrush="{DynamicResource Brush.Divider}"
+                                                                        BorderThickness="0,0,0,1"
+                                                                        Loaded="ScannerRow_Loaded">
+                                                                    <Grid>
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="30"/>
+                                                                            <ColumnDefinition Width="*"/>
+                                                                            <ColumnDefinition Width="124"/>
+                                                                            <ColumnDefinition Width="30"/>
+                                                                            <ColumnDefinition Width="30"/>
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Grid.Column="0"
+                                                                                   Text="{Binding Id}"
+                                                                                   FontSize="12"
+                                                                                   Foreground="{DynamicResource Brush.Text.Tertiary}"
+                                                                                   VerticalAlignment="Center"/>
+                                                                        <!-- 名称就地可改（不再弹对话框）：失焦 / 回车才校验并落盘。
+                                                                             两页合并后这里是**唯一**的改名入口（原数据管理页的名称是只读的）。 -->
+                                                                        <StackPanel Grid.Column="1"
+                                                                                    Orientation="Horizontal"
+                                                                                    HorizontalAlignment="Left"
+                                                                                    Margin="0,0,6,0">
+                                                                            <TextBox x:Name="ScannerNameBox"
+                                                                                     Width="200"
+                                                                                     Style="{StaticResource ScannerNameTextBox}"
+                                                                                     Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                     Text="{Binding NameText, Mode=OneWay}"
+                                                                                     ui:ScannerErrorMark.IsError="{Binding NameError}"
+                                                                                     VerticalAlignment="Center"
+                                                                                     KeyDown="ScannerName_KeyDown"
+                                                                                     LostFocus="ScannerName_LostFocus"/>
+                                                                        </StackPanel>
+                                                                        <!-- 启用开关 + 配置错误（与采集任务组同款，2026-11-04）：
+                                                                             缺项时开关被关掉并置灰、右边出现琥珀色「配置错误」四个字，
+                                                                             该台**不触发**；补齐后自动恢复。
+                                                                             具体哪一栏错了由该输入框自己描红（展开块顶部不再有红字）。 -->
+                                                                        <StackPanel Grid.Column="2"
+                                                                                    Orientation="Horizontal"
+                                                                                    VerticalAlignment="Center">
+                                                                            <CheckBox Style="{StaticResource AcqEnableSwitch}"
+                                                                                      IsChecked="{Binding EffectiveEnabled, Mode=TwoWay}"
+                                                                                      IsEnabled="{Binding CanToggleEnabled}"
+                                                                                      Click="ScannerEnabled_Click"/>
+                                                                            <TextBlock Margin="8,0,0,0"
+                                                                                       Text="{Binding ConfigErrorText}"
+                                                                                       FontSize="11"
+                                                                                       Foreground="{DynamicResource Brush.Warning}"
+                                                                                       VerticalAlignment="Center"
+                                                                                       Visibility="{Binding HasConfigError, Converter={StaticResource BoolToVis}}"/>
+                                                                        </StackPanel>
+                                                                        <Button Grid.Column="3"
+                                                                                Content="&#xE711;"
+                                                                                ToolTip="删除本扫码器"
+                                                                                Style="{StaticResource MonitorIconButton}"
+                                                                                HorizontalAlignment="Left"
+                                                                                VerticalAlignment="Center"
+                                                                                Click="RemoveScanner_Click"/>
+                                                                        <!-- 展开 / 收起本台的全部参数（箭头常驻，与采集任务组同款） -->
+                                                                        <Button Grid.Column="4"
+                                                                                Content="{Binding ExpandGlyph}"
+                                                                                ToolTip="{Binding ExpandToolTip}"
+                                                                                Style="{StaticResource AcqRowIconButton}"
+                                                                                HorizontalAlignment="Left"
+                                                                                VerticalAlignment="Center"
+                                                                                Click="ToggleScannerExpand_Click"/>
+                                                                </Grid>
+                                                            </Border>
+                                                                <!-- 展开块：左列连接参数（P4.5）| 竖线 | 右列交互参数（P3.5）
+                                                                     2026-11-04 用户定案：「把数据管理→扫码器直接与设备连接→扫码器
+                                                                     界面合并起来，分为两列，左侧连接相关的参数，右边是交互相关的
+                                                                     参数，中间加分割线」。两列各 110 标签 + 200 控件 ≈ 330 DIP，
+                                                                     加竖线与两侧间隔约 690 DIP；最小窗口 1024 时内容区约 760 DIP，
+                                                                     放得下，但再加列就要先想清楚。 -->
+                                                                <Border Grid.Row="1"
+                                                                        Margin="0,4,0,4"
+                                                                        Padding="10,10,10,6"
+                                                                        Background="{DynamicResource Brush.Acquisition.SubTable.Background}"
+                                                                        BorderBrush="{DynamicResource Brush.Acquisition.SubTable.Border}"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="4"
+                                                                        Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                                                                    <StackPanel>
+
+                                                                    <!-- 这里原先有一行「配置明细红字」（{Binding Problem}）。
+                                                                         2026-11-04 用户定案去掉：「去掉红色的提示文字，相关配置错误
+                                                                         给输入框标红即可」—— 错在哪个格子就哪个格子自己变红
+                                                                         （样式 ScannerFieldTextBox / ScannerNameTextBox +
+                                                                         附加属性 Ui/ScannerErrorMark.cs）。行上那四个字
+                                                                         「配置错误」仍保留（琥珀色，表示这台不可用）。 -->
+
+                                                                    <Grid>
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="Auto"/>   <!-- 左列：连接参数 -->
+                                                                            <ColumnDefinition Width="Auto"/>   <!-- 竖线 -->
+                                                                            <ColumnDefinition Width="*"/>      <!-- 右列：交互参数 -->
+                                                                        </Grid.ColumnDefinitions>
+
+                                                                        <!-- ===== 左列：连接参数（原「设备连接 → 扫码器连接」） ===== -->
+                                                                        <StackPanel Grid.Column="0">
+
+                                                                            <!-- 连接方式：目前只有「以太网」一项，但**保持可展开**
+                                                                                 （用户定案 2026-11-04：只读灰框看着像没配好、也点不开确认，
+                                                                                 以后加品牌时这里就是要选的地方） -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="连接方式"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <ComboBox Width="200"
+                                                                                          VerticalAlignment="Center"
+                                                                                          ItemsSource="{Binding ConnectionTypes}"
+                                                                                          SelectedIndex="{Binding ConnectionTypeIndex, Mode=OneWay}"
+                                                                                          Style="{StaticResource FormComboBox}"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 协议：同上，只有「TCP/IP 客户端」一项，仍可展开 -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="协议"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <ComboBox Width="200"
+                                                                                          VerticalAlignment="Center"
+                                                                                          ItemsSource="{Binding Protocols}"
+                                                                                          SelectedIndex="{Binding ProtocolIndex, Mode=OneWay}"
+                                                                                          Style="{StaticResource FormComboBox}"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- IP -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="IP地址"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <TextBox Width="200"
+                                                                                         VerticalAlignment="Center"
+                                                                                         Style="{StaticResource ScannerFieldTextBox}"
+                                                                                         Text="{Binding IpText, Mode=OneWay}"
+                                                                                         ui:ScannerErrorMark.IsError="{Binding IpError}"
+                                                                                         LostFocus="ScannerIp_LostFocus"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 端口 -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="端口号"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <TextBox Width="200"
+                                                                                         VerticalAlignment="Center"
+                                                                                         Style="{StaticResource ScannerFieldTextBox}"
+                                                                                         Text="{Binding PortText, Mode=OneWay}"
+                                                                                         ui:ScannerErrorMark.IsError="{Binding PortError}"
+                                                                                         LostFocus="ScannerPort_LostFocus"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 结果帧结束符：决定「一帧收完」的判据，不同品牌回报不一样 -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                                                                <TextBlock Text="结果帧结束符"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <ComboBox Width="200"
+                                                                                          VerticalAlignment="Center"
+                                                                                          ItemsSource="{Binding Terminators}"
+                                                                                          SelectedIndex="{Binding TerminatorIndex, Mode=OneWay}"
+                                                                                          Style="{StaticResource FormComboBox}"
+                                                                                          SelectionChanged="ScannerTerminator_SelectionChanged"/>
+                                                                            </StackPanel>
+                                                                        </StackPanel>
+
+                                                                        <!-- 分割线：与「地址表元件」左边那条同款（1px + Brush.Divider） -->
+                                                                        <Border Grid.Column="1"
+                                                                                Width="1"
+                                                                                Margin="18,0,18,0"
+                                                                                HorizontalAlignment="Center"
+                                                                                Background="{DynamicResource Brush.Divider}"/>
+
+                                                                        <!-- ===== 右列：交互参数（原「数据管理 → 扫码器」） ===== -->
+                                                                        <StackPanel Grid.Column="2">
+
+                                                                            <!-- 触发条件表达式：填表达式、挂表达式补全 -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="触发条件表达式"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <TextBox Width="200"
+                                                                                         VerticalAlignment="Center"
+                                                                                         Style="{StaticResource ScannerFieldTextBox}"
+                                                                                         Text="{Binding TriggerExpressionText, Mode=OneWay}"
+                                                                                         ui:ScannerErrorMark.IsError="{Binding TriggerExpressionError}"
+                                                                                         Loaded="ScannerTriggerExpressionBox_Loaded"
+                                                                                         LostFocus="ScannerTriggerExpression_LostFocus"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 触发文本：原样发出，不补结束符；只允许 ASCII -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="触发文本"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <TextBox Width="200"
+                                                                                         VerticalAlignment="Center"
+                                                                                         Style="{StaticResource ScannerFieldTextBox}"
+                                                                                         Text="{Binding TriggerText, Mode=OneWay}"
+                                                                                         ui:ScannerErrorMark.IsError="{Binding TriggerTextError}"
+                                                                                         LostFocus="ScannerTriggerText_LostFocus"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 接收缓冲区变量：只能是 STRING 全局变量；被别处引用时黄字提示 -->
+                                                                            <StackPanel Margin="0,0,0,12">
+                                                                                <StackPanel Orientation="Horizontal">
+                                                                                    <TextBlock Text="接收缓冲区变量"
+                                                                                               Width="110"
+                                                                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                               VerticalAlignment="Center"/>
+                                                                                    <TextBox Width="200"
+                                                                                             VerticalAlignment="Center"
+                                                                                             Style="{StaticResource ScannerFieldTextBox}"
+                                                                                             Text="{Binding BufferVariableText, Mode=OneWay}"
+                                                                                             ui:ScannerErrorMark.IsError="{Binding BufferVariableError}"
+                                                                                             Loaded="ScannerBufferVariableBox_Loaded"
+                                                                                             LostFocus="ScannerBufferVariable_LostFocus"/>
+                                                                                </StackPanel>
+                                                                                <TextBlock Text="变量已在别处被引用"
+                                                                                           FontSize="11"
+                                                                                           Foreground="{DynamicResource Brush.Warning}"
+                                                                                           Margin="110,4,0,0"
+                                                                                           Visibility="{Binding BufferShared, Converter={StaticResource BoolToVis}}"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 超时判定（秒）：0.5 ~ 10 -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="超时判定（秒）"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <TextBox Width="80"
+                                                                                         HorizontalAlignment="Left"
+                                                                                         VerticalAlignment="Center"
+                                                                                         Style="{StaticResource ScannerFieldTextBox}"
+                                                                                         Text="{Binding TimeoutSecondsText, Mode=OneWay}"
+                                                                                         ui:ScannerErrorMark.IsError="{Binding TimeoutSecondsError}"
+                                                                                         LostFocus="ScannerTimeout_LostFocus"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 超时写入文本：留空则保留缓冲区旧值 -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="超时写入文本"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <TextBox Width="200"
+                                                                                         VerticalAlignment="Center"
+                                                                                         Style="{StaticResource ScannerFieldTextBox}"
+                                                                                         Text="{Binding TimeoutTextText, Mode=OneWay}"
+                                                                                         ui:ScannerErrorMark.IsError="{Binding TimeoutTextError}"
+                                                                                         LostFocus="ScannerTimeoutText_LostFocus"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 通知变量：INT / UINT / DINT / UDINT 全局变量 -->
+                                                                            <StackPanel Margin="0,0,0,12">
+                                                                                <StackPanel Orientation="Horizontal">
+                                                                                    <TextBlock Text="通知变量"
+                                                                                               Width="110"
+                                                                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                               VerticalAlignment="Center"/>
+                                                                                    <TextBox Width="200"
+                                                                                             VerticalAlignment="Center"
+                                                                                             Style="{StaticResource ScannerFieldTextBox}"
+                                                                                             Text="{Binding NotifyVariableText, Mode=OneWay}"
+                                                                                             ui:ScannerErrorMark.IsError="{Binding NotifyVariableError}"
+                                                                                             Loaded="ScannerNotifyVariableBox_Loaded"
+                                                                                             LostFocus="ScannerNotifyVariable_LostFocus"/>
+                                                                                </StackPanel>
+                                                                                <TextBlock Text="变量已在别处被引用"
+                                                                                           FontSize="11"
+                                                                                           Foreground="{DynamicResource Brush.Warning}"
+                                                                                           Margin="110,4,0,0"
+                                                                                           Visibility="{Binding NotifyShared, Converter={StaticResource BoolToVis}}"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 写入值：正常返回时写进通知变量 -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                                                                <TextBlock Text="写入值"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <TextBox Width="200"
+                                                                                         VerticalAlignment="Center"
+                                                                                         Style="{StaticResource ScannerFieldTextBox}"
+                                                                                         Text="{Binding SuccessValueText, Mode=OneWay}"
+                                                                                         ui:ScannerErrorMark.IsError="{Binding SuccessValueError}"
+                                                                                         LostFocus="ScannerSuccessValue_LostFocus"/>
+                                                                            </StackPanel>
+
+                                                                            <!-- 超时写入值：超时 / 通讯失败时写进通知变量 -->
+                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                                                                                <TextBlock Text="超时写入值"
+                                                                                           Width="110"
+                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                                                           VerticalAlignment="Center"/>
+                                                                                <TextBox Width="200"
+                                                                                         VerticalAlignment="Center"
+                                                                                         Style="{StaticResource ScannerFieldTextBox}"
+                                                                                         Text="{Binding TimeoutValueText, Mode=OneWay}"
+                                                                                         ui:ScannerErrorMark.IsError="{Binding TimeoutValueError}"
+                                                                                         LostFocus="ScannerTimeoutValue_LostFocus"/>
+                                                                            </StackPanel>
+                                                                        </StackPanel>
+                                                                    </Grid>
+                                                                    </StackPanel>
+                                                                </Border>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </ScrollViewer>
+
+                                            <TextBlock x:Name="ScannerEmptyHint"
+                                                       Grid.Row="1"
+                                                       Text="尚未添加扫码器，点击右上角 + 新增"
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource Brush.Text.Muted}"
+                                                       Margin="0,10,0,6"
+                                                       VerticalAlignment="Top"
+                                                       Visibility="Collapsed"/>
+                                         </Grid>
+                                </StackPanel>
+                                <!-- ===== /扫码器连接 ===== -->
                             </StackPanel>
                         </Border>
                     </StackPanel>

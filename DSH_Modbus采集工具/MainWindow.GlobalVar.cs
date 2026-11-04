@@ -426,6 +426,10 @@ namespace DSH_Modbus采集工具
             // 数据采集项的「数据类型」是从变量表反推的，变量改名/换类型后这里会变成旧值
             _acqTaskSet.RefreshVariables();
 
+            // 扫码器的缓冲区/通知变量也是按名字解析的：变量改名、删掉、换类型后要重算
+            // 「不存在」「类型不对」「已在别处被引用」三种提示（同样放在早退之前）
+            RefreshScannerReferenceHints();
+
             if (_monitorSet.Items.Count == 0)
             {
                 return;

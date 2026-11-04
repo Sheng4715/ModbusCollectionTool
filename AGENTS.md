@@ -10,9 +10,9 @@
 > 原因是本文件曾在 136 KB 时**超过工作区指令预算（65536 字节）而被整体丢弃**，规则一条都没进上下文。
 > **改到上述任一功能时，动手前先读 `AGENTS-细节.md` 的对应章节** —— 那里有成条的 ⚠️ 坑。
 >
-> 📏 **预算红线**：本文件当前约 **62 KB**，加上框架开销（约 365 B）后余量只剩 **1.4 KB**。
+> 📏 **预算红线**：本文件当前 **64882 B**，加上框架开销（约 365 B）后余量只剩 **约 289 B**。
 > **新增内容前先算一下总字节**（`(Get-Item AGENTS.md).Length`）；超过 64 KB 就又会被静默丢弃。
-> 需要写长段落时放进 `AGENTS-细节.md`，本文件只留一句指向。
+> 需要写长段落时放进 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），本文件只留一句指向。
 
 ---
 
@@ -47,6 +47,12 @@ DSH_Modbus采集工具/
 ├── MainWindow.IoImport.cs      # partial：IO 表导入
 ├── MainWindow.AcquisitionView.cs # partial：总览「数据采集」视图骨架（2026-10-31，见 `AGENTS-细节.md` §5.8）
 ├── MainWindow.AcquisitionLive.cs # partial：实时数据画布（卡片拖动/缩放/背景图，2026-11-02，见 `AGENTS-细节.md` §5.8.1）
+├── MainWindow.Scanner.cs       # partial：扫码器（P4.5 连接 + P3.5 交互已合并一页，见 `AGENTS-细节.md` §5.9）
+├── Scanners/                   # 扫码器（不含 WPF 类型）
+│   ├── ScannerDefinition.cs    # 定义 + 规则（20/16 台/结束符）+ scanner.json 持久化
+│   ├── ScannerTcpClient.cs     # 裸 TCP：原样发 + 按结束符收帧（无结束符走 100ms 静默）
+│   ├── ScannerSession.cs       # 每台的连接身份与重连计数
+│   └── ScannerExchange.cs      # 上升沿判定 + 运行时态
 ├── MonitorItem.cs              # 自由监控项：DataPoint 的界面包装 + 集合（增删改/落盘/解析）
 ├── GlobalVarItem.cs            # 全局变量：GlobalVariable 的界面包装 + 集合（增删改/落盘）
 ├── AcquisitionTaskItem.cs      # 采集任务组/数据项的界面包装（列随类型变、配置错误态）
@@ -121,12 +127,12 @@ DSH_Modbus采集工具/
 ```
 
 > **不引用 WPF 的层**（可脱离界面阅读/验证，也能被独立工程链接源码断言）：`Drivers/`、`Expressions/`、
-> `Io/`、`Logging/`、`Modeling/`、`Net/`、`Polling/` —— 这 7 个目录下**没有任何** `using System.Windows*`。
+> `Io/`、`Logging/`、`Modeling/`、`Net/`、`Polling/`、`Scanners/` —— 这 8 个目录下**没有任何** `using System.Windows*`。
 > 控件写入（分页控件显隐、绑列、弹窗、`MessageBox`）一律留在 `MainWindow.*.cs`。
 > 新增逻辑时按同一原则归位。
 >
 > **引 WPF 的层**：`Ui/`（窗口呈现辅助与对话框，不碰业务）与 `Themes/`（`ThemeManager` 要换资源字典），
-> 以及根目录的 `MainWindow*.cs` 五个 partial / `MonitorItem.cs` / `GlobalVarItem.cs` /
+> 以及根目录的 `MainWindow*.cs` 八个 partial / `MonitorItem.cs` / `GlobalVarItem.cs` /
 > `AcquisitionTaskItem.cs` / `SystemVarRow.cs` / `App.xaml.cs`。
 > ⚠️ `MonitorItem.cs` 是「`DataPoint` 的界面包装」、碰 WPF 属正常，但它在**根目录**而不在 `Ui/`
 > —— 判断一个文件该不该碰 WPF 看**所在目录**，不要以为「根目录都不碰」。
@@ -163,8 +169,8 @@ Window
 |---|---|---|
 | `OverviewNav` 总览 | `OverviewPanel` | 视图切换在**页头右侧下拉框**「当前视图」（`FormComboBox`），**三项**：`PLC状态机`（P1.2）/ `生产数据`（占位）/ `数据采集`（P1.4，见 `AGENTS-细节.md` §5.5 与 §5.8）；卡片内只有当前视图 + 底部运行日志卡（状态显示已移至全局底栏，见 §3.5） |
 | `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
-| `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | 连接表单 |
-| `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，执行与 CSV 均已实现，见 `AGENTS-细节.md` §5.7）/「全局变量」（P3.3，见 `AGENTS-细节.md` §5.2）/「系统变量」（P3.5，只读清单，见 `AGENTS-细节.md` §5.3） |
+| `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **两档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接/右交互，见 `AGENTS-细节.md` §5.9） |
+| `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，执行与 CSV 均已实现，见 `AGENTS-细节.md` §5.7）/「全局变量」（P3.3，见 `AGENTS-细节.md` §5.2）/「系统变量」（P3.5，只读清单，见 `AGENTS-细节.md` §5.3）。⚠️ 第四档「扫码器」2026-11-04 已删除，并入设备连接页 |
 | `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 自动连接（见 `AGENTS-细节.md` §7.2）+ 日志保存（P5.2）+ 项目信息（P5.3） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
@@ -318,11 +324,12 @@ Window
 - 老系统（Win10）上这两个属性号不认识，`DwmSetWindowAttribute` 返回非 0，此时**安静放弃** ——
   窗口保持直角无边框，不影响功能
 
-## 4. 代码分工（`MainWindow` 的六个 partial）
+## 4. 代码分工（`MainWindow` 的九个 partial）
 
-> **2026-10-29 拆分**：`MainWindow.xaml.cs` 曾长期贴着 4600 行，现已拆成六个 partial ——
-> 主体（`MainWindow.xaml.cs`）+ `MachineState`(444) / `Acquisition`(669) / `GlobalVar`(567) /
-> `Monitor`(849) / `IoImport`(95)。**新建处理器先按页面归到对应 partial**，
+> **2026-10-29 拆分**：`MainWindow.xaml.cs` 曾长期贴着 4600 行，现已拆成九个 partial ——
+> 主体（`MainWindow.xaml.cs`）+ `MachineState` / `Acquisition` / `GlobalVar` /
+> `Monitor` / `IoImport` / `AcquisitionView` / `AcquisitionLive` / `Scanner`。
+> **新建处理器先按页面归到对应 partial**，
 > 只有跨页面的（连接生命周期 / 心跳 / 导航 / 日志 / 底栏）才写回主体。
 >
 > 已抽出去的部分：采集编排 → `Polling/`、IO 点位集/分页/导入 → `Io/`、主题 → `Themes/`、
@@ -333,7 +340,7 @@ Window
 
 | 区块 | 关键成员 |
 |---|---|
-| **处理器在哪个 partial** | `MainWindow.xaml.cs`＝连接/心跳/导航/底栏/IO 分页·导入·`SetInputsEnabled`/`AppendDeviceLog`/`SetStatus`/`ScanNetworkAdapters`；`MainWindow.Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`MainWindow.GlobalVar.cs`＝`GlobalVar*`·`RefreshMachineGlobals`；`MainWindow.Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`MainWindow.MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`MainWindow.IoImport.cs`＝IO 表导入；`MainWindow.AcquisitionView.cs`＝总览「数据采集」视图骨架（任务组下拉框 / 历史表格 / 1 秒增量刷新）；`MainWindow.AcquisitionLive.cs`＝实时画布（卡片拖动 / 缩放 / 背景图） |
+| **处理器在哪个 partial** | `MainWindow.xaml.cs`＝连接/心跳/导航/底栏/IO 分页·导入·`SetInputsEnabled`/`AppendDeviceLog`/`SetStatus`/`ScanNetworkAdapters`；`MainWindow.Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`MainWindow.GlobalVar.cs`＝`GlobalVar*`·`RefreshMachineGlobals`；`MainWindow.Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`MainWindow.MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`MainWindow.IoImport.cs`＝IO 表导入；`MainWindow.AcquisitionView.cs`＝总览「数据采集」视图骨架（任务组下拉框 / 历史表格 / 1 秒增量刷新）；`MainWindow.AcquisitionLive.cs`＝实时画布（卡片拖动 / 缩放 / 背景图）；`MainWindow.Scanner.cs`＝扫码器（P4.5 连接 / P3.5 交互配置，`Scanner*` 全部处理器 + `ScannerItem` / `ScannerItemSet` / 判定节拍 / 每台独立重连） |
 | 连接状态机 | `ConnectButton_Click`（表单校验 + 按钮三态）/ `TryConnectAsync` / `Disconnect()` / `Disconnect(status,color)` / `SetInputsEnabled`；**身份与生命周期在 `Polling/ConnectionSession.cs`**（`IsConnecting` / `IsCurrent` / `MarkConnected` / `ReleaseClient` / `ForgetTarget` / 重连计数）+ `RunConnectionTasksAsync` / `IsCurrentConnection` |
 | 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect`（**循环留在窗口**，逐秒刷状态栏/锁表单是界面驱动）；目标快照 `ReconnectTarget` 与退避表 `ReconnectPolicy` 在 `Polling/` |
 | 轮询（入口在本类，实现在 `Polling/`） | `_poller.PollLoopAsync` → `Polling/ModbusPoller.cs`（`PollOnceAsync` 按地址区分块 + 2000 点切窗 / `PollFreeMonitorAsync` 自由监控，按区选 FC01/03/04） |
@@ -555,6 +562,7 @@ public sealed class MyDialog : DialogWindow
 | **数据采集（P3.1，任务组/数据项/执行/CSV）** | 模型 `Modeling/AcquisitionTask.cs`（+ `AcquisitionTaskRules` 文案与类型规则）+ 行包装 `AcquisitionTaskItem.cs` + 对话框 `Ui/AcquisitionTaskDialog.cs`；执行与落盘 `Modeling/AcquisitionCsv.cs` + 窗口 `RunAcquisitionTick` / `RefreshAcquisitionGlobals`（50ms 常驻定时器，**不随页面可见性停**，见 **`AGENTS-细节.md` §5.7**） |
 | **采集任务「配置错误」关开关/拦截** | 判据 `Modeling/AcquisitionTaskCheck.cs`（纯逻辑）+ 行属性 `HasConfigError` / `EffectiveEnabled` / `CanToggleEnabled`；提示在 `AcquisitionTaskRowTemplate` 第 4 列开关右侧；执行侧只判 `EffectiveEnabled`（`RefreshAcquisitionGlobals` 与 `RunAcquisitionTick`，见 **`AGENTS-细节.md` §5.7**） |
 | **采集「写入任务」真正下发** | `Modeling/AcquisitionWrite.cs`（TryBuild / DescribeFailure）+ `RunWriteTaskAsync`；Skipped=无地址静默跳过、失败不短路；CSV 只记写入变量回读值。**只读区（X / 离散输入 / 输入寄存器）只拦「写」不拦「映射」** —— 判定唯一来源是 `GlobalVariableStore.IsReadOnlyElement`（见 `AGENTS-细节.md` §5.7） |
+| **扫码器（P4.5+P3.5 合并一页）** | `Scanners/`（定义+规则+`scanner.json` / 裸 TCP 收帧 / 连接身份 / 上升沿）+ `MainWindow.Scanner.cs`（`Scanner*` 全部处理器 + 50ms 判定节拍 + 每台独立重连）（见 **`AGENTS-细节.md` §5.9**） |
 | **采集跟随可见性（三分段统一）** | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | **自由监控写入（FC05/06/16）** | `MonitorItemSet.TryBuildWrite`（文本 → `WritePlan`）+ `ValueCodec.TryEncodeRegisters` / `EncodeStringFixed`；`MainWindow.Monitor.cs` 的 `CommitMonitorValueAsync` → `WriteToDeviceAsync`；报文层 `ModbusTcpClient.WriteSingleCoilAsync` / `WriteSingleRegisterAsync` / `WriteMultipleRegistersAsync` |
 | **写入的文本解析与范围校验** | `ValueCodec.TryParseIntegerLiteral`（DEC 支持 `0x`/`0b` 前缀与负号）+ `CheckIntegerRange`；**校验必须在位宽截断前**（`-32769` 截成 `0x7FFF` 会变成合法值） |
@@ -585,3 +593,11 @@ public sealed class MyDialog : DialogWindow
 - **提交信息用中文**；提交前先 `git diff` 确认范围，**不要整文件盲加**（会把别人的 WIP 一起带走）
 - **不要自动提交**（2026-10-30 用户定案）：改完就停，等用户看过再决定是否提交。
 - **提交前的验证只跑两样（2026-10-29 用户定案）**：`dotnet build DSH_Modbus采集工具.sln` + `.tmp/ExpressionCheck`（跑 exe，不用 `dotnet run`）。其余断言套件不再全量复跑，详见 §2 末尾的同名说明。
+
+## 12. 发布与交付
+
+> **这一章已整段移到 [AGENTS-发布.md](AGENTS-发布.md)。**
+> 内容：框架依赖发布的产物构成 / 发布命令 / 目录可写性验证 / 覆盖更新只替换 exe 与其配置 /
+> 目标机 .NET 8 Desktop Runtime 前置条件。
+>
+> 要发版、改发布参数、或排查「现场机双击没反应」时先打开那份。

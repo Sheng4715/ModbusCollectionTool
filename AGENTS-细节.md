@@ -811,9 +811,9 @@ ScrollViewer                        ← 画布放不下就滚
      两轴倍率必然不同。用统一倍率就只能留黑边或裁图。见 `_liveScaleX` / `_liveScaleY`。
    - **卡片整体跟随比例缩放**（2026-11-03 用户改定；早前是「只缩位置、字号固定」）：
      字号、内距、圆角、数值框内距全部乘 `_liveScaleX`，窗口拉大拉小，卡片与图片的
-     相对大小关系保持不变。用户设定的 12 / 24 是**逻辑字号**（存模型、永不改），
-     只有显示时才乘比例（见 `ApplyLiveCardScale`）。
-     ⚠️ **两个字号必须用同一个比例、同一个下限策略**，否则 12:24 的视觉比例会歪。
+     相对大小关系保持不变。用户设定的字号是**逻辑字号**（存模型、永不改；
+     默认 **20 / 20**，2026-11-04 用户定），只有显示时才乘比例（见 `ApplyLiveCardScale`）。
+     ⚠️ **两个字号必须用同一个比例、同一个下限策略**，否则名称:数值 的视觉比例会歪。
      当前下限 `LiveMinReadableFontSize = 0`（= 严格跟随、不兜底）——
      曾试过 3.5 / 5，那会让名称与数值比例失真，用户明确要「严格跟随」。
      将来要兜底就改这一个常量，**别只对其中一个字号兜底**。
@@ -968,6 +968,141 @@ ScrollViewer                        ← 画布放不下就滚
 空/出错时把 `DataGrid` 也收起 —— 没有列时它仍画一条表头下边框，悬在提示文字上方像条野线。
 文件名只在「历史数据」页签下显示（`SyncAcqHistoryFileTextVisibility`），
 摆在实时数据下会让人以为实时数据也出自该文件。
+
+### 5.9 扫码器（P4.5 连接 + P3.5 交互，2026-11-04 合并为一页）
+
+**一句话**：一台扫码器 = 一份 `ScannerDefinition`（共用定义）；**连接参数与交互参数同处一行**（§5.9.2 一页两列），
+触发条件成立 → 发触发文本 → 按结束符收一帧 → 结果写进缓冲区变量 + 通知变量（可选再下发到 PLC）。
+**每个扫码器一条独立 TCP 连接、独立重连，16 台互不影响。**
+
+> ⚠️ **2026-11-04 起只有一页**。原先 P4.5（设备连接 → 扫码器连接）与 P3.5（数据管理 → 扫码器）各占一页、
+> 各有一套列表；用户定案合并：一行一台，展开后**左边连接相关参数、右边交互相关参数、中间一条竖分隔线**。
+> 数据管理页的那个「扫码器」分段与 `ScannerConfigPanel` **整段已删除**（`grep ScannerConfigPanel` 应为 0 命中），
+> **不要再加回来**。本节 §5.9.2 是这一页的结构，§5.9.3 是它右边那半边的交互参数口径。
+
+| 文件 | 职责 |
+|---|---|
+| `Scanners/ScannerDefinition.cs` | `ScannerDefinition` 模型 + `ScannerRules`（规则常量与校验）+ `ScannerStore`（`scanner.json`） |
+| `Scanners/ScannerTcpClient.cs` | 裸 TCP：原样发送 + 按结束符收帧（无结束符走 100ms 静默窗口） |
+| `Scanners/ScannerSession.cs` | 每台的连接身份（`Client` / `Target` / `Connect`·`Reconnect` 取消源 / 重连计数） |
+| `Scanners/ScannerExchange.cs` | `ScannerRuntimeState`（运行时态）+ `ScannerTrigger.ShouldFire`（上升沿） |
+| `MainWindow.Scanner.cs` | 全部 `Scanner*` 处理器 + `ScannerItem` / `ScannerItemSet` + 50ms 判定节拍 + 连接生命周期 |
+
+#### 5.9.1 数据与规则
+
+- `ScannerDefinition`：`Name` / `Ip` / `Port` / `Terminator`（默认 `CrLf`）/ `TriggerExpression` / `TriggerText` / `BufferVariableName` / `TimeoutSeconds`（默认 3.0）/ `TimeoutText` / `NotifyVariableName` / `SuccessValue` / `TimeoutValue` / `Enabled`（默认 true）。**只有配置，没有任何运行时态字段** —— 运行时态全在 `ScannerRuntimeState` 与 `ScannerSession`，落盘才不会把「上次连没连上」写进 json
+- `enum ScannerFrameTerminator { CrLf = 0, Cr = 1, Lf = 2, None = 3 }`，`ScannerRules.TerminatorBytes` → `{0D,0A}` / `{0D}` / `{0A}` / `Array.Empty<byte>()`
+- `ScannerRules` 常量：`MaxTriggerTextLength = 20`、`MinTimeoutSeconds = 0.5`、`MaxTimeoutSeconds = 10`、`DefaultTimeoutSeconds = 3.0`、`MaxScanners = 16`
+- ⚠️ **触发文本只允许 ASCII，且按 ASCII 长度算**（`TryValidateAsciiLength`）：「触发文本不能为空」/「不能超过 20 个字符」/「只能包含 ASCII 字符」。中文扫码枪指令现场基本没有，但一个全角字符在 `Encoding.ASCII.GetBytes` 下会变成 `?`，静默发错字节比报错难查得多
+- ⚠️ **`scanner.json` 的 `JsonSerializerOptions` 必须带 `JsonStringEnumConverter`**：枚举写成名字而非数字，否则以后往 `ScannerFrameTerminator` 中间插一个成员，历史配置会被静默解释成别的结束符（收帧全错但不报错）。同时带 `UnsafeRelaxedJsonEscaping`，中文名不会变成 `\uXXXX`
+- `ScannerStore.Load()` 文件不存在 / 空内容 / 反序列化异常 → 一律空列表（**不抛**）；`Save()` 返回 `bool`
+
+#### 5.9.2 扫码器连接页（设备连接 → 扫码器连接，一页两列）
+
+- 设备连接页顶部两档页签 `PlcConnectionSegment` / `ScannerConnectionSegment`，`GroupName="DeviceView"`，`Checked="DeviceView_Checked"`。原表单整段包进 `PlcConnectionPanel`，扫码器那段是 `ScannerConnectionPanel`
+- **一行一台，行尾箭头展开该台自己的参数**（2026-11-04 改，与采集任务组同款；改造前是「左列表 + 右列一份共享表单」）。表头列宽 **`30/*/124/30/30`**：`#` /「扫码器名称」/「启用」（含配置错误四个字）/ `×` / 展开箭头；右上角 `+`（`AddScannerButton` 的 `Grid.Column="3" Grid.ColumnSpan="2"`）。**行高 `42`、下边框 `0,0,0,1` = 与采集任务组主行同一数值**，改一处必须同步另一处
+- 行上从左到右：`Id` / `ScannerNameBox`（行内改名，唯一改名入口）/ 启用开关 + 琥珀「配置错误」/ `×` 删除 / 展开箭头。**启用开关只在合并后的这一行有**（原 P4.5 页没有开关）
+- ⚠️ **展开块是两列 + 中间一条竖线**（用户定案原话：「分为两列，左侧连接相关的参数，右边是交互相关的参数，中间加分割线」）：外层 `Border`（`Grid.Row="1"`、`Margin="0,4,0,4"`、`Padding="10,10,10,6"`、`Brush.Acquisition.SubTable.Background`、`BorderThickness=1`、`CornerRadius=4`）内直接是 `<Grid>` 三列 `Auto / Auto / *`：
+  - **左列**（5 行连接参数）：连接方式 / 协议 / IP地址 / 端口号 / 结果帧结束符
+  - **中列**：`<Border Grid.Column="1" Width="1" Margin="18,0,18,0" HorizontalAlignment="Center" Background="{DynamicResource Brush.Divider}"/>`。宽度只用 `1`，**别用 `1*`** —— 星号列会去分剩余宽度、竖线就跑偏了
+  - **右列**（8 行交互参数）：触发条件表达式 / 触发文本 / 接收缓冲区变量 / 超时判定（秒）/ 超时写入文本 / 通知变量 / 写入值 / 超时写入值。标签 `Width=110`、控件 `Width=200`（超时判定框 `Width=80`）、行 `Margin="0,0,0,12"`、末行 `0,0,0,2`
+- ⚠️ **展开块里没有「配置明细文字」，错误靠输入框标红表达**（用户 2026-11-04 第三次定案，原话：「去掉红色的提示文字，相关配置错误给输入框标红即可」）：改造前这里有个 `<StackPanel>` 包着一行 `{Binding Problem}` 的红字，**已整段删除**，现在 `Border` 的直接子元素就是那个三列 `Grid`。明细仍留在 `ScannerItem.Problem` 里（给悬停/日志/行上四个字用），只是界面上不再成段显示
+- ⚠️ **展开块在行下方 → 模板内取不到 `x:Name`**：所有处理器统一 `ScannerRowOf(sender)`（`fe.DataContext as ScannerItem ?? fe.Tag as ScannerItem`）取那一台，开头一律 `if (sender is not TextBox box || ScannerRowOf(box) is not ScannerItem item) { return; }`。**不要再写「先选中再右侧填」那套**
+- ⚠️ **没有「选中行」这个概念了**（用户 2026-11-04 定案：「去掉选中焦点」）：两页的 `<Border.Style>` + `IsSelected` DataTrigger、`PreviewMouseLeftButtonDown`、`SelectScanner`、`ScannerItem.IsSelected` / `_isSelected` **已全部删除**。当初的选中态只为「右列表单跟着走」，表单搬进行内后它就没有用处了，留着只会让人以为点一下能做什么。同理**上下移也删了**（`ScannerMoveUp_Click` / `ScannerMoveDown_Click` / `MoveScanner` / `ScannerItemSet.Move` 全删）—— 顺序不再可调，落盘顺序就是建行顺序
+- 「连接方式」「协议」「结束符」三个下拉框的候选项改由 `ScannerItem` 的静态数组 `ConnectionTypeOptions` / `ProtocolOptions` / `TerminatorOptions` 提供（`ItemsSource="{Binding ConnectionTypes}"` 等），首版在 `InitializeScanners()` 里给 x:Name 赋值，搬进模板后那段已删
+- ⚠️ **「连接方式」「协议」只有一项但必须可展开**（用户定案 2026-11-04）：首版写了 `IsEnabled="False"`，看着像「没配好、也点不开确认」。现在两个框都是正常可点的 `FormComboBox`，只是选项各只有一个；**不要为了「反正改不了」把它灰掉** —— 以后加品牌/协议时这里就是要选的地方
+- ⚠️ **只给 `ItemsSource` 不给选中项 = 空框**：`FormComboBox` 的关闭态显示 `SelectedItem`，没有就是一片空白 —— 截图里看着像「这两个字段没配」，实际是显示 bug（2026-11-04 实测）。连接方式 / 协议各补一个占位投影 `ConnectionTypeIndex` / `ProtocolIndex`（都恒返回 `0`），xaml 里 `SelectedIndex="{Binding ConnectionTypeIndex, Mode=OneWay}"`。**别写死 `SelectedIndex="0"`**：模板复用时不统一
+- 展开块里全部绑定都是 **`Mode=OneWay`**（名称框 `NameText` + 左列 5 个连接参数投影 + 右列 8 个交互参数投影 = 14 个）：这些投影是 get-only，TwoWay 会报绑定错误；而处理器一律读 `box.Text`，写回本来就不发生（回填靠 `item.RefreshFields()`）
+- ⚠️ **`Terminators` 的顺序必须与枚举定义顺序一致**（`CrLf`/`Cr`/`Lf`/`None` → `\r\n`/`\r`/`\n`/无），因为代码里直接 `(ScannerFrameTerminator)SelectedIndex`。中间插一项就等于全体配置错位
+- **名称也是行内编辑，全程没有对话框**（2026-11-04 二次改，`Ui/ScannerEditDialog.cs` 已删除）：行里是 `TextBox x:Name="ScannerNameBox"`（`Style="{StaticResource MonitorInlineTextBox}"`、`Text="{Binding NameText, Mode=OneWay}"`），`LostFocus="ScannerName_LostFocus"` + `KeyDown="ScannerName_KeyDown"`（回车等同失焦），两者都汇到**唯一提交点** `CommitScannerName(TextBox)`
+- ⚠️ **名称要有独立的 `NameText` 投影，不要复用 `Name`**：名称框必须能装下用户乱输入的内容（含空串、重名），校验通过才写模型；`Name` 仍是只读投影（日志前缀等处用它）。`CommitScannerName` 的两条校验：空 → 「扫码器名称不能为空」；`IsNameTaken(wanted, item)` → 「名称「X」已被别的扫码器使用」。失败走 `RejectScannerField` 回退，成功 `_scannerSet.Rename` + `item.RefreshFields()` + `RefreshScannerItemState` + `RefreshScannerView()`（改名会影响日志前缀与引用提示）
+- ⚠️ **复用 `MonitorInlineTextBox` 时必须自己给 `Foreground`**：那个样式的 `Foreground` setter 是 `{Binding RowBrush}`（给自由监控行的 `MonitorItem` 用的），`ScannerItem` 没这个属性 → 会刷绑定错误且文字色退成默认黑。扫码器名称框显式写 `Foreground="{DynamicResource Brush.Text.Primary}"`
+- 新增 = 点 `+` **直接落一行**（`ScannerRules.NextName` 取 `scanner1`/`scanner2`…），`IsExpanded` 置 true（合并后只有这一个展开标志，`IsConfigExpanded` 已随 P3.5 页删除），然后 `FocusScannerName(item)` 把焦点送进名称框（`Dispatcher.BeginInvoke(DispatcherPriority.Loaded, ...)` + `ItemContainerGenerator.ContainerFromIndex` + 遍历可视树找 `ScannerNameBox`，照 `FocusGlobalVarRow` / `FindGlobalVarBox` 那套）。**不再弹「起名」对话框** —— 参数已能就地填，只剩起名一个作用就是重复劳动（用户原话见 `Brief.md` 同期记录）
+- 端口失焦：空 → 存 0（表示没配）；非法 → **回退到上次有效值** + 该行「端口号」框标红（与 PLC 表单同一口径，见 §3.4）。错误归**每行一份**，落在 `ScannerItem.Problem` + `ScannerItem.ProblemField`；行上收起态的标记见 §5.9.3（「配置错误」四个字）
+- 删除扫码器 → `DropScannerSession` 断开连接 + 从两个字典移除，**该台的交互配置随定义一起消失**（同一份定义）
+
+#### 5.9.3 交互参数（合并页的右半边，P3.5 原内容）
+
+> ⚠️ **原「数据管理 → 扫码器」那一页 2026-11-04 已整段删除**（`ScannerSegment` 分段、
+> `ScannerConfigPanel`、`ScannerConfigItemsControl`、`ScannerConfigEmptyHint`、
+> `ToggleScannerConfigExpand_Click`、`RefreshScannerConfigView()`、`ScannerItem.IsConfigExpanded`
+> 全部下线）。下面这些**交互参数**现在住在合并页展开块的**右列**，行与列的排法见 §5.9.2。
+
+- 右列竖排 **8 行**：触发条件表达式 / 触发文本 / 接收缓冲区变量 / 超时判定（秒）/ 超时写入文本 / 通知变量 / 写入值 / 超时写入值。**标签统一 `Width=110`、控件 `Width=200`**（超时判定框 `Width=80`）
+- ⚠️ **错误定位机制：哪个框错哪个框红**（用户 2026-11-04 定案，替换掉原先的一行红字明细）。三件套：
+  1. `Scanners/ScannerDefinition.cs` 的 `enum ScannerField { None, Name, Ip, Port, TriggerExpression, TriggerText, BufferVariable, TimeoutSeconds, TimeoutText, NotifyVariable, SuccessValue, TimeoutValue }` —— 就是把 `DescribeScannerProblems` 里那一串 return 各给一个身份
+  2. `MainWindow.Scanner.cs`：`DescribeScannerProblems(def, out ScannerField field)` 每个分支先赋值 `field`；`ScannerItem.ProblemField` 的 setter 里 `Raise` 掉 11 个投影（`NameError` / `IpError` / `PortError` / `TriggerExpressionError` / `TriggerTextError` / `BufferVariableError` / `TimeoutSecondsError` / `TimeoutTextError` / `NotifyVariableError` / `SuccessValueError` / `TimeoutValueError`，每个都是 `=> _problemField == ScannerField.Xxx`）。**提交失败的即时错误也要写它**：`RejectScannerField(item, box, 旧值, error, field)` 的第 5 个参数、`ScannerPort_LostFocus` 的非法分支、`CommitScannerValueText` 的失败分支
+  3. `Ui/ScannerErrorMark.cs` 的附加属性 `IsError`（**必须是 `typeof(bool)` 的 `DependencyProperty`**）+ `MainWindow.xaml` 的 `ScannerFieldTextBox` / `ScannerNameTextBox` 两个样式，触发器 `<DataTrigger Binding="{Binding RelativeSource={RelativeSource Self}, Path=(ui:ScannerErrorMark.IsError)}" Value="True"><Setter Property="BorderBrush" Value="{DynamicResource Brush.Danger}"/></DataTrigger>`
+- ⚠️ **不能用 `Tag` 传这个标志**：`Tag` 是 `object`，`DataTrigger.Value="True"` 是字符串，与 boxed `bool` 永远不相等，触发器不亮。这就是为什么要专门写一个 `bool` 类型的附加属性
+- ⚠️ **`FormTextBox` / `MonitorInlineTextBox` 的 `BorderBrush` 必须走局部值 + `TemplateBinding`**：这两份模板原先把 `BorderBrush` 写死成 `{DynamicResource Brush.Input.Border}`，**控件上设 `BorderBrush` 一律看不见**（标红完全不生效，且没有任何报错）。2026-11-04 已改成样式里给 `<Setter Property="BorderBrush">` 默认值 + 模板 `Border x:Name="Bd"` 用 `BorderBrush="{TemplateBinding BorderBrush}"`。⚠️ 改这两个样式等于改全应用所有表单框的行内框，动之前先想清楚
+- ⚠️ **两个新样式必须写在 `FormTextBox` / `MonitorInlineTextBox` 之后**：`BasedOn` 走 `StaticResource`，靠文档顺序解析，写前面直接 `XamlParseException`
+- ⚠️ **收起态用「配置错误」四个字，不是图标**（用户 2026-11-04 第二次定案，原话：和任务组一样显示配置错误就好了，配置错误不能启用，去掉感叹号）：直接照抄采集任务组的同款写法 —— `<StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">` 里 `CheckBox Style="{StaticResource AcqEnableSwitch}" IsChecked="{Binding EffectiveEnabled, Mode=TwoWay}" IsEnabled="{Binding CanToggleEnabled}" Click="ScannerEnabled_Click"` + 右侧 `<TextBlock Margin="8,0,0,0" Text="{Binding ConfigErrorText}" FontSize="11" Foreground="{DynamicResource Brush.Warning}" Visibility="{Binding HasConfigError, Converter={StaticResource BoolToVis}}"/>`。**用琥珀不用红**（与 §9.1 里「红=配置要改」看似冲突）：任务组当初定的口径是「红字是格子里填错了，琥珀是这东西现在不可用」，这里表达的是**不可用**，故跟任务组保持一致而不是跟感叹号保持一致
+- ⚠️ **合并后启用开关搬到了行上，并且是这一页唯一的开关**：原先只有 P3.5 页有开关、P4.5 页只有四个字；合并后一套界面里「启不启用 + 为什么不能启用」都在同一行。**不要再给展开块里加第二个开关**
+- ⚠️ **`EffectiveEnabled` 必须可写**（`get => Model.Enabled && !HasConfigError; set => Enabled = value;`）：`CheckBox.IsChecked` 默认 TwoWay，绑只读属性会在模板实例化时抛 `XamlParseException`「无法对只读属性进行 TwoWay 绑定」，**整个页面打不开**（采集任务组实机踩过）。`Model.Enabled` 存用户意图、`EffectiveEnabled` 永远由 get 算、**不存第二份状态**
+- ⚠️ **三个 Raise 要挂在 `ScannerItem.Problem` 的 setter 里**：`HasConfigError` / `EffectiveEnabled` / `CanToggleEnabled`。`Problem` 是唯一的「重算」出口（`RefreshScannerItemState(item)` 写它，17 个调用点），挂在别处会漏。`Enabled` 的 setter 也要补 `Raise(nameof(EffectiveEnabled))` / `Raise(nameof(CanToggleEnabled))`
+- ⚠️ **执行侧必须同口径**：`RunScannerTick()` 里判 `if (!item.EffectiveEnabled) continue;`（**不是** `def.Enabled`），`needsSystemValues` 也改用 `i.EffectiveEnabled`。否则界面写着「配置错误不能启用」、后台照旧按半截配置发报文。**但启动自动连接仍判 `item.Model.Enabled`**（`TryAutoConnectScanners`）—— 连接不等于触发，与「关掉启用只挡触发与收发，连接仍在」同一口径
+- 「配置错误」四个字集中在 `ScannerRules.ConfigErrorText`（`Scanners/ScannerDefinition.cs`），与采集的 `AcquisitionTaskCheck.ErrorText` **刻意同值**：同一种状态在两个页面用同一句话，不再各写一份字面量
+- ⚠️ **名称格仍是 `StackPanel HorizontalAlignment="Left"` + 名称限宽**（`TextBox Width="200"`），理由与当初的感叹号相同：两列 `Grid`（`*` + `Auto`）时名称会**撑满整列**，后面那段字被推到最后 —— 实测离名称文字尾部 ~1870px（2026-11-04 用 UIA 矩形量出来的）；名称要省略号就必须给 `MaxWidth`，否则 `TextTrimming` 撑满时等于不生效
+- ⚠️ **「结果帧结束符」6 个汉字在 `FontSize=14` 下需要 84px**：`Width=80` 时字直接贴在控件边上没有间隙（首版就是这样，截图一眼看出）。扫码器相关表单标签一律 110
+- `DescribeScannerProblems(def, out ScannerField field)` 返回**第一条**待改项（不是全部），顺序固定：IP 空 → 端口越界 → 触发表达式空 → 表达式解析失败 → 名字不存在 → 触发文本 → 超时秒数 → 超时文本 → 缓冲区变量 → 通知变量 → 写入值 → 超时写入值。它由 `RefreshScannerItemState(item)` 调（`InitializeScanners()` 载入后先刷一遍、每次提交后刷一遍），同时写 `ScannerItem.Problem`（文案）与 `ProblemField`（哪一栏）
+- 三个框挂了补全：触发表达式走 `CompletionSource.ForExpression`，缓冲区变量 / 通知变量走 `CompletionSource.ForMonitorName`；`Loaded` 里先 `TryGetValue` 去重再 `Add`（行模板会重复 Loaded）
+- 各输入框**失焦才提交**，失败一律 `RejectScannerField(item, box, 旧值, error, field)`（回退文本框 + 写该行 `Problem` 与 `ProblemField`，对应框随即变红框），成功才写模型 + `Save()` + `RefreshScannerItemState(item)`。⚠️ 展开块里的框绑的是**只读投影**（`NameText` + `TriggerExpressionText` 等 12 个），故提交后必须 `item.RefreshFields()` 显式通知 —— 不再有 `_scannerFormSyncing` 那种回填标志（**那个字段已删除**），因为投影是单向的，回填不会反向触发提交
+
+#### 5.9.4 校验口径（写错一个现场就查不出来）
+
+- **接收缓冲区变量只能是 STRING**（`ValidateScannerBufferVariable`）：`GlobalVariableStore` 里不存在 → 「不存在」；类型不是 STRING → 「只能是 STRING，当前是 X」。留空合法（= 不写缓冲区）
+- **通知变量只接受 INT / UINT / DINT / UDINT**（`ValidateScannerNotifyVariable`）。留空合法（= 不通知）
+- **两个写入值（`SuccessValue` / `TimeoutValue`）按通知变量的类型预校验**（`ValidateScannerValueText` → `ValueCodec.TryEncodeRegisters`），错在这里比运行时写失败好查；通知变量为空时跳过校验（值不会被用到）
+- **空串算正常返回**（超时才是失败）：扫码器回一帧空内容也是合法结果，缓冲区写空串
+- **结果超长按声明长度截断**，不算失败（`EncodeStringFixed` 先截字符再补 `0x00`）
+- **超时写入文本为空则保留缓冲区的旧值**（`NonEmptyOrNull`），不是写空
+- 变量被多处引用时只提示不拦（`ScannerRules.CountReferences`，`ReferenceEquals` 排除自身），黄字 `Brush.Warning`「变量已在别处被引用」
+
+#### 5.9.5 触发与收发
+
+- `_scannerTimer` 是 50ms 的 `DispatcherTimer`（`DispatcherPriority.Background`），**不随页面可见性停**（和采集的 `_acqTimer` 同一口径）。没有扫码器时第一行就早退
+- ⚠️ **`state.InFlight` 的 `continue` 必须写在 `ShouldFire` 之前**：`ShouldFire` 有副作用（把 `wasTrue` 置为当前值），执行中忽略新的上升沿时若还调了它，那一拍的边沿就被吞掉
+- ⚠️ **`ShouldFire` 的 `ref` 参数不能直接传自动属性**：`ScannerRuntimeState.WasConditionTrue` 是 `{ get; set; }`，`ref state.WasConditionTrue` 编不过（`CS0206`）。过一手局部变量再写回：
+  ```csharp
+  bool wasTrue = state.WasConditionTrue;
+  if (!ScannerTrigger.ShouldFire(condition, ref wasTrue)) { continue; }
+  state.WasConditionTrue = wasTrue;
+  ```
+- 表达式按字符串缓存（`CompiledSource` vs `TriggerExpression` 比对），解析失败退化到 `CompiledExpression.Empty`（恒 false），不每拍重解析
+- 收发：`DiscardPendingAsync()` 先扔掉非响应期的主动数据 → `SendAsync(ASCII(TriggerText))` **原样发、不补结束符** → `ReadFrameAsync(TerminatorBytes, timeout)` → `ApplyScannerSuccessAsync`
+- ⚠️ **`ReadFrameAsync` 超时会关掉连接**（`catch` 里 `Dispose()` 再抛）：超时那一刻可能留了半帧，不断开的话下一个请求会把残帧当响应头，之后一路错位
+- ⚠️ **空结束符走 100ms 静默窗口**（`ScannerTcpClient.SilenceInterval`），且 `payload.Count > 0` 才起静默计时 —— 否则连上后对方一个字都没发时，第一个 100ms 就把空帧当结果交付了
+- `n == 0` 抛 `new IOException("连接被对方关闭")`，走「通讯中断」分支而不是超时分支
+- 异常分流：`OperationCanceledException` → 超时档（写 `TimeoutText` / `TimeoutValue`）；其它异常 → 记 `扫码器「X」通讯中断：<原因>`（`Disconnected` 级别）+ `NotifyScannerLost` + 超时档
+- `finally { state.InFlight = false; }` —— 成功与失败都必须放开互斥，漏了这台扫码器从此不再触发
+
+#### 5.9.6 写变量（口径 B）
+
+`ApplyScannerVariableAsync(variable, text, label)` 的顺序不能动：
+
+1. `variable == null || text == null` → return（没配就不写）
+2. `ValueCodec.TryEncodeRegisters` 失败 → **只记 Warning 日志，不走超时档**（这是配置问题，不是扫码器失败）
+3. `variable.Value = ValueCodec.FormatRegisters(...)` + **`variable.Numeric = ValueCodec.DecodeNumber(...)`** —— 两个都要设，`Numeric` 供实时卡片十进制显示，不能从 `Value` 反解
+4. `!variable.HasAddress` → return（内存变量，到此为止）
+5. **PLC 未连接 → return（口径 B）**：扫码器照常收发、结果进内存、只是不回写 PLC。扫码器**不**以 PLC 连接为前置
+6. `AcquisitionWrite.TryBuild`（`Skipped` 静默 / `Failed` 记 Warning）→ `WriteToDeviceAsync`
+
+#### 5.9.7 连接生命周期（每台独立）
+
+- 启动 `TryAutoConnectScanners()`：遍历已启用且有可用端点的，`_ = TryConnectScannerAsync(...)` **不 await**（16 台串行等会拖到几十秒）。不受「自动连接 PLC」开关约束
+- `HasUsableScannerEndpoint` = IP 非空 && 端口 1~65535
+- `ConnectAsync` 的**本地端点传 `null`**（不像 PLC 会绑网卡）：扫码枪都在现场同一网段，绑错网卡反而制造故障
+- `EnsureScannerConnecting`：`Target != null`（**曾经连上过**）→ 走退避重连；否则直接首连。这个区分保证连接拒绝时不会退化成瞬间重试风暴
+- 重连复用 `Polling/ReconnectPolicy.DelayForAttempt`（1→2→4→8→10s 封顶），与 PLC 同一张表
+- ⚠️ **重连日志每次尝试只记一行**（`扫码器「X」正在重连 … 3s（第 2 次）`，`Warning` 级）：16 台 × 逐秒倒计时会把运行日志冲干净。PLC 的 `ReconnectLoopAsync` 逐秒刷是**只有一个**对象，这里不能照抄
+- ⚠️ **首连失败 / 超时的日志只在 `!isReconnect` 时记**：重连循环里每次失败都记一遍，断网一晚上就是几千行
+- 状态**只进运行日志、不动底栏**：底栏是 PLC 的连接状态，扫码器写进去会让人以为 PLC 断了。连上用 `Connected`（绿）、断开用 `Disconnected`（红）、重连中用 `Warning`（琥珀）
+- `NotifyScannerLost(item, client)` 先 `ReferenceEquals(session.Client, client)` 校验 —— 旧连接的失联回调不能把新连接拆掉
+- `OnClosed` → `ShutdownScanners()`：停节拍 + 逐台 `CancelConnect` / `CancelReconnect` / `ReleaseClient` / `ForgetTarget`，再清两个字典
+
+#### 5.9.8 引用刷新
+
+`MainWindow.GlobalVar.cs` 的 `RefreshAfterVariableChange()` 里调 `RefreshScannerReferenceHints()`，**必须在 `if (_monitorSet.Items.Count == 0) return;` 之前** —— 否则只配了扫码器、没配监控项时，改完全局变量名称，扫码器那边的「变量不存在」提示与红框不会更新。
 
 ## 6. 心跳与连接生命周期
 

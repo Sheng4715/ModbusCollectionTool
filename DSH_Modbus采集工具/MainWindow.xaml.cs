@@ -466,6 +466,10 @@ namespace DSH_Modbus采集工具
             // 启动即常驻（见 _acqTimer 的注释）
             _acqTimer.Tick += (_, _) => RunAcquisitionTick();
             _acqTimer.Start();
+
+            // 扫码器（P3.5 / P4.5）：定义从 scanner.json 读回、两个列表都绑定同一份集合，
+            // 触发判定同样走 50ms 常驻节拍（不随页面可见性启停 —— 扫码器在别的页签也要能被触发）
+            InitializeScanners();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -620,6 +624,9 @@ namespace DSH_Modbus采集工具
             // 自动连接排到窗口真正显示之后：连接是异步的，失败原因要能落到界面上。
             // 用 ApplicationIdle 而不是 Loaded 里直接调，是为了先让首帧画出来。
             Dispatcher.InvokeAsync(TryAutoConnect, DispatcherPriority.ApplicationIdle);
+
+            // 扫码器同样在首帧后自动连接已启用的那几台；失败不弹窗、只进运行日志
+            Dispatcher.InvokeAsync(TryAutoConnectScanners, DispatcherPriority.ApplicationIdle);
 
             // P5-3：项目信息全是常量，填一次即可（不需要进页面时刷新）
             RefreshProjectInfo();
@@ -2054,6 +2061,7 @@ namespace DSH_Modbus采集工具
             Themes.ThemeManager.ThemeChanged -= OnThemeChanged;
             CancelReconnect();
             Disconnect();
+            ShutdownScanners();
             _logWriter.Dispose();
             base.OnClosed(e);
         }
