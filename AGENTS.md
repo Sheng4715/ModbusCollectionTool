@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 >
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **55231 B / 余量约 9.7 KB**；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **56272 B / 余量约 9.0 KB**；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 
@@ -24,6 +24,7 @@ dotnet run --project DSH_Modbus采集工具
 ```
 
 - **构建前必须先结束进程**，否则 exe 被锁报 MSB3027
+- 脚本 / `Start-Process` 启动时**直接跑 exe**（`bin\Debug\net8.0-windows\DSH_Modbus采集工具.exe`，WinExe 不带控制台）；`Start-Process dotnet run ...` 会额外留一个 **dotnet 黑窗口**（跑完也不会自己关）
 - 窗口最小 1024×640（`MainWindow.xaml` 的 `MinWidth/MinHeight`），默认与最小一致
 - 用户习惯：**构建成功后自动启动应用**；**不要自动提交**（2026-10-30 定案 —— 改完就停，等用户看过再决定）；**不做深色主题验证**（只验浅色，深色适配由主题键保证）
 - **版本号与构建日期在 `DSH_Modbus采集工具.csproj`**：`<VersionPrefix>` 手改（提版本改这一处），`VersionSuffix` 由配置决定（Debug 自动带 `-debug`），`<WriteBuildDate>` 每次编译现取系统时间写 `obj/.../BuildInfo.g.cs`。详见 `AGENTS-细节.md` §7.3
@@ -66,7 +67,7 @@ DSH_Modbus采集工具/
 │   ├── ICollectorHost.cs       # 宿主契约：周期 / 监控集 / 快照 / 连接身份 / 回 UI / 断线
 │   ├── ModbusPoller.cs         # 轮询编排（IO 分块读 + 自由监控读 + 断线通知）
 │   ├── ConnectionSession.cs    # 连接身份与生命周期（客户端 / 目标 / 取消源 / 重连计数）
-│   ├── ReconnectPolicy.cs      # 退避 1→2→4→8→10 封顶（纯函数）
+│   ├── ReconnectPolicy.cs      # 退避 1→2→4→5 封顶 5s（纯函数）
 │   └── PollSnapshot.cs         # 可见性快照（页面 / 自由监控 / 当前页 / 周期）
 ├── Io/                         # IO 点位集（无 WPF，分页只做数值运算）
 │   ├── IoPointSet.cs           # 注释表读写 + 名称归一化 / 地址换算 / 分组排序 / 导入校验

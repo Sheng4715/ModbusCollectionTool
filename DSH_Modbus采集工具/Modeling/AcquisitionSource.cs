@@ -96,7 +96,7 @@ namespace DSH_Modbus采集工具.Modeling
                     Type = quoted ? DataType.String : DataType.Int,
                     TypeDisplayName = quoted ? "STRING" : "常量",
                     Comment = "常量",
-                    Format = DisplayFormat.Dec,
+                    Format = quoted ? DisplayFormat.Ascii : DisplayFormat.Dec,
                     IsConstant = true,
                     Literal = literal,
                 };

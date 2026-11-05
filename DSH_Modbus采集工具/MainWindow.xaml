@@ -594,18 +594,28 @@
             实测（2026-11-05）`#"ABC`（既是常量、又解析失败）两条都调过顺序仍显示橙色、
             红色出不来。转换器把三种状态在一处算完、只返回一个颜色，没有互相覆盖的余地。
             见 `Ui/SourceForegroundConverter.cs`。
-            ⚠️ 转换器绑的是**整行对象**（`RelativeSource Self` 的 `DataContext`），
-            不是文本框里的字符串 —— 只有行自己知道变量名在表里存不存在。
+            ⚠️ 转换器用 **MultiBinding 绑两条 INPC 路径**（`HasSourceError` + `SourceVariableName`），
+            不是绑整行对象 —— 整行对象的引用不变，INPC 通知不会让绑定重算，编辑后颜色不刷新。
             ⚠️ 必须定义在 MonitorInlineTextBox **之后**：BasedOn 走 StaticResource，
             资源字典按顺序解析，放前面会找不到（解析期就抛）。
             ⚠️ 只做整段换色，不做 `#` 与值分别着色：TextBox 的 PART_ContentHost 内部
             TextBoxView 只认控件级 Foreground，没有 run 级着色接口（详见 AGENTS-细节.md §5.7）。
         -->
         <Style x:Key="AcquisitionSourceBox" TargetType="TextBox" BasedOn="{StaticResource MonitorInlineTextBox}">
-            <Setter Property="Foreground"
-                    Value="{Binding DataContext,
-                                    RelativeSource={RelativeSource Self},
-                                    Converter={StaticResource SourceForegroundConverter}}"/>
+            <Setter Property="Foreground">
+                <Setter.Value>
+                    <!--
+                        MultiBinding 显式绑两条 INPC 路径，WPF 收到任意一条 PropertyChanged
+                        通知后立即重算颜色 —— 修复早期绑 DataContext 整行对象时「编辑后颜色
+                        不实时更新、要导航离开再回来才刷新」的问题。
+                        converter 参见 Ui/SourceForegroundConverter.cs。
+                    -->
+                    <MultiBinding Converter="{StaticResource SourceForegroundConverter}">
+                        <Binding Path="HasSourceError"/>
+                        <Binding Path="SourceVariableName"/>
+                    </MultiBinding>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!--

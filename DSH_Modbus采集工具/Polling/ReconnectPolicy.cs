@@ -3,7 +3,10 @@ using System;
 namespace DSH_Modbus采集工具.Polling
 {
     /// <summary>
-    /// 自动重连的退避策略：<c>1 → 2 → 4 → 8 → 10</c> 秒，封顶 10s。
+    /// 自动重连的退避策略：<c>1 → 2 → 4 → 5</c> 秒，封顶 5s。
+    /// <para>
+    /// 2026-11-05 用户定案：封顶由 10s 改为 5s（扫码器与 PLC 共用这一张表）。
+    /// </para>
     /// <para>
     /// 刻意做成纯函数：退避表**越界夹取**属于「错了也不报错、只是重连变得没规律」那类问题，
     /// 抽出来才能断言。
@@ -12,7 +15,7 @@ namespace DSH_Modbus采集工具.Polling
     public static class ReconnectPolicy
     {
         /// <summary>退避间隔（秒）。</summary>
-        public static readonly int[] DelaysSeconds = { 1, 2, 4, 8, 10 };
+        public static readonly int[] DelaysSeconds = { 1, 2, 4, 5 };
 
         /// <summary>退避上限（秒），即表尾值。</summary>
         public static int MaxDelaySeconds => DelaysSeconds[^1];

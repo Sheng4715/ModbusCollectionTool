@@ -497,7 +497,7 @@
 
 任务组与数据项可以增删改、落盘到 `acquisition-tasks.json`；
 **采集执行与 CSV 落盘已接**（2026-10-26，见本节末尾「执行与落盘」）。
-**未接**：数据写入的「写入值」真正下发到 PLC —— 当前写入类型也只读变量、只记表格。
+**写入下发也已接**（2026-10-27，见本节末尾「写入任务真正下发」）。
 
 结构是**两层**：任务组（`AcquisitionTask`）下面挂数据项（`AcquisitionItem`）。
 
@@ -663,12 +663,15 @@
 - 补全候选末尾附了三条常量示例（`#123` / `#0x1F` / `#"ABCD"`），当语法提示用
 - **常量的来源框整段显示橙色**（2026-11-05 定）：合法常量橙（`Brush.Warning`）、
   有错（变量名查不到 / 常量语法错）红（`Brush.Danger`）、其它正常字色。
-  ⚠️⚠️ **必须用 `IValueConverter` 一次算定，不要用两条 `DataTrigger`**（实测踩过）：
+  ⚠️⚠️ **必须用一个转换器一次算定，不要用两条 `DataTrigger`**（实测踩过）：
   两个 `DataTrigger` 同时成立时 WPF 的优先级取决于声明顺序，而且**两种顺序都试过仍不生效** ——
   `#"ABC`（既是常量、又解析失败）一直显示橙色、红色出不来。
-  现在的做法：`Ui/SourceForegroundConverter.cs` 绑**整行对象**（`RelativeSource Self` 的
-  `DataContext`，不是文本框里的字符串 —— 只有行自己知道变量名存不存在），
-  内部按「有错 → 常量 → 正常」顺序返回一个颜色，没有互相覆盖的余地。
+  现在的做法：`Ui/SourceForegroundConverter.cs` 是 **`IMultiValueConverter`**，
+  由 `AcquisitionSourceBox` 用 `MultiBinding` 显式绑 `HasSourceError` + `SourceVariableName`
+  两条 INPC 路径，内部按「有错 → 常量 → 正常」顺序返回一个颜色，没有互相覆盖的余地。
+  ⚠️ **不要绑整行对象**（`RelativeSource Self` 的 `DataContext`）：整行对象的引用不变，
+  `HasSourceError` 的 INPC 通知**不会**让绑定重算 —— 表现为「编辑后颜色不刷新、
+  切走再回来才对」（2026-11-05 实测并修掉）。
   颜色走 `ThemeManager.GetBrush`（C# 侧赋画刷不经过 `DynamicResource`）
 - ⚠️ **做不到「`#` 橙 + 值紫」那种分段着色**：`TextBox` 的 `PART_ContentHost` 内部
   `TextBoxView` 只认控件级 `Foreground`，没有 run 级着色接口。要分段只能换 `RichTextBox`
@@ -1142,6 +1145,7 @@ ScrollViewer                        ← 画布放不下就滚
 #### 5.9.5 触发与收发
 
 - `_scannerTimer` 是 50ms 的 `DispatcherTimer`（`DispatcherPriority.Background`），**不随页面可见性停**（和采集的 `_acqTimer` 同一口径）。没有扫码器时第一行就早退
+- 同一节拍还负责**连接维护**（2026-11-05）：每台先过一遍 `EnsureScannerConnecting`，**不等触发沿** —— 启用、未连接、退避到期就补一次。早先只在触发沿调它，遇到「常真」表达式（如 `sys_True`）只有一个上升沿，首连失败后就再也不会重试（见 §5.9.7）
 - ⚠️ **`state.InFlight` 的 `continue` 必须写在 `ShouldFire` 之前**：`ShouldFire` 有副作用（把 `wasTrue` 置为当前值），执行中忽略新的上升沿时若还调了它，那一拍的边沿就被吞掉
 - ⚠️ **`ShouldFire` 的 `ref` 参数不能直接传自动属性**：`ScannerRuntimeState.WasConditionTrue` 是 `{ get; set; }`，`ref state.WasConditionTrue` 编不过（`CS0206`）。过一手局部变量再写回：
   ```csharp
@@ -1183,11 +1187,11 @@ ScrollViewer                        ← 画布放不下就滚
 - 启动 `TryAutoConnectScanners()`：遍历 `item.Model.Enabled` 且有可用端点的，`_ = TryConnectScannerAsync(...)` **不 await**（16 台串行等会拖到几十秒）。**「启用」就是扫码器的自动连接开关**，没有全局开关（口径见 §7.2）
 - `HasUsableScannerEndpoint` = IP 非空 && 端口 1~65535
 - `ConnectAsync` 的**本地端点传 `null`**（不像 PLC 会绑网卡）：扫码枪都在现场同一网段，绑错网卡反而制造故障
-- `EnsureScannerConnecting`：`Target != null`（**曾经连上过**）→ 走退避重连；否则直接首连。这个区分保证连接拒绝时不会退化成瞬间重试风暴
-- 重连复用 `Polling/ReconnectPolicy.DelayForAttempt`（1→2→4→8→10s 封顶），与 PLC 同一张表
-- ⚠️ **重连日志每次尝试只记一行**（`扫码器「X」正在重连 … 3s（第 2 次）`，`Warning` 级）：16 台 × 逐秒倒计时会把运行日志冲干净。PLC 的 `ReconnectLoopAsync` 逐秒刷是**只有一个**对象，这里不能照抄
-- ⚠️ **首连失败 / 超时的日志只在 `!isReconnect` 时记**：重连循环里每次失败都记一遍，断网一晚上就是几千行
-- 状态**只进运行日志、不动底栏**：底栏是 PLC 的连接状态，扫码器写进去会让人以为 PLC 断了。连上用 `Connected`（绿）、断开用 `Disconnected`（红）、重连中用 `Warning`（琥珀）
+- `EnsureScannerConnecting`：`Target != null`（**曾经连上过**）→ 走退避重连；否则立刻首连。两条路都先过 `ScannerSession.CanAttemptNow` 这一道闸门
+- ⚠️ **「从未连上」也受退避约束**（2026-11-05 方案 B，用户定案）：早先只有「曾经连上过」才进退避，首次失败后 `Target` 仍是 `null`，下一拍立刻再连 —— 间隔只等于 3 秒连接超时，日志里「连接超时」一行接一行（16 台更甚）。现在 `TryConnectScannerAsync` 失败时调 `ScannerSession.RegisterConnectFailure`（失败次数加一、把 `NextAttemptAt` 推到 `ReconnectPolicy.DelayForAttempt` 之后）；`MarkConnected` / `ForgetTarget` / **改 IP 或端口**都会 `ResetBackoff` 清零。故首连失败后按 1→2→4→5s 重试、把地址改对立刻重试，不再有 3 秒一次的握手风暴
+- 重连复用 `Polling/ReconnectPolicy.DelayForAttempt`（1→2→4→5s，封顶 5s），与 PLC 同一张表
+- ⚠️ **重连尝试不写日志**（2026-11-05 方案 B，对齐 PLC 的 ADR-14）：断线那一刻已有「通讯中断」、连上时记「已连接」。首连失败只在**本轮第一次**记一行（判据 `session.Attempt == 0`，文案只写失败原因，**不提示「将自动重试」**），之后静默。原先每次尝试记一行「正在重连 … Ns」，16 台并发时会把运行日志冲干净
+- 状态**只进运行日志、不动底栏**：底栏是 PLC 的连接状态，扫码器写进去会让人以为 PLC 断了。连上用 `Connected`（绿）、断开用 `Disconnected`（红）；**重连过程不写日志**（2026-11-05 方案 B），故不再有「重连中」这一档
 - `NotifyScannerLost(item, client)` 先 `ReferenceEquals(session.Client, client)` 校验 —— 旧连接的失联回调不能把新连接拆掉
 - `OnClosed` → `ShutdownScanners()`：停节拍 + 逐台 `CancelConnect` / `CancelReconnect` / `ReleaseClient` / `ForgetTarget`，再清两个字典
 
@@ -1211,7 +1215,7 @@ ScrollViewer                        ← 画布放不下就滚
 | 项 | 行为 |
 |---|---|
 | 触发 | **仅「异常断开」**（读超时 / 对端关闭 / 帧校验失败等）。**用户主动断开、首次连接失败均不触发** |
-| 退避 | `ReconnectPolicy.DelaysSeconds = { 1, 2, 4, 8, 10 }`，封顶 10s（`DelayForAttempt` 是纯函数，越界取表尾）；连接成功清零计数 |
+| 退避 | `ReconnectPolicy.DelaysSeconds = { 1, 2, 4, 5 }`，封顶 **5s**（`DelayForAttempt` 是纯函数，越界取表尾）；连接成功清零计数 |
 | UI | 重连期间**表单保持锁定**（参数已快照，改了不生效，避免误导）；按钮变「取消重连」；底栏逐秒显示 `正在重连 … Ns（第 M 次）`（**不带 ip:端口**，目标参数在右侧 `StatusBarDetail`） |
 | 日志 | **重连尝试不写日志**（日志只记 5 种设备状态，ADR-14）；连上后记一条常规「已连接：ip:端口」 |
 
@@ -1304,8 +1308,11 @@ ScrollViewer                        ← 画布放不下就滚
 
 - ⚠️ **「启用」是扫码器唯一的自动连接开关**：`TryAutoConnectScanners()` 只连 `item.Model.Enabled` 且端点可用的；
   `EnsureScannerConnecting()` 里也加了 `!item.Model.Enabled` 早退 —— 停用的**任何路径都不会自动连**
+- **连不上就自愈，但受退避约束**：首次连接失败后按 1→2→4→5s 重试（`ScannerSession.CanAttemptNow` /
+  `RegisterConnectFailure`），**重试不写日志**；只在第一次失败记一行失败原因（不提示重试）、连上时记「已连接」。
+  与 PLC「首次失败不重试」故意不同 —— 现场扫码枪晚上断电，早上要自己回来（§5.9.7）
 - ⚠️ **一度加过全局的「自动连接扫码器」开关，已废弃**：它与「启动连不连」和「运行期要不要连」两种语义纠缠不清 ——
-  关掉后触发沿仍会走 `EnsureScannerConnecting` 把连接建起来，开关形同虚设。
+  关掉后仍会被 `EnsureScannerConnecting` 连起来，开关形同虚设。
   每行自己的「启用」语义干净（关掉 = 这台不触发、不收发、也不自动连），还能按台区分
 - `ScannerEnabled_Click` 关掉时要同时做三件事：`CancelReconnect` + `ReleaseClient` + **`ForgetTarget`**。
   只用 `ReleaseClient` 会保留目标，下一拍 `EnsureScannerConnecting` 又按「异常断开自动重连」把它连回来

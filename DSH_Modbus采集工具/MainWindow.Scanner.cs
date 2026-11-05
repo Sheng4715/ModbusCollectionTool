@@ -127,14 +127,20 @@ namespace DSH_Modbus采集工具
                     continue;
                 }
 
-                // ⚠️ 只补「还没连上」的缺口：50ms 节拍里的 EnsureScannerConnecting 可能已经
-                // 在触发沿时先连上了（脉冲相位起点是 ON），这里再连一次就成了双重连接 ——
+                // ⚠️ 只补「还没连上」的缺口：50ms 节拍里的 EnsureScannerConnecting
+                // （每拍都跑，不等触发沿）可能已经先连上了，这里再连一次就成了双重连接 ——
                 // 日志里「已连接」连打两行、旧的 client 被 MarkConnected 覆盖后泄漏，
                 // 而服务端（如 Bittly）对同一台扫码器只认一条连接，第二条会挤掉第一条，
                 // 最终会话里那根连接已被对端关闭，下一次触发就报
                 // 「The operation is not allowed on non-connected sockets」。
                 ScannerSession session = GetOrCreateScannerSession(item.Model);
                 if (session.Client != null || session.IsConnecting || session.IsReconnecting)
+                {
+                    continue;
+                }
+
+                // 50ms 节拍可能已经试过并失败：仍受退避约束，别在这里绕过闸门重连
+                if (!session.CanAttemptNow(DateTime.UtcNow))
                 {
                     continue;
                 }
@@ -417,6 +423,7 @@ namespace DSH_Modbus采集工具
 
             def.Ip = text;
             _scannerSet.Save();
+            ResetScannerBackoff(def);
             item.RefreshFields();
             RefreshScannerItemState(item);
         }
@@ -438,6 +445,7 @@ namespace DSH_Modbus采集工具
                 {
                     def.Port = 0;
                     _scannerSet.Save();
+                    ResetScannerBackoff(def);
                 }
 
                 item.RefreshFields();
@@ -459,6 +467,7 @@ namespace DSH_Modbus采集工具
             {
                 def.Port = port;
                 _scannerSet.Save();
+                ResetScannerBackoff(def);
             }
 
             item.RefreshFields();
@@ -940,6 +949,13 @@ namespace DSH_Modbus采集工具
 
             foreach (ScannerItem item in _scannerSet.Items)
             {
+                // 连接维护：**不等触发沿**（2026-11-05 方案 B）。启用的设备只要没连上、
+                // 退避到期就补一次 —— 早先只由触发沿驱动，遇到「常真」表达式（如 sys_True）
+                // 只有一个上升沿，首连失败后就再也不会重试。
+                // 判 Model.Enabled 而不是 EffectiveEnabled：连接不等于触发，
+                // 与启动的 TryAutoConnectScanners 同口径。
+                EnsureScannerConnecting(item);
+
                 ScannerDefinition def = item.Model;
 
                 // 关掉启用的只挡触发与收发，**连接仍在**（Brief P3.5）；
@@ -1231,6 +1247,18 @@ namespace DSH_Modbus采集工具
 
         // ---------- 连接生命周期（每台独立） ----------
 
+        /// <summary>
+        /// 端点（IP / 端口）改了就清掉失败计数与退避等待。
+        /// 不重置的话，把 IP 改对之后还要白等最多 10 秒才重试，看起来像「改了也没用」。
+        /// </summary>
+        private void ResetScannerBackoff(ScannerDefinition def)
+        {
+            if (_scannerSessions.TryGetValue(def, out ScannerSession? session))
+            {
+                session.ResetBackoff();
+            }
+        }
+
         private ScannerSession GetOrCreateScannerSession(ScannerDefinition def)
         {
             if (!_scannerSessions.TryGetValue(def, out ScannerSession? session))
@@ -1258,12 +1286,20 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 本轮发现没连上：补一次连接（**不阻塞本轮**，本轮按超时处理）。
+        /// 补一次连接（**不阻塞调用方**）。
         /// <para>
         /// ⚠️ **停用的一律不连**（2026-11-05）：行上的「启用」开关是扫码器唯一的
         /// 自动连接开关，关掉就该彻底不连。触发判定那边虽然已按
         /// <c>EffectiveEnabled</c> 早退，但这里再加一道，免得将来有别的调用点
         /// 绕过判定把停用的扫码器连起来。
+        /// </para>
+        /// <para>
+        /// ⚠️ **「从未连上」也要受退避约束**（2026-11-05 方案 B）：早先只有
+        /// <c>Target != null</c>（曾经连上过）才进退避，首次失败后 <c>Target</c> 仍是
+        /// <c>null</c>，于是下一拍立刻再连 —— 间隔只等于 3 秒连接超时，日志里
+        /// 「连接超时」一行接一行。现在两条路共用
+        /// <see cref="ScannerSession.CanAttemptNow"/> 这一道闸门，节奏由
+        /// <see cref="ScannerSession.RegisterConnectFailure"/> 铺（1→2→4→5s）。
         /// </para>
         /// </summary>
         private void EnsureScannerConnecting(ScannerItem item)
@@ -1276,6 +1312,23 @@ namespace DSH_Modbus采集工具
             ScannerSession session = GetOrCreateScannerSession(item.Model);
 
             if (session.IsConnecting || session.IsReconnecting)
+            {
+                return;
+            }
+
+            if (session.Client is { IsConnected: true })
+            {
+                return;
+            }
+
+            // 客户端还在但套接字已经断了（对端关闭 / 超时自关）：先放掉，
+            // 否则新连接 MarkConnected 会把旧 client 盖住，旧的再没人 Dispose。
+            if (session.Client != null)
+            {
+                session.ReleaseClient();
+            }
+
+            if (!session.CanAttemptNow(DateTime.UtcNow))
             {
                 return;
             }
@@ -1300,6 +1353,11 @@ namespace DSH_Modbus采集工具
             }
 
             ScannerSession session = GetOrCreateScannerSession(def);
+
+            // 「本轮第一次失败」= 自上次连上以来还没失败过。只有这一次记日志，
+            // 之后的重试全部静默（方案 B，2026-11-05）。
+            bool firstFailure = session.Attempt == 0;
+
             var client = new ScannerTcpClient();
             using CancellationTokenSource connectCts = session.BeginConnect(token);
 
@@ -1309,8 +1367,9 @@ namespace DSH_Modbus采集工具
                     def.Ip.Trim(), def.Port, TimeSpan.FromSeconds(3), null, connectCts.Token)
                     .ConfigureAwait(true);
 
-                if (_windowClosed)
+                if (_windowClosed || !item.Model.Enabled)
                 {
+                    // 关窗，或用户在连接途中把这一台停用了：这次连接作废
                     client.Dispose();
                     return false;
                 }
@@ -1326,9 +1385,19 @@ namespace DSH_Modbus采集工具
             {
                 client.Dispose();
 
-                if (!isReconnect && !_windowClosed)
+                if (!_windowClosed && !token.IsCancellationRequested)
                 {
-                    AppendDeviceLog($"扫码器「{def.Name}」连接超时", DeviceLogLevel.Disconnected);
+                    session.RegisterConnectFailure(DateTime.UtcNow);
+
+                    // ⚠️ 重连尝试不写日志（2026-11-05 对齐 PLC 的 ADR-14）：
+                    // 断线那一刻已有「通讯中断」、连上时有「已连接」，中间每 1~10 秒
+                    // 记一行只会在 16 台并发时把运行日志冲干净。
+                    if (!isReconnect && firstFailure)
+                    {
+                        AppendDeviceLog(
+                            $"扫码器「{def.Name}」连接超时",
+                            DeviceLogLevel.Disconnected);
+                    }
                 }
 
                 return false;
@@ -1337,11 +1406,16 @@ namespace DSH_Modbus采集工具
             {
                 client.Dispose();
 
-                if (!isReconnect && !_windowClosed)
+                if (!_windowClosed && !token.IsCancellationRequested)
                 {
-                    AppendDeviceLog(
-                        $"扫码器「{def.Name}」连接失败：{ClassifyDisconnectReason(ex.Message)}",
-                        DeviceLogLevel.Disconnected);
+                    session.RegisterConnectFailure(DateTime.UtcNow);
+
+                    if (!isReconnect && firstFailure)
+                    {
+                        AppendDeviceLog(
+                            $"扫码器「{def.Name}」连接失败：{ClassifyDisconnectReason(ex.Message)}",
+                            DeviceLogLevel.Disconnected);
+                    }
                 }
 
                 return false;
@@ -1385,28 +1459,29 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 断线重连：退避表沿用 <see cref="ReconnectPolicy"/>（1→2→4→8→10s，封顶），连上即清零。
+        /// 断线重连：退避表沿用 <see cref="ReconnectPolicy"/>（1→2→4→5s，封顶），连上即清零。
         /// <para>
         /// 与 PLC 的 <c>ReconnectLoopAsync</c> 同一套逻辑，但不是同一个循环 ——
         /// 16 台各自一条，一台卡住不影响别人（Brief P4.5）。
         /// </para>
+        /// <para>
+        /// ⚠️ **重连尝试不写日志**（2026-11-05 方案 B，对齐 PLC 的 ADR-14）：
+        /// 断线那一刻已有「通讯中断」一行、连上时记「已连接」；原先每次尝试都记
+        /// 「正在重连 … Ns」在 16 台并发时会反复刷屏，会把运行日志冲干净。
+        /// </para>
         /// </summary>
         private async Task ReconnectScannerLoopAsync(ScannerItem item, CancellationTokenSource cts)
         {
-            ScannerDefinition def = item.Model;
-            ScannerSession session = GetOrCreateScannerSession(def);
+            ScannerSession session = GetOrCreateScannerSession(item.Model);
             CancellationToken token = cts.Token;
 
             try
             {
                 while (!token.IsCancellationRequested && !_windowClosed)
                 {
+                    // 失败计数由 TryConnectScannerAsync → RegisterConnectFailure 维护，
+                    // 故这里第 1 轮等 1s、第 2 轮 2s……与 PLC 的节奏完全一致
                     int delay = ReconnectPolicy.DelayForAttempt(session.Attempt);
-
-                    // 每次尝试只记一行：16 台各自逐秒刷日志会把运行日志冲掉
-                    AppendDeviceLog(
-                        $"扫码器「{def.Name}」正在重连 … {delay}s（第 {session.Attempt + 1} 次）",
-                        DeviceLogLevel.Warning);
 
                     await Task.Delay(TimeSpan.FromSeconds(delay), token).ConfigureAwait(true);
 
@@ -1415,7 +1490,11 @@ namespace DSH_Modbus采集工具
                         return;
                     }
 
-                    session.CountAttempt();
+                    // 端点被清掉（用户删了 IP / 端口）：停这条循环，等改回来再由节拍拉起
+                    if (!HasUsableScannerEndpoint(item.Model))
+                    {
+                        return;
+                    }
 
                     if (await TryConnectScannerAsync(item, isReconnect: true, token).ConfigureAwait(true))
                     {

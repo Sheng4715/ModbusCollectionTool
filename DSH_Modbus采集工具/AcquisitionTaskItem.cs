@@ -98,7 +98,6 @@ namespace DSH_Modbus采集工具
                 Raise();
                 Raise(nameof(HasSourceError));
                 Raise(nameof(SourceHint));
-                Raise(nameof(IsConstantSource));
 
                 // 来源一改，两件事跟着变：写入变量这一格能不能编辑；已填的写入变量还合不合法
                 Raise(nameof(CanEditVariable));
@@ -157,24 +156,6 @@ namespace DSH_Modbus采集工具
         /// <summary>来源变量填了、但系统变量表与全局变量表里都没有 → 标红提示。</summary>
         public bool HasSourceError =>
             Model.SourceVariableName.Length > 0 && SourceVariable == null;
-
-        /// <summary>
-        /// 来源是**常量**（<c>#</c> 开头）→ 输入框整段显示橙色（用户定案 2026-11-05）。
-        /// <para>
-        /// ⚠️ **必须是「常量且没有错」**，不能只判 <see cref="AcquisitionConstant.IsConstant"/>：
-        /// 样式里两条 <c>DataTrigger</c> 同时成立时，WPF 的优先级取决于声明顺序，
-        /// 实测（2026-11-05）调整顺序后 `#"ABC`（既是常量、又解析失败）**仍然显示橙色**，
-        /// 红框不亮 —— 与其依赖那个不确定的规则，不如在**属性层就把两者互斥掉**。
-        /// </para>
-        /// <para>
-        /// ⚠️ 只做「整段换色」，不做 <c>#</c> 与值分别着色：<c>TextBox</c> 的
-        /// <c>PART_ContentHost</c> 内部 <c>TextBoxView</c> 只认控件级 <c>Foreground</c>，
-        /// 没有 run 级着色接口。要分色只能换 <c>RichTextBox</c>（22px 行高会撑开）或自绘
-        /// （光标/选区要自己复刻），代价远大于收益 —— 详见 AGENTS-细节.md §5.7。
-        /// </para>
-        /// </summary>
-        public bool IsConstantSource =>
-            AcquisitionConstant.IsConstant(Model.SourceVariableName) && !HasSourceError;
 
         /// <summary>来源变量红字提示文案（悬停可见）</summary>
         public string SourceHint
@@ -305,7 +286,6 @@ namespace DSH_Modbus采集工具
             Raise(nameof(VariableHint));
             Raise(nameof(HasSourceError));
             Raise(nameof(SourceHint));
-            Raise(nameof(IsConstantSource));
             Raise(nameof(CanEditVariable));
         }
 

@@ -229,9 +229,12 @@ namespace DSH_Modbus采集工具.Modeling
                 return "来源变量「" + sourceName + "」不存在";
             }
 
-            return AcquisitionConstant.TryParse(sourceName, out _, out _, out _, out string error)
-                ? "来源常量「" + sourceName + "」无法解析"
-                : "来源常量无效：" + error;
+            // 进入本函数的前提是常量解析失败（解析成功则 Resolve 已返回非 null，
+            // 走不到这里）。TryParse 失败时给出含原因的错误；万一意外成功（调用链改变），
+            // 退回到不带原因的通用文案 —— 条件按「解析失败才报错」的语义来，不再倒置。
+            return !AcquisitionConstant.TryParse(sourceName, out _, out _, out _, out string error)
+                ? "来源常量无效：" + error
+                : "来源常量「" + sourceName + "」无法解析";
         }
 
         /// <summary>
@@ -248,11 +251,11 @@ namespace DSH_Modbus采集工具.Modeling
         /// </summary>
         private static string? DescribeConstantProblem(string sourceName, GlobalVariable variable)
         {
-            if (!AcquisitionConstant.TryParse(
-                    sourceName, out string literal, out bool isQuoted, out _, out string parseError))
-            {
-                return "来源常量无效：" + parseError;
-            }
+            // 进入本函数的前提是来源已成功解析为常量（Resolve 已保证 TryParse 成功），
+            // 故这里直接用解析结果，不再重复一道「解析失败」的防御 ——
+            // 那条支路在此调用链上永远不会触发，留着只会误导维护者以为它会跑。
+            AcquisitionConstant.TryParse(
+                sourceName, out string literal, out bool isQuoted, out _, out _);
 
             DataTypeSpec spec = DataTypes.Get(variable.Type);
 
