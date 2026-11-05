@@ -651,6 +651,36 @@ namespace DSH_Modbus采集工具.Modeling
         public GlobalVariable? FindByName(string name) =>
             _items.FirstOrDefault(v => string.Equals(v.Name, name, StringComparison.Ordinal));
 
+        /// <summary>
+        /// 查找**已经占用了给定地址**的另一条变量（用户定案 2026-11-05：全局变量不可重复映射同一地址）。
+        /// <para>
+        /// 比较的是**解析并归一化之后**的地址（<see cref="GlobalVariable.Address"/>）：
+        /// <c>y27</c> 与 <c>Y27</c> 是同一个元件，只比原始字符串会漏判 ——
+        /// 而 <c>TryResolve</c> 已经把元件符号统一大写并写回 <c>Address</c>，
+        /// 所以调用方应当在**解析之后**再调本方法。
+        /// </para>
+        /// <para>
+        /// 空地址（内存变量）永不冲突：它们不落 PLC，可以随便建几个同名的「空」。
+        /// </para>
+        /// </summary>
+        /// <param name="address">已归一的地址；空或纯空白返回 <c>null</c></param>
+        /// <param name="exclude">排除自己（改自己的地址时不算冲突）</param>
+        /// <returns>占用该地址的另一条变量；没有冲突返回 <c>null</c></returns>
+        public GlobalVariable? FindByAddress(string address, GlobalVariable? exclude)
+        {
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                return null;
+            }
+
+            string wanted = address.Trim();
+
+            return _items.FirstOrDefault(v =>
+                !ReferenceEquals(v, exclude)
+                && v.HasAddress
+                && string.Equals(v.Address.Trim(), wanted, StringComparison.OrdinalIgnoreCase));
+        }
+
         private int IndexOfName(string name) =>
             _items.FindIndex(v => string.Equals(v.Name, name, StringComparison.Ordinal));
 

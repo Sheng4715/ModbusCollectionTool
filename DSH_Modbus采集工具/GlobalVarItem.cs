@@ -264,6 +264,15 @@ namespace DSH_Modbus采集工具
         /// </summary>
         public GlobalVariable? FindByName(string name) => _set.FindByName(name);
 
+        /// <summary>
+        /// 查找已占用该地址的**另一条**变量（用户定案 2026-11-05：全局变量不可重复映射同一地址）。
+        /// <para>转发给 <see cref="GlobalVariableSet.FindByAddress"/>，比较的是归一化后的地址。</para>
+        /// </summary>
+        /// <param name="address">已归一的地址（调用方应在 <c>ResolveOnly</c> 之后传）</param>
+        /// <param name="exclude">排除自己（改自己的地址时不算冲突）</param>
+        public GlobalVariable? FindByAddress(string address, GlobalVariable? exclude) =>
+            _set.FindByAddress(address, exclude);
+
         /// <summary>改名（含合法性与重名检查）</summary>
         public bool Rename(GlobalVarItem item, string newName, out string error)
         {

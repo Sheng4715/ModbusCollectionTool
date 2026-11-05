@@ -539,6 +539,9 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
+            // 先记下改之前的地址：解析失败或撞车时都要回退到它
+            string previousAddress = item.Address;
+
             string wanted = tb.Text.Trim();
             item.Address = wanted;
             _globalVarSet.ResolveOnly(item, out AddressErrorKind kind);
@@ -548,11 +551,37 @@ namespace DSH_Modbus采集工具
                 // 失败时保留用户原样输入，方便就地改
                 ShowGlobalVarAddressError(item, wanted, kind);
             }
-            else if (tb.Text != item.Address)
+            else
             {
-                // 解析成功时元件符号已归一大写（y27 → Y27），把规范形式回填到框里，
-                // 与自由监控的名称框一致；不这么做，界面留着 y27、json 里却是 Y27
-                tb.Text = item.Address;
+                // ⚠️ **地址冲突检查必须放在解析成功之后**（用户定案 2026-11-05）：
+                // ResolveOnly 会把元件符号归一成大写在写回 item.Address（y27 → Y27），
+                // 在它之前比会拿未归一的原文与已归一的旧值比，y27 与 Y27 这样同一元件的
+                // 两种写法就漏判了。这里用归一后的 item.Address 去查，比的是规范形式。
+                GlobalVariable? conflict = _globalVarSet.FindByAddress(item.Address, item.Model);
+
+                if (conflict != null)
+                {
+                    // 提示格式由用户定稿：「{地址}」已被使用
+                    MessageBox.Show(
+                        this,
+                        $"\"{item.Address}\"已被使用",
+                        "地址重复",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+
+                    // 回退到改之前的值（拿不出旧值时清空），避免界面上留着一条非法配置。
+                    // ⚠️ 回退后要**重新解析一次**：ResolvedAddress / Area 还停在刚填的冲突地址上，
+                    // 不清就会「界面显示旧地址、内部却按新地址读报文」。
+                    item.Address = previousAddress;
+                    _globalVarSet.ResolveOnly(item);
+                    tb.Text = item.Address;
+                }
+                else if (tb.Text != item.Address)
+                {
+                    // 解析成功时元件符号已归一大写（y27 → Y27），把规范形式回填到框里，
+                    // 与自由监控的名称框一致；不这么做，界面留着 y27、json 里却是 Y27
+                    tb.Text = item.Address;
+                }
             }
 
             _globalVarSet.Save();
