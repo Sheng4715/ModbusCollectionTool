@@ -11,8 +11,8 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>可以写，<c>plan</c> 有效。</summary>
         Ready = 0,
 
-        /// <summary>该写但不用写（写入变量没有映射地址）—— **不算失败**，静默跳过。</summary>
-        Skipped = 1,
+        /// <summary>该写但**只写内存**（写入变量没有映射地址）—— 不算失败，照常更新变量值。</summary>
+        CannotAddress = 1,
 
         /// <summary>写不了，<c>error</c> 是给用户看的原因。</summary>
         Failed = 2,
@@ -60,14 +60,15 @@ namespace DSH_Modbus采集工具.Modeling
                 return AcquisitionWriteStatus.Failed;
             }
 
-            // 用户定案（2026-10-27）：未映射地址的写入变量**不算配置错误**，
-            // 只是没有地方可写 —— 静默跳过，既不报错也不写。
-            if (!target.HasAddress)
-            {
-                return AcquisitionWriteStatus.Skipped;
-            }
+            // 用户定案（2026-10-27，2026-11-05 修订）：未映射地址的写入变量**不算配置错误**，
+            // 也不该被忽略 —— 它照样有「值」，只是没有寄存器可发。所以这里**继续往下编码**，
+            // 由调用方按 CannotAddress 只更新内存值、不发报文。
+            // ⚠️ 早期这里是「直接 return Skipped」、连编码都不做，导致
+            // 「写入变量没地址 → 整项静默跳过 → 变量值永远不变」，
+            // 表面上日志写着「执行完成」、实际什么都没发生（实测踩过）。
+            bool hasAddress = target.HasAddress;
 
-            if (target.ResolvedAddress < 0)
+            if (hasAddress && target.ResolvedAddress < 0)
             {
                 error = target.ResolveError.Length > 0 ? target.ResolveError : "映射地址无法解析";
                 return AcquisitionWriteStatus.Failed;
@@ -76,11 +77,16 @@ namespace DSH_Modbus采集工具.Modeling
             // 只读区兜底：配置检查（AcquisitionTaskCheck）已经在界面上把这种组拦成
             // 「配置错误」，正常走不到这里。留着是给旧数据 / 手改 json 的情况兜底 ——
             // 绝不能把写报文打到只读区去。
-            if (target.IsReadOnly)
+            // ⚠️ 只对**有地址**的变量生效：内存变量不落 PLC，谈不上只读区。
+            if (hasAddress && target.IsReadOnly)
             {
                 error = $"{target.Address} 属于只读区（输入元件），不能写入";
                 return AcquisitionWriteStatus.Failed;
             }
+
+            AcquisitionWriteStatus ready = hasAddress
+                ? AcquisitionWriteStatus.Ready
+                : AcquisitionWriteStatus.CannotAddress;
 
             DataTypeSpec spec = DataTypes.Get(target.Type);
 
@@ -102,7 +108,7 @@ namespace DSH_Modbus采集工具.Modeling
                     IsCoil = true,
                     CoilValue = coilText == "1",
                 };
-                return AcquisitionWriteStatus.Ready;
+                return ready;
             }
 
             // 寄存器区：STRING 按目标长度补齐，整数按目标类型校验范围
@@ -120,7 +126,43 @@ namespace DSH_Modbus采集工具.Modeling
                 IsCoil = false,
                 Registers = registers,
             };
-            return AcquisitionWriteStatus.Ready;
+            return ready;
+        }
+
+        /// <summary>
+        /// 把一次编码结果回填到变量的**内存值**（不碰 PLC）。
+        /// <para>
+        /// 用在两处：① 写入变量**没有映射地址**时（<see cref="AcquisitionWriteStatus.CannotAddress"/>），
+        /// 只有内存可写；② 内存变量在 PLC 未连接时的兜底。
+        /// </para>
+        /// <para>
+        /// ⚠️ **`Value` 与 `Numeric` 必须一起设**：`Value` 是按显示格式转好的文本
+        /// （INT/Hex 的变量值是 <c>"2A"</c> 而非 <c>"42"</c>），实时卡片与表达式都读它；
+        /// `Numeric` 是十进制数值形态，实时卡片显示数字时**不能**从 `Value` 反解
+        /// （见 <c>GlobalReadPlan.Apply</c> 的同款注释）。
+        /// </para>
+        /// </summary>
+        /// <param name="target">要回填的变量</param>
+        /// <param name="plan">已编码好的报文参数（<c>Registers</c> 或 <c>CoilValue</c> 有效）</param>
+        /// <param name="orders">字节序</param>
+        public static void ApplyToMemory(GlobalVariable target, WritePlan plan, ByteOrderSettings orders)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            if (plan.IsCoil)
+            {
+                target.Value = ValueCodec.FormatCoil(plan.CoilValue);
+                target.Numeric = plan.CoilValue ? 1d : 0d;
+                return;
+            }
+
+            ushort[] registers = plan.Registers ?? Array.Empty<ushort>();
+            target.Value = ValueCodec.FormatRegisters(
+                target.Type, registers, target.Format, orders, target.Length);
+            target.Numeric = ValueCodec.DecodeNumber(target.Type, registers, orders);
         }
 
         /// <summary>

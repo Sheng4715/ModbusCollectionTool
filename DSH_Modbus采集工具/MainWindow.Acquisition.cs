@@ -441,11 +441,12 @@ namespace DSH_Modbus采集工具
             try
             {
                 ModbusTcpClient? modbus = _session.Client;
-                if (modbus == null || !_session.IsConnected)
-                {
-                    return;
-                }
+                bool plcConnected = modbus != null && _session.IsConnected;
 
+                // ⚠️ **未连接不能整轮 return**（2026-11-05 修订）：写入变量可能全是
+                // 「没有映射地址」的内存变量，那种项根本不发报文，PLC 连没连都不影响它。
+                // 整轮 return 会让「只写内存」的任务组在 PLC 掉线时悄悄停摆。
+                // 真正需要发报文的项在下面按项判断（未连接就跳过那一项）。
                 int total = task.Items.Count;
                 if (total == 0)
                 {
@@ -490,17 +491,33 @@ namespace DSH_Modbus采集工具
                         continue;
                     }
 
+                    GlobalVariable? target = _globalVarSet.FindByName(row.VariableName);
+
+                    // ⚠️ **常量的格式必须自己算**，不能沿用来源的 Format：
+                    // 变量的 Format 是「给人看的显示格式」（可能是 Hex / Bin），
+                    // 而常量是用户直书的字面量 —— `#123` 就是十进制 123，
+                    // 若拿一个 INT/Hex 变量的格式去解析，会当成 0x123 = 291，**静默写错值**。
+                    // 进制由字面量自己的 0x / 0b 前缀标定，见 AcquisitionConstant.FormatFor。
+                    DisplayFormat sourceFormat = source.IsConstant && target != null
+                        ? AcquisitionConstant.FormatFor(source.Literal ?? string.Empty, target.Type)
+                        : source.Format;
+
                     AcquisitionWriteStatus status = AcquisitionWrite.TryBuild(
-                        _globalVarSet.FindByName(row.VariableName),
+                        target,
                         sourceText,
-                        source.Format,
+                        sourceFormat,
                         _byteOrders,
                         out WritePlan plan,
                         out string buildError);
 
-                    if (status == AcquisitionWriteStatus.Skipped)
+                    if (status == AcquisitionWriteStatus.CannotAddress)
                     {
-                        continue; // 没有映射地址：不写、不报错
+                        // 写入变量**没有映射地址**：只更新内存值，不发报文（2026-11-05 修订）。
+                        // ⚠️ 这里**不能 continue 掉**：早期是「静默跳过、连编码都不做」，
+                        // 结果是「写入变量没地址 → 变量值永远不变」，日志却写着「执行完成」。
+                        // 现在按用户的定案：无地址也要能写入，只是写进内存。
+                        AcquisitionWrite.ApplyToMemory(target!, plan, _byteOrders);
+                        continue;
                     }
 
                     if (status == AcquisitionWriteStatus.Failed)
@@ -509,9 +526,20 @@ namespace DSH_Modbus采集工具
                         continue;
                     }
 
+                    // 到这里的都是**有映射地址**、真要发报文的项：PLC 没连就跳过这一项。
+                    // 不记失败 —— 掉线是整条链路的事，逐项刷「写入失败」只会淹掉真正的原因。
+                    if (!plcConnected)
+                    {
+                        continue;
+                    }
+
                     try
                     {
-                        await WriteToDeviceAsync(modbus, plan).ConfigureAwait(true);
+                        await WriteToDeviceAsync(modbus!, plan).ConfigureAwait(true);
+
+                        // 报文发出去了，内存值也要同步 —— 否则「写成功了但界面上还是旧值」，
+                        // 要等下一轮采集/读回才更新。与扫码器写变量同一个口径。
+                        AcquisitionWrite.ApplyToMemory(target!, plan, _byteOrders);
                     }
                     catch (OperationCanceledException)
                     {

@@ -98,6 +98,7 @@ namespace DSH_Modbus采集工具
                 Raise();
                 Raise(nameof(HasSourceError));
                 Raise(nameof(SourceHint));
+                Raise(nameof(IsConstantSource));
 
                 // 来源一改，两件事跟着变：写入变量这一格能不能编辑；已填的写入变量还合不合法
                 Raise(nameof(CanEditVariable));
@@ -157,16 +158,50 @@ namespace DSH_Modbus采集工具
         public bool HasSourceError =>
             Model.SourceVariableName.Length > 0 && SourceVariable == null;
 
+        /// <summary>
+        /// 来源是**常量**（<c>#</c> 开头）→ 输入框整段显示橙色（用户定案 2026-11-05）。
+        /// <para>
+        /// ⚠️ **必须是「常量且没有错」**，不能只判 <see cref="AcquisitionConstant.IsConstant"/>：
+        /// 样式里两条 <c>DataTrigger</c> 同时成立时，WPF 的优先级取决于声明顺序，
+        /// 实测（2026-11-05）调整顺序后 `#"ABC`（既是常量、又解析失败）**仍然显示橙色**，
+        /// 红框不亮 —— 与其依赖那个不确定的规则，不如在**属性层就把两者互斥掉**。
+        /// </para>
+        /// <para>
+        /// ⚠️ 只做「整段换色」，不做 <c>#</c> 与值分别着色：<c>TextBox</c> 的
+        /// <c>PART_ContentHost</c> 内部 <c>TextBoxView</c> 只认控件级 <c>Foreground</c>，
+        /// 没有 run 级着色接口。要分色只能换 <c>RichTextBox</c>（22px 行高会撑开）或自绘
+        /// （光标/选区要自己复刻），代价远大于收益 —— 详见 AGENTS-细节.md §5.7。
+        /// </para>
+        /// </summary>
+        public bool IsConstantSource =>
+            AcquisitionConstant.IsConstant(Model.SourceVariableName) && !HasSourceError;
+
         /// <summary>来源变量红字提示文案（悬停可见）</summary>
-        public string SourceHint =>
-            HasSourceError
-                ? "系统变量表和全局变量表里都没有“" + Model.SourceVariableName + "”"
-                : SourceVariable switch
+        public string SourceHint
+        {
+            get
+            {
+                string raw = Model.SourceVariableName;
+
+                // 常量（# 开头）：措辞必须与变量名分开 —— 常量写错时若也报
+                // 「变量表里都没有」，用户会去变量表里找一个根本不存在的东西
+                if (AcquisitionConstant.IsConstant(raw))
                 {
-                    null => "尚未选择来源变量（可填系统变量或全局变量）",
-                    { IsSystemVariable: true } s => "系统变量 · " + s.TypeDisplayName + " · " + s.Comment,
-                    { } s => s.Comment,
-                };
+                    return AcquisitionConstant.TryParse(raw, out string literal, out bool quoted, out bool boolWord, out string constantError)
+                        ? "常量 · " + (quoted ? "STRING" : boolWord ? "BOOL" : "数值") + " · " + literal
+                        : "常量无效：" + constantError;
+                }
+
+                return HasSourceError
+                    ? "系统变量表和全局变量表里都没有“" + raw + "”"
+                    : SourceVariable switch
+                    {
+                        null => "尚未选择来源变量（可填系统变量、全局变量，或 # 开头的常量）",
+                        { IsSystemVariable: true } s => "系统变量 · " + s.TypeDisplayName + " · " + s.Comment,
+                        { } s => s.Comment,
+                    };
+            }
+        }
 
         /// <summary>
         /// 数据类型列（**只读**，由变量反推）。
@@ -204,13 +239,15 @@ namespace DSH_Modbus采集工具
                 AcquisitionSource? source = SourceVariable;
                 if (_isWriteTask
                     && source != null
+                    && !source.IsConstant
                     && !AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type))
                 {
                     return true;
                 }
 
-                // 只读区不能当写入目标（用户定案 2026-10-29）：全局变量本身允许映射 X，
-                // 所以这个判据只在这一格、且只在写入类型下成立。与配置检查同一口径。
+                // 常量（# 开头）：类型由写入变量定，此时没有"类型不匹配"这回事。
+                // ⚠️ 必须显式排除：常量的 Type 是个占位值（Default），
+                // 拿去跟写入变量比必然不等，会让每一行常量都标红。
                 return _isWriteTask && variable.IsReadOnly;
             }
         }
@@ -240,6 +277,7 @@ namespace DSH_Modbus采集工具
                 AcquisitionSource? source = SourceVariable;
                 if (_isWriteTask
                     && source != null
+                    && !source.IsConstant
                     && !AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type))
                 {
                     return AcquisitionTaskRules.DescribeTypeMismatch(
@@ -252,7 +290,10 @@ namespace DSH_Modbus采集工具
                 }
 
                 string hint = string.IsNullOrWhiteSpace(variable.Comment) ? name : variable.Comment;
-                return variable.HasAddress ? hint : hint + " · 未映射地址（数据不会下发到设备）";
+
+                // 无地址的写入变量：值照样会写（写进内存），只是不下发到设备。
+                // ⚠️ 措辞别说成「不会写入」—— 2026-11-05 起它是会写的，只是不落 PLC。
+                return variable.HasAddress ? hint : hint + " · 未映射地址（只写内存，不下发到设备）";
             }
         }
 
@@ -264,6 +305,7 @@ namespace DSH_Modbus采集工具
             Raise(nameof(VariableHint));
             Raise(nameof(HasSourceError));
             Raise(nameof(SourceHint));
+            Raise(nameof(IsConstantSource));
             Raise(nameof(CanEditVariable));
         }
 
