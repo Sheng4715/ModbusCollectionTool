@@ -17,6 +17,7 @@ using DSH_Modbus采集工具.Expressions;
 using DSH_Modbus采集工具.Modeling;
 using DSH_Modbus采集工具.Polling;
 using DSH_Modbus采集工具.Scanners;
+using DSH_Modbus采集工具.Themes;
 using DSH_Modbus采集工具.Ui;
 
 // ============================================================
@@ -100,8 +101,15 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
-        /// 启动时自动连接**全部已启用**的扫码器（不受 AutoConnectPlc 开关约束，见 Brief P4.5）。
-        /// 由 Window_Loaded 在 TryAutoConnect 之后异步调用。
+        /// 启动时自动连接**全部已启用**的扫码器。
+        /// <para>
+        /// 「启用」就是那张行上的开关（<see cref="ScannerDefinition.Enabled"/>）。
+        /// ⚠️ 2026-11-05 定案：**不设全局的「扫码器自动连接」开关** ——
+        /// 一度在设置页加过一个，但它与「启动连不连」和「运行期要不要连」两种语义纠缠不清：
+        /// 关掉后触发沿仍会走 <c>EnsureScannerConnecting</c> 把连接建起来，开关形同虚设。
+        /// 每台自己的「启用」开关语义干净（关掉 = 这台不触发、不收发、也不自动连），
+        /// 且能按台区分，比一个全局开关更贴合现场。
+        /// </para>
         /// </summary>
         private void TryAutoConnectScanners()
         {
@@ -115,6 +123,18 @@ namespace DSH_Modbus采集工具
                 // 判「用户意图」而不是 EffectiveEnabled：连接不等于触发，
                 // 与「关掉启用只挡触发与收发，连接仍在」同口径。
                 if (!item.Model.Enabled || !HasUsableScannerEndpoint(item.Model))
+                {
+                    continue;
+                }
+
+                // ⚠️ 只补「还没连上」的缺口：50ms 节拍里的 EnsureScannerConnecting 可能已经
+                // 在触发沿时先连上了（脉冲相位起点是 ON），这里再连一次就成了双重连接 ——
+                // 日志里「已连接」连打两行、旧的 client 被 MarkConnected 覆盖后泄漏，
+                // 而服务端（如 Bittly）对同一台扫码器只认一条连接，第二条会挤掉第一条，
+                // 最终会话里那根连接已被对端关闭，下一次触发就报
+                // 「The operation is not allowed on non-connected sockets」。
+                ScannerSession session = GetOrCreateScannerSession(item.Model);
+                if (session.Client != null || session.IsConnecting || session.IsReconnecting)
                 {
                     continue;
                 }
@@ -541,12 +561,6 @@ namespace DSH_Modbus采集工具
                 return timeoutError;
             }
 
-            if (!ScannerRules.TryValidateTimeoutText(def.TimeoutText, out string timeoutTextError))
-            {
-                field = ScannerField.TimeoutText;
-                return timeoutTextError;
-            }
-
             string? bufferError = ValidateScannerBufferVariable(def.BufferVariableName);
             if (bufferError != null)
             {
@@ -554,25 +568,11 @@ namespace DSH_Modbus采集工具
                 return bufferError;
             }
 
-            string? notifyError = ValidateScannerNotifyVariable(def.NotifyVariableName, out GlobalVariable? notify);
+            string? notifyError = ValidateScannerNotifyVariable(def.NotifyVariableName, out _);
             if (notifyError != null)
             {
                 field = ScannerField.NotifyVariable;
                 return notifyError;
-            }
-
-            string? successError = ValidateScannerValueText(def.SuccessValue, "写入值", notify);
-            if (successError != null)
-            {
-                field = ScannerField.SuccessValue;
-                return successError;
-            }
-
-            string? timeoutValueError = ValidateScannerValueText(def.TimeoutValue, "超时写入值", notify);
-            if (timeoutValueError != null)
-            {
-                field = ScannerField.TimeoutValue;
-                return timeoutValueError;
             }
 
             field = ScannerField.None;
@@ -598,6 +598,9 @@ namespace DSH_Modbus采集工具
                 : $"接收缓冲区变量只能是 STRING，当前是 {variable.TypeDisplayName}";
         }
 
+        /// <summary>
+        /// 执行结果输出变量的校验：只能是整数类型（写入值固定为 1 / 2，非整数类型装不下）。
+        /// </summary>
         private string? ValidateScannerNotifyVariable(string? name, out GlobalVariable? variable)
         {
             variable = null;
@@ -610,33 +613,16 @@ namespace DSH_Modbus采集工具
             GlobalVariable? found = _globalVarSet.FindByName(name.Trim());
             if (found == null)
             {
-                return $"通知变量「{name.Trim()}」不存在";
+                return $"执行结果输出变量「{name.Trim()}」不存在";
             }
 
             if (found.Type is not (DataType.Int or DataType.UInt or DataType.DInt or DataType.UDInt))
             {
-                return $"通知变量只能是 INT / UINT / DINT / UDINT，当前是 {found.TypeDisplayName}";
+                return $"执行结果输出变量只能是 INT / UINT / DINT / UDINT，当前是 {found.TypeDisplayName}";
             }
 
             variable = found;
             return null;
-        }
-
-        /// <summary>
-        /// 成功档 / 超时档写入值的范围校验：借用写入路径的编码器，
-        /// 与真正下发时是同一套规则（越界、非法字面量都在这判定）。
-        /// </summary>
-        private string? ValidateScannerValueText(string? text, string label, GlobalVariable? notify)
-        {
-            if (string.IsNullOrEmpty(text) || notify == null)
-            {
-                return null;
-            }
-
-            return ValueCodec.TryEncodeRegisters(
-                notify.Type, notify.Format, text, notify.Length, _byteOrders, out _, out string error)
-                ? null
-                : $"{label}：{error}";
         }
 
         // ---------- P3.5：变量名补全 ----------
@@ -683,6 +669,25 @@ namespace DSH_Modbus采集工具
 
         // ---------- P3.5：行内开关 ----------
 
+        /// <summary>
+        /// 行上「启用」开关（2026-11-05 起它是**扫码器唯一的自动连接开关**）。
+        /// <para>
+        /// 关掉 = 这台**不触发、不收发、也不自动连**：除写模型外还要
+        /// ① 停掉在跑的重连、② 放掉现有连接并忘掉目标（<see cref="ScannerSession.ForgetTarget"/>）。
+        /// 不这么做的话「关掉」只挡了触发，连接仍挂着 —— 用户看到的那一行写着「关」，
+        /// 底下的 TCP 却还连着，属于界面在骗人。
+        /// </para>
+        /// <para>
+        /// ⚠️ **不要用 <c>box.IsChecked</c> 判断意图，要读 <see cref="ScannerItem.Enabled"/>**：
+        /// 那个复选柜绑的是 <c>EffectiveEnabled</c>（TwoWay），而 `Click` 事件
+        /// **先于**绑定的源更新 —— 此时 `IsChecked` 可能还是旧值，读它会把「关掉」当成「打开」，
+        /// 反而去连一次（实测踩过：点关后连接数不降反增）。
+        /// </para>
+        /// <para>
+        /// ⚠️ 用 `ForgetTarget` 而不是只 `ReleaseClient`：后者会保留目标、下一拍
+        /// <c>EnsureScannerConnecting</c> 又把它连回来（那是「异常断开后自动重连」的路径）。
+        /// </para>
+        /// </summary>
         private void ScannerEnabled_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not CheckBox box || ScannerRowOf(box) is not ScannerItem item)
@@ -690,8 +695,30 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
+            // ⚠️ 显式把控件状态写回模型，**不依赖 TwoWay 绑定的时序**：
+            // 绑定目标是 `EffectiveEnabled`（`Model.Enabled && !HasConfigError`），
+            // 而 `Click` 触发时源可能还没更新；若此时读 `item.Enabled` 拿到的是旧值，
+            // 「关掉」会被当成「打开」，反而去连一次（实测：点关后连接数不增反降不了）。
             item.Enabled = box.IsChecked == true;
             _scannerSet.Save();
+
+            bool enabled = item.Enabled;
+
+            if (!enabled)
+            {
+                // 关掉：断开并忘掉目标，免得被自动重连接管
+                if (_scannerSessions.TryGetValue(item.Model, out ScannerSession? session))
+                {
+                    session.CancelReconnect();
+                    session.ReleaseClient();
+                    session.ForgetTarget();
+                }
+            }
+            else if (!_windowClosed && HasUsableScannerEndpoint(item.Model))
+            {
+                // 打开：立刻连一次（无须等下一拍；下一拍的 EnsureScannerConnecting 也会兜底）
+                EnsureScannerConnecting(item);
+            }
         }
 
         // ---------- P3.5：交互参数提交（失焦 / 回车） ----------
@@ -820,31 +847,6 @@ namespace DSH_Modbus采集工具
             RefreshScannerItemState(item);
         }
 
-        private void ScannerTimeoutText_LostFocus(object sender, RoutedEventArgs e)
-        {
-            if (sender is not TextBox box || ScannerRowOf(box) is not ScannerItem item)
-            {
-                return;
-            }
-
-            ScannerDefinition def = item.Model;
-            string text = box.Text;
-
-            if (!ScannerRules.TryValidateTimeoutText(text, out string error))
-            {
-                RejectScannerField(item, box, def.TimeoutText, error, ScannerField.TimeoutText);
-                return;
-            }
-
-            if (!string.Equals(def.TimeoutText, text, StringComparison.Ordinal))
-            {
-                def.TimeoutText = text;
-                _scannerSet.Save();
-            }
-
-            RefreshScannerItemState(item);
-        }
-
         private void ScannerNotifyVariable_LostFocus(object sender, RoutedEventArgs e)
         {
             if (sender is not TextBox box || ScannerRowOf(box) is not ScannerItem item)
@@ -872,28 +874,6 @@ namespace DSH_Modbus采集工具
             RefreshScannerItemState(item);
         }
 
-        private void ScannerSuccessValue_LostFocus(object sender, RoutedEventArgs e)
-        {
-            if (sender is not TextBox box || ScannerRowOf(box) is not ScannerItem item)
-            {
-                return;
-            }
-
-            CommitScannerValueText(item, box, isTimeout: false);
-            RefreshScannerItemState(item);
-        }
-
-        private void ScannerTimeoutValue_LostFocus(object sender, RoutedEventArgs e)
-        {
-            if (sender is not TextBox box || ScannerRowOf(box) is not ScannerItem item)
-            {
-                return;
-            }
-
-            CommitScannerValueText(item, box, isTimeout: true);
-            RefreshScannerItemState(item);
-        }
-
         /// <summary>
         /// 字段校验失败：把框里的文本回退到模型旧值，并记下「错的是这一栏」——
         /// 该框边框随即变红（<see cref="ScannerItem.ProblemField"/>），顶部不再有红字。
@@ -906,45 +886,6 @@ namespace DSH_Modbus采集工具
             box.Text = oldValue ?? string.Empty;
             item.Problem = error;
             item.ProblemField = field;
-        }
-
-        /// <summary>
-        /// 两个「写入值」框的公共提交路径：先按通知变量类型做范围校验，
-        /// 失败则回退并就地报错，成功才落盘。
-        /// </summary>
-        private void CommitScannerValueText(ScannerItem item, TextBox box, bool isTimeout)
-        {
-            ScannerDefinition def = item.Model;
-            string text = box.Text;
-
-            ValidateScannerNotifyVariable(def.NotifyVariableName, out GlobalVariable? notify);
-
-            string? error = ValidateScannerValueText(text, isTimeout ? "超时写入值" : "写入值", notify);
-
-            if (error != null)
-            {
-                box.Text = (isTimeout ? def.TimeoutValue : def.SuccessValue) ?? string.Empty;
-                item.Problem = error;
-                item.ProblemField = isTimeout ? ScannerField.TimeoutValue : ScannerField.SuccessValue;
-                return;
-            }
-
-            string? previous = isTimeout ? def.TimeoutValue : def.SuccessValue;
-            if (string.Equals(previous, text, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            if (isTimeout)
-            {
-                def.TimeoutValue = text;
-            }
-            else
-            {
-                def.SuccessValue = text;
-            }
-
-            _scannerSet.Save();
         }
 
         // ---------- P3.5：变量被别处引用的黄字提示 ----------
@@ -1010,25 +951,32 @@ namespace DSH_Modbus采集工具
 
                 ScannerRuntimeState state = GetOrCreateScannerRuntime(def);
 
+                bool condition = EvaluateScannerTrigger(def, state);
+
+                // WasConditionTrue 是自动属性，不能直接 ref（CS0206）—— 过一手局部变量再写回。
+                // ⚠️ **每拍都必须写回**，不能只在「触发那一拍」写：ShouldFire 的副作用就是
+                // 「记住这一拍的条件值」，只在触发时记会让状态永远停在最后一次的 true，
+                // 之后每拍都算成「上拍真、这拍也真」，**第二个上升沿永远出不来**
+                // （实测：脉冲触发在整段会话里只发一次，之后彻底静默）。
+                // 与采集任务同一口径 —— 那边把推进写在 AcquisitionTrigger.ShouldFire 里面，
+                // 因为它是「传 state 进去」而不是「传 ref 出来」，没这个坑。
+                bool wasTrue = state.WasConditionTrue;
+                bool rising = ScannerTrigger.ShouldFire(condition, ref wasTrue);
+                state.WasConditionTrue = wasTrue;
+
                 // 上一轮没跑完就忽略本次上升沿 —— 不排队、不堆积（Brief P3.5）。
-                // ⚠️ 必须在 ShouldFire 之前挡：ShouldFire 在触发那一拍已把 wasTrue 置 true，
-                // 这里 continue 不会重置它，故不会重复触发。
+                // ⚠️ 位置在状态推进**之后**：边沿这一次可以丢（这就是「不排队」），
+                // 但「这一拍条件是什么」必须记住，否则执行期间漏记一次假值，
+                // 本轮结束之后就再也认不出下一个上升沿了。
                 if (state.InFlight)
                 {
                     continue;
                 }
 
-                bool condition = EvaluateScannerTrigger(def, state);
-
-                // WasConditionTrue 是自动属性，不能直接 ref（CS0206）—— 过一手局部变量再写回
-                bool wasTrue = state.WasConditionTrue;
-
-                if (!ScannerTrigger.ShouldFire(condition, ref wasTrue))
+                if (!rising)
                 {
                     continue;
                 }
-
-                state.WasConditionTrue = wasTrue;
 
                 state.InFlight = true;
 
@@ -1081,15 +1029,28 @@ namespace DSH_Modbus采集工具
             try
             {
                 ScannerSession session = GetOrCreateScannerSession(def);
+                ScannerTcpClient? client = session.Client;
 
-                if (session.Client == null || !session.IsConnected)
+                // 以**客户端自己的实际套接字状态**为准，而不是只看 session 的标志：
+                // ScannerTcpClient 在超时/异常时会自己 Dispose 掉 _tcp（防半帧失步），
+                // 此时 session.Client 仍非空、session.IsConnected 仍为 true ——
+                // 只用 session 判断会拿一根失效连接去发报文，报
+                // 「The operation is not allowed on non-connected sockets」并误判成通讯中断。
+                if (client == null || !client.IsConnected)
                 {
-                    EnsureScannerConnecting(item);
+                    // 曾连上后失效 → 清引用并走退避重连；从未连上 → 起首次连接
+                    if (client != null)
+                    {
+                        NotifyScannerLost(item, client);
+                    }
+                    else
+                    {
+                        EnsureScannerConnecting(item);
+                    }
+
                     await ApplyScannerTimeoutAsync(item).ConfigureAwait(true);
                     return;
                 }
-
-                ScannerTcpClient client = session.Client;
                 byte[] trigger = Encoding.ASCII.GetBytes(def.TriggerText ?? string.Empty);
                 byte[] terminator = ScannerRules.TerminatorBytes(def.Terminator);
                 TimeSpan timeout = TimeSpan.FromSeconds(
@@ -1109,11 +1070,21 @@ namespace DSH_Modbus采集工具
                 {
                     // 超时窗口内没收到完整帧 = 本轮超时（含关窗时的取消）
                     await ApplyScannerTimeoutAsync(item).ConfigureAwait(true);
+
+                    // 超时那一刻 ReadFrameAsync 已 Dispose 掉连接（防半帧失步）。
+                    // 只有客户端此刻确实断了才通知断线 → 起退避重连；若只是外部取消
+                    // （关窗），连接可能还活着，不要误断。
+                    if (!_windowClosed && !client.IsConnected)
+                    {
+                        NotifyScannerLost(item, client);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    // 链路异常：ScannerTcpClient 内部已关连接，这里负责记账 + 起重连
-                    if (!_windowClosed)
+                    // 链路异常：ScannerTcpClient 内部已关连接，这里负责记账 + 起重连。
+                    // 只有当 session 仍认为这根连接是「当前连接」时才记日志/重连；
+                    // ReferenceEquals 挡住「已经被更替的旧 client」重复上报。
+                    if (!_windowClosed && ReferenceEquals(session.Client, client))
                     {
                         AppendDeviceLog(
                             $"扫码器「{def.Name}」通讯中断：{ClassifyDisconnectReason(ex.Message)}",
@@ -1138,7 +1109,10 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        /// <summary>正常返回（**空串也算**）：缓冲区写结果，通知变量写成功档写入值。</summary>
+        /// <summary>
+        /// 正常返回（**空串也算**）：缓冲区写结果，执行结果输出变量写
+        /// <see cref="ScannerRules.ResultSuccess"/>（固定 1）。
+        /// </summary>
         private async Task ApplyScannerSuccessAsync(ScannerItem item, string result)
         {
             ScannerDefinition def = item.Model;
@@ -1150,30 +1124,27 @@ namespace DSH_Modbus采集工具
 
             await ApplyScannerVariableAsync(
                 FindScannerVariable(def.NotifyVariableName),
-                NonEmptyOrNull(def.SuccessValue),
-                "通知变量").ConfigureAwait(true);
+                ScannerRules.ResultSuccess,
+                "执行结果输出变量").ConfigureAwait(true);
         }
 
         /// <summary>
-        /// 超时档：缓冲区写「超时写入文本」（**为空则保留旧值，不写**），
-        /// 通知变量写「超时写入值」。
+        /// 异常档（超时 / 链路异常）：**缓冲区保留原值，一个字节都不动**，
+        /// 只把执行结果输出变量写成 <see cref="ScannerRules.ResultFailure"/>（固定 2）。
+        /// <para>
+        /// 2026-11-04 定：原先超时会往缓冲区写「超时写入文本」，那个框已删除。
+        /// 超时时上一轮收到的结果仍然有效，拿空串或占位文本覆盖只会丢信息。
+        /// </para>
         /// </summary>
         private async Task ApplyScannerTimeoutAsync(ScannerItem item)
         {
             ScannerDefinition def = item.Model;
 
             await ApplyScannerVariableAsync(
-                FindScannerVariable(def.BufferVariableName),
-                NonEmptyOrNull(def.TimeoutText),
-                "接收缓冲区（超时）").ConfigureAwait(true);
-
-            await ApplyScannerVariableAsync(
                 FindScannerVariable(def.NotifyVariableName),
-                NonEmptyOrNull(def.TimeoutValue),
-                "通知变量（超时）").ConfigureAwait(true);
+                ScannerRules.ResultFailure,
+                "执行结果输出变量").ConfigureAwait(true);
         }
-
-        private static string? NonEmptyOrNull(string? text) => string.IsNullOrEmpty(text) ? null : text;
 
         private GlobalVariable? FindScannerVariable(string? name) =>
             string.IsNullOrWhiteSpace(name) ? null : _globalVarSet.FindByName(name.Trim());
@@ -1229,8 +1200,10 @@ namespace DSH_Modbus采集工具
             AcquisitionWriteStatus status = AcquisitionWrite.TryBuild(
                 variable, text, variable.Format, _byteOrders, out WritePlan plan, out string buildError);
 
-            if (status == AcquisitionWriteStatus.Skipped)
+            if (status == AcquisitionWriteStatus.CannotAddress)
             {
+                // 没有映射地址：上面的内存回填已经做过了（Value + Numeric 都设了），
+                // 到此为止 —— 没有寄存器可发。沿用原口径：不算失败、不记日志。
                 return;
             }
 
@@ -1284,10 +1257,18 @@ namespace DSH_Modbus采集工具
             _scannerRuntime.Remove(def);
         }
 
-        /// <summary>本轮发现没连上：补一次连接（**不阻塞本轮**，本轮按超时处理）。</summary>
+        /// <summary>
+        /// 本轮发现没连上：补一次连接（**不阻塞本轮**，本轮按超时处理）。
+        /// <para>
+        /// ⚠️ **停用的一律不连**（2026-11-05）：行上的「启用」开关是扫码器唯一的
+        /// 自动连接开关，关掉就该彻底不连。触发判定那边虽然已按
+        /// <c>EffectiveEnabled</c> 早退，但这里再加一道，免得将来有别的调用点
+        /// 绕过判定把停用的扫码器连起来。
+        /// </para>
+        /// </summary>
         private void EnsureScannerConnecting(ScannerItem item)
         {
-            if (_windowClosed || !HasUsableScannerEndpoint(item.Model))
+            if (_windowClosed || !item.Model.Enabled || !HasUsableScannerEndpoint(item.Model))
             {
                 return;
             }
@@ -1622,7 +1603,7 @@ namespace DSH_Modbus采集工具
 
                 _problemField = value;
 
-                // 十二个投影一起刷：漏一个就会出现「改了但红框不亮/不灭」
+                // 九个投影一起刷：漏一个就会出现「改了但红框不亮/不灭」
                 Raise(nameof(NameError));
                 Raise(nameof(IpError));
                 Raise(nameof(PortError));
@@ -1630,10 +1611,7 @@ namespace DSH_Modbus采集工具
                 Raise(nameof(TriggerTextError));
                 Raise(nameof(BufferVariableError));
                 Raise(nameof(TimeoutSecondsError));
-                Raise(nameof(TimeoutTextError));
                 Raise(nameof(NotifyVariableError));
-                Raise(nameof(SuccessValueError));
-                Raise(nameof(TimeoutValueError));
             }
         }
 
@@ -1651,13 +1629,7 @@ namespace DSH_Modbus采集工具
 
         public bool TimeoutSecondsError => _problemField == ScannerField.TimeoutSeconds;
 
-        public bool TimeoutTextError => _problemField == ScannerField.TimeoutText;
-
         public bool NotifyVariableError => _problemField == ScannerField.NotifyVariable;
-
-        public bool SuccessValueError => _problemField == ScannerField.SuccessValue;
-
-        public bool TimeoutValueError => _problemField == ScannerField.TimeoutValue;
 
         /// <summary>接收缓冲区变量被别处引用（黄字提示，不拦）。</summary>
         public bool BufferShared
@@ -1734,13 +1706,13 @@ namespace DSH_Modbus采集工具
 
         public string TimeoutSecondsText => Model.TimeoutSeconds.ToString("0.0#", CultureInfo.InvariantCulture);
 
-        public string TimeoutTextText => Model.TimeoutText ?? string.Empty;
-
         public string NotifyVariableText => Model.NotifyVariableName ?? string.Empty;
 
-        public string SuccessValueText => Model.SuccessValue ?? string.Empty;
-
-        public string TimeoutValueText => Model.TimeoutValue ?? string.Empty;
+        /// <summary>
+        /// 执行结果输出变量框下那行小字（取值口径 1 / 2）。
+        /// 挂在 <see cref="ScannerItem"/> 上而不是写死在 XAML 里，口径就只有一份。
+        /// </summary>
+        public string ResultValueHint => ScannerRules.ResultValueHint;
 
         /// <summary>
         /// 模型改过之后把全部投影通知一遍（改参数 / 改名回写 / 变量增删后调）。
@@ -1756,10 +1728,7 @@ namespace DSH_Modbus采集工具
             Raise(nameof(TriggerText));
             Raise(nameof(BufferVariableText));
             Raise(nameof(TimeoutSecondsText));
-            Raise(nameof(TimeoutTextText));
             Raise(nameof(NotifyVariableText));
-            Raise(nameof(SuccessValueText));
-            Raise(nameof(TimeoutValueText));
         }
 
         public void RaiseNameChanged() => Raise(nameof(Name));

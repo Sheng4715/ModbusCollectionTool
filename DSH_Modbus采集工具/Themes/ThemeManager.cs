@@ -326,7 +326,10 @@ namespace DSH_Modbus采集工具.Themes
 
             /// <summary>
             /// 程序启动后是否自动连接 PLC。用户定稿：**默认打开**。
-            /// <para>属于「自动连接」这一组设置，后续同组还会加别的开关（见设置页卡片）。</para>
+            /// <para>
+            /// 2026-11-05：开关从设置页搬到**设备连接 → PLC连接**页（它只管 PLC，
+            /// 摆在「自动连接」大卡里会让人以为扫码器也归它管）。
+            /// </para>
             /// </summary>
             public bool AutoConnectPlc { get; set; } = true;
         }

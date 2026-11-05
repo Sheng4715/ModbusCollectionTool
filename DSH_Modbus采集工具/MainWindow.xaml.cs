@@ -820,13 +820,20 @@ namespace DSH_Modbus采集工具
             LogSaveToggle.Content = enabled ? "开" : "关";
         }
 
-        // ---------- 设置：自动连接（PLC 连接开关） ----------
+        // ---------- PLC 连接页：自动连接开关 ----------
 
+        /// <summary>
+        /// 回填「自动连接」开关（2026-11-05 从设置页搬到 PLC 连接页）。
+        /// <para>
+        /// ⚠️ 它只决定「程序启动后要不要自动连 PLC」，**不影响扫码器** ——
+        /// 扫码器由每行自己的「启用」开关决定（见 <c>TryAutoConnectScanners</c>）。
+        /// </para>
+        /// </summary>
         private void SyncAutoConnectToggle()
         {
-            bool enabled = ThemeManager.AutoConnectPlc;
-            AutoConnectPlcToggle.IsChecked = enabled;
-            AutoConnectPlcToggle.Content = enabled ? "开" : "关";
+            bool plcEnabled = ThemeManager.AutoConnectPlc;
+            AutoConnectPlcToggle.IsChecked = plcEnabled;
+            AutoConnectPlcToggle.Content = plcEnabled ? "开" : "关";
         }
 
         private void AutoConnectPlcToggle_Changed(object sender, RoutedEventArgs e)
