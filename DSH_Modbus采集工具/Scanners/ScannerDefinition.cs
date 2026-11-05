@@ -66,17 +66,14 @@ namespace DSH_Modbus采集工具.Scanners
         /// <summary>超时判定时间（秒，0.5~10，默认 3）。</summary>
         public double TimeoutSeconds { get; set; } = ScannerRules.DefaultTimeoutSeconds;
 
-        /// <summary>超时写入文本（ASCII、≤20、可空；空 = 超时时缓冲区保留旧值）。</summary>
-        public string TimeoutText { get; set; } = string.Empty;
-
-        /// <summary>执行完成通知变量名（INT/UINT/DINT/UDINT；可为空 = 不写通知）。</summary>
+        /// <summary>
+        /// 执行结果输出变量名（INT/UINT/DINT/UDINT；可为空 = 不写结果）。
+        /// <para>
+        /// 写入值不再可配：正常执行完成写 <see cref="ScannerRules.ResultSuccess"/>「1」、
+        /// 异常（超时 / 链路异常）执行完成写 <see cref="ScannerRules.ResultFailure"/>「2」。
+        /// </para>
+        /// </summary>
         public string NotifyVariableName { get; set; } = string.Empty;
-
-        /// <summary>通知变量「成功档」写入值（文本，按通知变量类型解析校验）。</summary>
-        public string SuccessValue { get; set; } = string.Empty;
-
-        /// <summary>通知变量「超时档」写入值（独立字段）。</summary>
-        public string TimeoutValue { get; set; } = string.Empty;
 
         /// <summary>是否启用：关闭时该扫码器不触发、不收发（连接仍在，仍自动重连）。</summary>
         public bool Enabled { get; set; } = true;
@@ -112,17 +109,8 @@ namespace DSH_Modbus采集工具.Scanners
         /// <summary>超时判定（秒）框。</summary>
         TimeoutSeconds,
 
-        /// <summary>超时写入文本框。</summary>
-        TimeoutText,
-
-        /// <summary>通知变量框。</summary>
+        /// <summary>执行结果输出变量框。</summary>
         NotifyVariable,
-
-        /// <summary>写入值（成功档）框。</summary>
-        SuccessValue,
-
-        /// <summary>超时写入值框。</summary>
-        TimeoutValue,
     }
 
     /// <summary>
@@ -130,8 +118,23 @@ namespace DSH_Modbus采集工具.Scanners
     /// </summary>
     public static class ScannerRules
     {
-        /// <summary>触发文本 / 超时文本的最大 ASCII 字符数。</summary>
+        /// <summary>触发文本的最大 ASCII 字符数。</summary>
         public const int MaxTriggerTextLength = 20;
+
+        /// <summary>
+        /// 「正常执行完成」写进执行结果输出变量的值。
+        /// <para>
+        /// 2026-11-04 定案：这两个值**不再可配**（原先是一对「写入值 / 超时写入值」输入框），
+        /// 固定为 1 / 2，界面在变量框下用一行小字说明。
+        /// </para>
+        /// </summary>
+        public const string ResultSuccess = "1";
+
+        /// <summary>「异常（如超时）执行完成」写进执行结果输出变量的值。</summary>
+        public const string ResultFailure = "2";
+
+        /// <summary>执行结果输出变量框下的说明文字（界面上那一行小字）。</summary>
+        public const string ResultValueHint = "正常执行完成：1   异常执行完成：2";
 
         /// <summary>超时判定时间下限（秒）。</summary>
         public const double MinTimeoutSeconds = 0.5;
@@ -164,20 +167,6 @@ namespace DSH_Modbus采集工具.Scanners
             }
 
             return TryValidateAsciiLength(text, MaxTriggerTextLength, "触发文本", out error);
-        }
-
-        /// <summary>
-        /// 校验「超时写入文本」：可空；非空时须纯 ASCII、不超过 <see cref="MaxTriggerTextLength"/> 字符。
-        /// </summary>
-        public static bool TryValidateTimeoutText(string? text, out string error)
-        {
-            if (string.IsNullOrEmpty(text))
-            {
-                error = string.Empty;
-                return true;
-            }
-
-            return TryValidateAsciiLength(text, MaxTriggerTextLength, "超时写入文本", out error);
         }
 
         private static bool TryValidateAsciiLength(string text, int max, string label, out string error)

@@ -88,7 +88,8 @@ DSH_Modbus采集工具/
 │   ├── AcquisitionTaskCheck.cs # 配置错误判据
 │   ├── AcquisitionWrite.cs     # 写入编码 + TryBuild
 │   ├── AcquisitionCsv.cs       # CSV 建文件 / 表头 / 追加 / 列变换文件
-│   ├── AcquisitionSource.cs    # 来源变量解析（系统变量优先于全局变量）
+│   ├── AcquisitionSource.cs    # 来源解析（常量 → 系统变量 → 全局变量）
+│   ├── AcquisitionConstant.cs  # # 开头的常量字面量（语法 / 进制自标定），方案 B
 │   ├── LiveImageStore.cs       # 背景图拷贝规则（同名加序号 / 同内容复用）
 │   └── LiveCoordinateText.cs   # 卡片坐标框文本规则（只接受整数）
 ├── Logging/                    # 日志（无 WPF）
@@ -151,7 +152,7 @@ Window
 | `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **两档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接 / 右交互，见 §5.9） |
 | `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，见 §5.7）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5 只读清单，见 §5.3）。⚠️ 第四档「扫码器」已于 2026-11-04 删除，并入设备连接页 |
-| `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 自动连接（§7.2）+ 日志保存（P5.2）+ 项目信息（P5.3） |
+| `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 日志保存（P5.2）+ 项目信息（P5.3）。⚠️ 「自动连接」卡已于 2026-11-05 删除：PLC 的搬去设备连接页，扫码器改用行上「启用」（§7.2） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
 
@@ -266,7 +267,8 @@ Window
 - **左右 Padding 必须同值**，卡片才会在内容区里居中（左以分隔线为基准、右以窗口右缘为基准，两者都只是 Padding，同值即对称）。曾左 20 / 右 36 是历史遗留的不对称，已统一为 20
 - ⚠️ **`Margin` 与 `Padding` 分工不同**：`Margin` 管「让开导航」、`Padding` 管「卡片缩进」；分隔线位置只由 `Margin` 决定，改 `Padding` 不会动线
 - ⚠️ 改 `Margin.Left` 必须**同时**改导航 `Border` 的右边距（两个 112 成对，见 §3.5）；只改一个会让分隔线与内容起点脱节
-- 卡片**外框**已与页面大标题左对齐；卡片**内容**再往内缩各自 `Padding.Left`（设置页三卡 24、设备连接 20、设备监控 12、总览日志卡无）—— 这是卡片内边距，不是错位
+- 卡片**外框**已与页面大标题左对齐；卡片**内容**再往内缩各自 `Padding.Left`（设置页三卡 24、设备监控 / 数据管理 / 设备连接 12、总览日志卡无）—— 这是卡片内边距，不是错位
+- ⚠️ **带分段控件的页面，卡内边距必须是 12**：分段条（`IoSegmentRadioButton` 所在那层 `Border`）靠卡内边距定位，设备连接页曾写 20，导致「PLC连接 / 扫码器连接」比设备监控页往右错 8 DIP（2026-11-04 已统一为 12，UIA 实测两页分段条左缘同为 x=413）
 
 ### 3.8 窗口圆角与边缘线（DWM 绘制）
 
@@ -438,7 +440,7 @@ public sealed class MyDialog : DialogWindow
 | **改任何颜色（必读）** | 用主题键，**不要写字面量** —— 见 **§9.2 主题与配色** |
 | **新增 / 改对话框（必读）** | 继承 `Ui/DialogWindow.cs` + 用 `Dialog.*` 样式，别复用主窗口样式 —— 见 **§9.3 对话框控件** |
 | **加/改主题、深色适配、跟随系统** | `Themes/`（`Light.xaml` / `Dark.xaml` 同键）+ `Themes/ThemeManager.cs`；C# 侧画刷见 §9.2 |
-| **设置页（P5）** | `SettingsPanel` + `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；自动连接 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` / `TryAutoConnect`（§7.2）；项目信息 `RefreshProjectInfo`（§7.3） |
+| **设置页（P5）** | `SettingsPanel` + `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；项目信息 `RefreshProjectInfo`（§7.3）。⚠️ 自动连接**不在设置页**了（2026-11-05）：PLC 的在 `DeviceConfigPanel` 表单末行 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` / `TryAutoConnect`，扫码器用行上「启用」（§7.2） |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备连接字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
@@ -453,7 +455,7 @@ public sealed class MyDialog : DialogWindow
 | **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化/`GlobalVariableSet.Move`）+ `GlobalVarItem.cs`（`GlobalVarItemSet.Move`）+ 窗口 `GlobalVar*`；**排序** = 表头 ↑↓ 作用于选中行（§5.2；不读不写） |
 | **数据采集（P3.1）** | 模型 `Modeling/AcquisitionTask.cs`（+ `AcquisitionTaskRules`）+ 行包装 `AcquisitionTaskItem.cs` + 对话框 `Ui/AcquisitionTaskDialog.cs`；执行与落盘 `Modeling/AcquisitionCsv.cs` + 窗口 `RunAcquisitionTick` / `RefreshAcquisitionGlobals`（50ms 常驻定时器，**不随页面可见性停**，§5.7） |
 | **采集任务「配置错误」关开关/拦截** | 判据 `Modeling/AcquisitionTaskCheck.cs` + 行属性 `HasConfigError` / `EffectiveEnabled`（**必须可写**）/ `CanToggleEnabled`；执行侧只判 `EffectiveEnabled`（§5.7） |
-| **采集「写入任务」真正下发** | `Modeling/AcquisitionWrite.cs`（TryBuild / DescribeFailure）+ `RunWriteTaskAsync`；Skipped=无地址静默跳过、失败不短路；CSV 只记写入变量回读值。**只读区只拦「写」不拦「映射」** —— 判定唯一来源 `GlobalVariableStore.IsReadOnlyElement`（§5.7） |
+| **采集「写入任务」真正下发** | `Modeling/AcquisitionWrite.cs`（TryBuild / **ApplyToMemory** / DescribeFailure）+ `RunWriteTaskAsync`；**`CannotAddress`=无地址 → 只回填内存、不发报文**（2026-11-05，早期是静默跳过导致变量永不更新）、失败不短路；CSV 只记写入变量回读值。**只读区只拦「写」不拦「映射」** —— 判定唯一来源 `GlobalVariableStore.IsReadOnlyElement`（§5.7） |
 | **扫码器（P4.5 + P3.5 合并一页）** | `Scanners/`（定义+规则+`scanner.json` / 裸 TCP 收帧 / 连接身份 / 上升沿）+ `MainWindow.Scanner.cs`（`Scanner*` 全部处理器 + 50ms 判定节拍 + 每台独立重连）（§5.9） |
 | 采集跟随可见性（三分段统一） | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | **自由监控写入（FC05/06/16）** | `MonitorItemSet.TryBuildWrite`（文本 → `WritePlan`）+ `ValueCodec.TryEncodeRegisters` / `EncodeStringFixed`；`MainWindow.Monitor.cs` 的 `CommitMonitorValueAsync` → `WriteToDeviceAsync`；报文层 `WriteSingleCoilAsync` / `WriteSingleRegisterAsync` / `WriteMultipleRegistersAsync` |

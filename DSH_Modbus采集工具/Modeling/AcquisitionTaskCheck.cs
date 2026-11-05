@@ -144,10 +144,15 @@ namespace DSH_Modbus采集工具.Modeling
                     return;
                 }
 
+                // 常量（# 开头）：类型由写入变量决定，故**不能**在这里就要求类型匹配 ——
+                // 先解析出字面量，等拿到写入变量再用它的类型做范围与类型校验。
+                bool isConstant = AcquisitionConstant.IsConstant(sourceName);
+
                 AcquisitionSource? source = AcquisitionSource.Resolve(sourceName, findVariable);
                 if (source == null)
                 {
-                    issues.Add(prefix + "来源变量「" + sourceName + "」不存在");
+                    // 常量解析失败要把「为什么」说出来，不能笼统报「不存在」
+                    issues.Add(prefix + DescribeSourceUnresolved(sourceName, isConstant));
                     return;
                 }
 
@@ -164,7 +169,17 @@ namespace DSH_Modbus采集工具.Modeling
                     return;
                 }
 
-                if (!AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type))
+                if (isConstant)
+                {
+                    // 常量的类型由写入变量定：只校验「这个字面量能不能按它的类型编出来」
+                    string? constantError = DescribeConstantProblem(sourceName, variable);
+                    if (constantError != null)
+                    {
+                        issues.Add(prefix + constantError);
+                        return;
+                    }
+                }
+                else if (!AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type))
                 {
                     issues.Add(
                         prefix + "来源「" + source.Name + "」是 " + DataTypes.Get(source.Type).DisplayName
@@ -198,6 +213,83 @@ namespace DSH_Modbus采集工具.Modeling
             {
                 issues.Add(prefix + "读取变量「" + variableName + "」不存在");
             }
+        }
+
+        /// <summary>
+        /// 来源解析不出来时给用户看的话。
+        /// <para>
+        /// ⚠️ 常量与变量名**必须分开措辞**：常量写错时若也报「来源变量「#12x」不存在」，
+        /// 用户会去变量表里找一个根本不存在的东西。
+        /// </para>
+        /// </summary>
+        private static string DescribeSourceUnresolved(string sourceName, bool isConstant)
+        {
+            if (!isConstant)
+            {
+                return "来源变量「" + sourceName + "」不存在";
+            }
+
+            return AcquisitionConstant.TryParse(sourceName, out _, out _, out _, out string error)
+                ? "来源常量「" + sourceName + "」无法解析"
+                : "来源常量无效：" + error;
+        }
+
+        /// <summary>
+        /// 常量写进给定写入变量时的校验（P3.1 方案 B，2026-11-05）。
+        /// <para>
+        /// 类型**由写入变量决定**，故这里只问一件事：这个字面量能不能按写入变量的类型编出来？
+        /// 直接复用编码层（<see cref="ValueCodec.TryEncodeRegisters"/>），
+        /// 与运行时真正下发走同一套判定 —— 界面说「能写」而后台写失败的分裂不可能发生。
+        /// </para>
+        /// <para>
+        /// ⚠️ BOOL 要单独判：它是线圈类型（<c>CoilOnly</c>），不进 <c>TryEncodeRegisters</c>
+        /// 那条寄存器路径，只接受 <c>0</c> / <c>1</c>（<c>#TRUE</c> / <c>#FALSE</c> 已在解析时归一）。
+        /// </para>
+        /// </summary>
+        private static string? DescribeConstantProblem(string sourceName, GlobalVariable variable)
+        {
+            if (!AcquisitionConstant.TryParse(
+                    sourceName, out string literal, out bool isQuoted, out _, out string parseError))
+            {
+                return "来源常量无效：" + parseError;
+            }
+
+            DataTypeSpec spec = DataTypes.Get(variable.Type);
+
+            if (spec.CoilOnly)
+            {
+                // 带引号的字符串常量写进 BOOL 显然不对；数值/TRUE/FALSE 归一后只认 0 / 1
+                if (isQuoted)
+                {
+                    return "字符串常量不能写入 BOOL 变量「" + variable.Name + "」";
+                }
+
+                if (literal != "0" && literal != "1")
+                {
+                    return "BOOL 只能写 0 / 1 / TRUE / FALSE，来源常量给的是「" + literal + "」";
+                }
+
+                return null;
+            }
+
+            if (isQuoted && variable.Type != DataType.String)
+            {
+                return "字符串常量不能写入 "
+                    + spec.DisplayName + " 变量「" + variable.Name + "」";
+            }
+
+            if (!isQuoted && variable.Type == DataType.String)
+            {
+                return "写入 STRING 变量「" + variable.Name + "」要用带引号的常量，如 #\"ABCD\"";
+            }
+
+            // 复用编码层：进制自标定、范围校验、REAL 解析全在那一处
+            DisplayFormat format = AcquisitionConstant.FormatFor(literal, variable.Type);
+            return ValueCodec.TryEncodeRegisters(
+                variable.Type, format, literal, variable.Length, ByteOrderSettings.Default,
+                out _, out string encodeError)
+                ? null
+                : "来源常量「" + sourceName + "」" + encodeError;
         }
 
         /// <summary>

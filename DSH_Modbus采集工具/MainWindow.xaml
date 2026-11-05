@@ -35,6 +35,9 @@
         <!-- 布尔 → 可见性（采集任务组「展开/收起」用，见 AcquisitionTaskRowTemplate） -->
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
 
+        <!-- 来源变量框文字色（常量橙 / 有错红 / 正常），见 Ui/SourceForegroundConverter.cs -->
+        <ui:SourceForegroundConverter x:Key="SourceForegroundConverter"/>
+
         <!-- 标题栏按钮 -->
         <Style x:Key="CaptionButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
@@ -583,18 +586,26 @@
         </Style>
 
         <!--
-            数据采集「来源变量」框：名字查不到时**字变红**。
-            ⚠️ 不能只靠 ToolTip 提示 —— 用户不知道它错，就不会去悬停，等于没有任何反馈。
-            与右侧「数据类型」列的红字同一套语义。
+            数据采集「来源变量」框：**文字颜色由转换器一次算定**。
+            · 合法常量（# 开头且解析成功）：橙色（Brush.Warning）
+            · 有错（变量名查不到 / 常量语法错）：红色（Brush.Danger）
+            · 其它：正常字色
+            ⚠️ **不用两条 DataTrigger**：两个触发器同时成立时 WPF 的优先级取决于顺序，
+            实测（2026-11-05）`#"ABC`（既是常量、又解析失败）两条都调过顺序仍显示橙色、
+            红色出不来。转换器把三种状态在一处算完、只返回一个颜色，没有互相覆盖的余地。
+            见 `Ui/SourceForegroundConverter.cs`。
+            ⚠️ 转换器绑的是**整行对象**（`RelativeSource Self` 的 `DataContext`），
+            不是文本框里的字符串 —— 只有行自己知道变量名在表里存不存在。
             ⚠️ 必须定义在 MonitorInlineTextBox **之后**：BasedOn 走 StaticResource，
             资源字典按顺序解析，放前面会找不到（解析期就抛）。
+            ⚠️ 只做整段换色，不做 `#` 与值分别着色：TextBox 的 PART_ContentHost 内部
+            TextBoxView 只认控件级 Foreground，没有 run 级着色接口（详见 AGENTS-细节.md §5.7）。
         -->
         <Style x:Key="AcquisitionSourceBox" TargetType="TextBox" BasedOn="{StaticResource MonitorInlineTextBox}">
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding HasSourceError}" Value="True">
-                    <Setter Property="Foreground" Value="{DynamicResource Brush.Danger}"/>
-                </DataTrigger>
-            </Style.Triggers>
+            <Setter Property="Foreground"
+                    Value="{Binding DataContext,
+                                    RelativeSource={RelativeSource Self},
+                                    Converter={StaticResource SourceForegroundConverter}}"/>
         </Style>
 
         <!--
@@ -2961,15 +2972,18 @@
                                    FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Text.Primary}"
                                    Margin="0,10,0,10"/>
 
+                        <!-- 卡内边距 12 与设备监控 / 数据管理两页一致：标签条的左缘由卡内边距决定，
+                             写 20 会让分段控件比别的页往右错 8 DIP。 -->
                         <Border Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
-                                CornerRadius="8" Padding="20">
+                                CornerRadius="8" Padding="12">
                             <StackPanel>
 
                                 <!-- 页签：PLC 连接 / 扫码器连接（P4.5）
                                      两档都是「连接」，故用分段控件而不是开关；GroupName 显式给，
-                                     否则 WPF 会按逻辑父容器分组、两档各自成组可同时选中。 -->
-                                <Grid Margin="0,0,0,16">
+                                     否则 WPF 会按逻辑父容器分组、两档各自成组可同时选中。
+                                     位置与间距照抄设备监控页：上 0 / 下 8，紧接一条分隔线。 -->
+                                <Grid Margin="0,0,0,8">
                                     <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
                                             HorizontalAlignment="Left" VerticalAlignment="Center">
                                         <StackPanel Orientation="Horizontal">
@@ -2987,6 +3001,9 @@
                                         </StackPanel>
                                     </Border>
                                 </Grid>
+
+                                <!-- 分隔线：分段切换与表单内容之间（与设备监控页同一写法：1px + Brush.Divider + 下边距 8） -->
+                                <Border Height="1" Background="{DynamicResource Brush.Divider}" Margin="0,0,0,8"/>
 
                                 <!-- ===== PLC 连接（原设备连接表单，整段原样保留） ===== -->
                                 <StackPanel x:Name="PlcConnectionPanel">
@@ -3110,6 +3127,25 @@
                                                  Text="502"
                                                  TextChanged="ConfigInput_TextChanged"
                                                  LostFocus="ConfigInput_LostFocus"/>
+                                    </StackPanel>
+
+                                    <!-- 自动连接（2026-11-05 从设置页搬来）
+                                         放这里而不是设置页：它只对 PLC 生效，
+                                         与扫码器毫无关系（扫码器由各自行上的「启用」开关决定）。
+                                         搬进来的理由 —— 设置页那个卡片叫「自动连接」，
+                                         用户会以为它管所有自动连接，实际只管 PLC，属误导。 -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="自动连接"
+                                                   Width="80"
+                                                   FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                   VerticalAlignment="Center"/>
+                                        <CheckBox x:Name="AutoConnectPlcToggle"
+                                                  Style="{StaticResource ToggleSwitch}"
+                                                  Content="开"
+                                                  VerticalContentAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Checked="AutoConnectPlcToggle_Changed"
+                                                  Unchecked="AutoConnectPlcToggle_Changed"/>
                                     </StackPanel>
 
                                 </StackPanel>
@@ -3356,9 +3392,12 @@
                                                                 <!-- 展开块：左列连接参数（P4.5）| 竖线 | 右列交互参数（P3.5）
                                                                      2026-11-04 用户定案：「把数据管理→扫码器直接与设备连接→扫码器
                                                                      界面合并起来，分为两列，左侧连接相关的参数，右边是交互相关的
-                                                                     参数，中间加分割线」。两列各 110 标签 + 200 控件 ≈ 330 DIP，
-                                                                     加竖线与两侧间隔约 690 DIP；最小窗口 1024 时内容区约 760 DIP，
-                                                                     放得下，但再加列就要先想清楚。 -->
+                                                                     参数，中间加分割线」。
+                                                                     标签列宽 168（2026-11-04 调整）：用户把标签改长了，最长的是
+                                                                     「超时后写入接收结果内容」11 个汉字 ≈ 154 DIP，原先的 110 会
+                                                                     被硬裁断并压到输入框上。两列各 168 标签 + 200 控件 + 竖线 37
+                                                                     = 773 DIP，最小窗口 1024 时展开块内可用约 828 DIP，放得下；
+                                                                     再加列或再加长标签就要先想清楚。 -->
                                                                 <Border Grid.Row="1"
                                                                         Margin="0,4,0,4"
                                                                         Padding="10,10,10,6"
@@ -3391,7 +3430,7 @@
                                                                                  以后加品牌时这里就是要选的地方） -->
                                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                                                                 <TextBlock Text="连接方式"
-                                                                                           Width="110"
+                                                                                           Width="168"
                                                                                            FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                            VerticalAlignment="Center"/>
                                                                                 <ComboBox Width="200"
@@ -3404,7 +3443,7 @@
                                                                             <!-- 协议：同上，只有「TCP/IP 客户端」一项，仍可展开 -->
                                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                                                                 <TextBlock Text="协议"
-                                                                                           Width="110"
+                                                                                           Width="168"
                                                                                            FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                            VerticalAlignment="Center"/>
                                                                                 <ComboBox Width="200"
@@ -3417,7 +3456,7 @@
                                                                             <!-- IP -->
                                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                                                                 <TextBlock Text="IP地址"
-                                                                                           Width="110"
+                                                                                           Width="168"
                                                                                            FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                            VerticalAlignment="Center"/>
                                                                                 <TextBox Width="200"
@@ -3431,7 +3470,7 @@
                                                                             <!-- 端口 -->
                                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                                                                 <TextBlock Text="端口号"
-                                                                                           Width="110"
+                                                                                           Width="168"
                                                                                            FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                            VerticalAlignment="Center"/>
                                                                                 <TextBox Width="200"
@@ -3445,7 +3484,7 @@
                                                                             <!-- 结果帧结束符：决定「一帧收完」的判据，不同品牌回报不一样 -->
                                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
                                                                                 <TextBlock Text="结果帧结束符"
-                                                                                           Width="110"
+                                                                                           Width="168"
                                                                                            FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                            VerticalAlignment="Center"/>
                                                                                 <ComboBox Width="200"
@@ -3470,7 +3509,7 @@
                                                                             <!-- 触发条件表达式：填表达式、挂表达式补全 -->
                                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                                                                 <TextBlock Text="触发条件表达式"
-                                                                                           Width="110"
+                                                                                           Width="168"
                                                                                            FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                            VerticalAlignment="Center"/>
                                                                                 <TextBox Width="200"
@@ -3484,8 +3523,8 @@
 
                                                                             <!-- 触发文本：原样发出，不补结束符；只允许 ASCII -->
                                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                                                                <TextBlock Text="触发文本"
-                                                                                           Width="110"
+                                                                                <TextBlock Text="触发请求内容"
+                                                                                           Width="168"
                                                                                            FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                            VerticalAlignment="Center"/>
                                                                                 <TextBox Width="200"
@@ -3499,8 +3538,8 @@
                                                                             <!-- 接收缓冲区变量：只能是 STRING 全局变量；被别处引用时黄字提示 -->
                                                                             <StackPanel Margin="0,0,0,12">
                                                                                 <StackPanel Orientation="Horizontal">
-                                                                                    <TextBlock Text="接收缓冲区变量"
-                                                                                               Width="110"
+                                                                                    <TextBlock Text="接收内容输出变量"
+                                                                                               Width="168"
                                                                                                FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                                VerticalAlignment="Center"/>
                                                                                     <TextBox Width="200"
@@ -3514,14 +3553,14 @@
                                                                                 <TextBlock Text="变量已在别处被引用"
                                                                                            FontSize="11"
                                                                                            Foreground="{DynamicResource Brush.Warning}"
-                                                                                           Margin="110,4,0,0"
+                                                                                           Margin="168,4,0,0"
                                                                                            Visibility="{Binding BufferShared, Converter={StaticResource BoolToVis}}"/>
                                                                             </StackPanel>
 
                                                                             <!-- 超时判定（秒）：0.5 ~ 10 -->
                                                                             <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                                                                <TextBlock Text="超时判定（秒）"
-                                                                                           Width="110"
+                                                                                <TextBlock Text="接收超时判定（秒）"
+                                                                                           Width="168"
                                                                                            FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                            VerticalAlignment="Center"/>
                                                                                 <TextBox Width="80"
@@ -3533,25 +3572,12 @@
                                                                                          LostFocus="ScannerTimeout_LostFocus"/>
                                                                             </StackPanel>
 
-                                                                            <!-- 超时写入文本：留空则保留缓冲区旧值 -->
-                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                                                                <TextBlock Text="超时写入文本"
-                                                                                           Width="110"
-                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
-                                                                                           VerticalAlignment="Center"/>
-                                                                                <TextBox Width="200"
-                                                                                         VerticalAlignment="Center"
-                                                                                         Style="{StaticResource ScannerFieldTextBox}"
-                                                                                         Text="{Binding TimeoutTextText, Mode=OneWay}"
-                                                                                         ui:ScannerErrorMark.IsError="{Binding TimeoutTextError}"
-                                                                                         LostFocus="ScannerTimeoutText_LostFocus"/>
-                                                                            </StackPanel>
-
-                                                                            <!-- 通知变量：INT / UINT / DINT / UDINT 全局变量 -->
+                                                                            <!-- 执行结果输出变量：INT / UINT / DINT / UDINT 全局变量；
+                                                                                 写入值固定 1 / 2（2026-11-04 定），故框下有一行小字说明口径 -->
                                                                             <StackPanel Margin="0,0,0,12">
                                                                                 <StackPanel Orientation="Horizontal">
-                                                                                    <TextBlock Text="通知变量"
-                                                                                               Width="110"
+                                                                                    <TextBlock Text="执行结果输出变量"
+                                                                                               Width="168"
                                                                                                FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                                                                VerticalAlignment="Center"/>
                                                                                     <TextBox Width="200"
@@ -3565,36 +3591,12 @@
                                                                                 <TextBlock Text="变量已在别处被引用"
                                                                                            FontSize="11"
                                                                                            Foreground="{DynamicResource Brush.Warning}"
-                                                                                           Margin="110,4,0,0"
+                                                                                           Margin="168,4,0,0"
                                                                                            Visibility="{Binding NotifyShared, Converter={StaticResource BoolToVis}}"/>
-                                                                            </StackPanel>
-
-                                                                            <!-- 写入值：正常返回时写进通知变量 -->
-                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                                                                <TextBlock Text="写入值"
-                                                                                           Width="110"
-                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
-                                                                                           VerticalAlignment="Center"/>
-                                                                                <TextBox Width="200"
-                                                                                         VerticalAlignment="Center"
-                                                                                         Style="{StaticResource ScannerFieldTextBox}"
-                                                                                         Text="{Binding SuccessValueText, Mode=OneWay}"
-                                                                                         ui:ScannerErrorMark.IsError="{Binding SuccessValueError}"
-                                                                                         LostFocus="ScannerSuccessValue_LostFocus"/>
-                                                                            </StackPanel>
-
-                                                                            <!-- 超时写入值：超时 / 通讯失败时写进通知变量 -->
-                                                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
-                                                                                <TextBlock Text="超时写入值"
-                                                                                           Width="110"
-                                                                                           FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
-                                                                                           VerticalAlignment="Center"/>
-                                                                                <TextBox Width="200"
-                                                                                         VerticalAlignment="Center"
-                                                                                         Style="{StaticResource ScannerFieldTextBox}"
-                                                                                         Text="{Binding TimeoutValueText, Mode=OneWay}"
-                                                                                         ui:ScannerErrorMark.IsError="{Binding TimeoutValueError}"
-                                                                                         LostFocus="ScannerTimeoutValue_LostFocus"/>
+                                                                                <TextBlock Text="{Binding ResultValueHint}"
+                                                                                           FontSize="11"
+                                                                                           Foreground="{DynamicResource Brush.Text.Muted}"
+                                                                                           Margin="168,4,0,0"/>
                                                                             </StackPanel>
                                                                         </StackPanel>
                                                                     </Grid>
@@ -3678,46 +3680,6 @@
                                     </StackPanel>
                                 </Border>
                             </Grid>
-                        </Border>
-
-                        <!-- 自动连接：一张卡装一组开关，后续同组还会加（如 MES 连接）。
-                             卡片标题就是这一组的名字，子项各自一行、右侧一个开关 ——
-                             与「日志保存」卡同款两列，眼睛一次扫完。 -->
-                        <Border Background="{DynamicResource Brush.Card.Background}"
-                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
-                                CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
-                            <StackPanel>
-                                <TextBlock Text="自动连接"
-                                           FontSize="14" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource Brush.Text.Primary}"/>
-                                <TextBlock Text="设置程序启动后自动连接"
-                                           FontSize="12"
-                                           Foreground="{DynamicResource Brush.Text.Muted}"
-                                           Margin="0,4,0,0"/>
-
-                                <!-- 子项：PLC 连接（默认打开） -->
-                                <Grid Margin="0,16,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-
-                                    <TextBlock Grid.Column="0"
-                                               Text="PLC连接"
-                                               FontSize="14"
-                                               Foreground="{DynamicResource Brush.Text.Primary}"
-                                               VerticalAlignment="Center"/>
-
-                                    <CheckBox x:Name="AutoConnectPlcToggle"
-                                              Grid.Column="1"
-                                              Style="{StaticResource ToggleSwitch}"
-                                              Content="开"
-                                              Margin="16,0,0,0"
-                                              VerticalAlignment="Center"
-                                              Checked="AutoConnectPlcToggle_Changed"
-                                              Unchecked="AutoConnectPlcToggle_Changed"/>
-                                </Grid>
-                            </StackPanel>
                         </Border>
 
                         <!-- 日志保存（P5-2） -->
