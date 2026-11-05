@@ -129,39 +129,42 @@ namespace DSH_Modbus采集工具.Scanners
                 bool silenceMode = terminator.Length == 0;
                 var payload = new List<byte>();
                 var one = new byte[1];
+                var silenceElapsed = System.Diagnostics.Stopwatch.StartNew();
 
+                // ⚠️ **本方法的铁律：绝不取消任何在途的 ReadAsync。**
+                // 实测（.tmp/ScanProbe/CancelProbe）：取消 NetworkStream.ReadAsync 会让套接字
+                // 进入断开态 —— 每成功收帧一次，client.Connected 立刻变 false，下一轮就发不出去，
+                // 表现为「连上 → 收一次 → 断开 → 重连」无限循环。
+                // 所以「有没有数据」全靠 DataAvailable 轮询，「等多久算超时」全靠计时器，
+                // ReadAsync 只在确认 DataAvailable 之后调用（必有数据，立即返回），
+                // 且**不传任何会取消的 token**。
                 while (true)
                 {
-                    // 逐字节读；静默模式下每收一字节后给一个短静默窗口等下一个字节
-                    using var readCts = CancellationTokenSource.CreateLinkedTokenSource(overall.Token);
-                    if (silenceMode && payload.Count > 0)
+                    if (silenceMode && payload.Count > 0 && silenceElapsed.Elapsed >= SilenceInterval)
                     {
-                        readCts.CancelAfter(SilenceInterval);
+                        break; // 静默间隔到 → 帧完整
                     }
 
-                    int n;
-                    try
+                    if (overall.IsCancellationRequested)
                     {
-                        n = await stream.ReadAsync(one.AsMemory(), readCts.Token).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        if (overall.IsCancellationRequested)
-                        {
-                            // 整体超时（或外部取消）：抛给上层，由上层按「超时」处理
-                            throw;
-                        }
-
-                        // 静默间隔到 → 帧完整
-                        break;
+                        throw new OperationCanceledException(overall.Token);
                     }
 
+                    if (!stream.DataAvailable)
+                    {
+                        await Task.Delay(PollInterval, overall.Token).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    // 有数据了才读：这里读到的是已经到达缓冲区的字节，不会阻塞
+                    int n = await stream.ReadAsync(one.AsMemory()).ConfigureAwait(false);
                     if (n == 0)
                     {
                         throw new IOException("连接被对方关闭");
                     }
 
                     payload.Add(one[0]);
+                    silenceElapsed.Restart();
 
                     if (!silenceMode && EndsWith(payload, terminator))
                     {
@@ -183,6 +186,9 @@ namespace DSH_Modbus采集工具.Scanners
                 _gate.Release();
             }
         }
+
+        /// <summary>静默模式下轮询是否有新数据的间隔（够短以免漏帧，够长以免空转）。</summary>
+        private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(5);
 
         private static bool EndsWith(List<byte> data, byte[] suffix)
         {
