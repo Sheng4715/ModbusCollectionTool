@@ -47,13 +47,34 @@ namespace DSH_Modbus采集工具.Modeling
         public bool IsSystemVariable { get; init; }
 
         /// <summary>
-        /// 按名字解析来源变量：**先查系统变量，再查全局变量**。
+        /// 是不是**常量**（以 <c>#</c> 开头的字面量，见 <see cref="AcquisitionConstant"/>）。
+        /// <para>
+        /// 常量没有自己的类型 —— 它的类型由**写入变量**决定，故本类的
+        /// <see cref="Type"/> 字段对常量**无意义**，调用方须避开
+        /// （用 <see cref="Literal"/> 与写入变量的类型去编码）。
+        /// </para>
+        /// </summary>
+        public bool IsConstant { get; init; }
+
+        /// <summary>
+        /// 常量解析后的规范化文本（如 <c>"1"</c> / <c>"123"</c> / <c>"ABCD"</c>）；
+        /// 非常量时为 <c>null</c>。这是真正要交给编码层的值。
+        /// </summary>
+        public string? Literal { get; init; }
+
+        /// <summary>
+        /// 按名字解析来源：**常量 → 系统变量 → 全局变量**。
         /// </summary>
         /// <remarks>
         /// 顺序不是随意的：系统变量名固定 <c>sys_</c> 前缀，而全局变量名同样允许下划线，
         /// 理论上可以造出一个叫 <c>sys_True</c> 的全局变量。**同名时以系统变量为准** ——
         /// 系统变量是程序算出来的确定值，让它输给用户变量会让「sys_True 恒为真」这条
         /// 对外承诺失效。全局变量那边另有名称校验，两套清单不该撞车。
+        /// <para>
+        /// 常量排在最前，因为变量名**不可能**以 <c>#</c> 开头
+        /// （<see cref="GlobalVariableRules.TryValidateName"/> 要求字母或下划线开头），
+        /// 三者永不歧义。
+        /// </para>
         /// </remarks>
         /// <returns>解析成功返回实例；名字为空或两处都找不到返回 <c>null</c>。</returns>
         public static AcquisitionSource? Resolve(
@@ -63,6 +84,22 @@ namespace DSH_Modbus采集工具.Modeling
             if (string.IsNullOrWhiteSpace(name))
             {
                 return null;
+            }
+
+            // 常量：类型未知（由写入变量决定），故 Type 留默认值，调用方不得使用
+            if (AcquisitionConstant.IsConstant(name)
+                && AcquisitionConstant.TryParse(name, out string literal, out bool quoted, out _, out _))
+            {
+                return new AcquisitionSource
+                {
+                    Name = name.Trim(),
+                    Type = quoted ? DataType.String : DataType.Int,
+                    TypeDisplayName = quoted ? "STRING" : "常量",
+                    Comment = "常量",
+                    Format = DisplayFormat.Dec,
+                    IsConstant = true,
+                    Literal = literal,
+                };
             }
 
             if (SystemVariable.Find(name) is { } system)
@@ -96,11 +133,12 @@ namespace DSH_Modbus采集工具.Modeling
         }
 
         /// <summary>
-        /// 取来源变量的**当前值**（显示格式下的文本）。
+        /// 取来源的**当前值**（显示格式下的文本）。
         /// <para>
-        /// 两类变量的值来自完全不同的地方：全局变量的值由采集引擎写进
-        /// <see cref="GlobalVariable.Value"/>；系统变量的值是**算出来的**，
-        /// 要由调用方传入当时的快照（<see cref="SystemVariableValues.Capture"/>）。
+        /// 三类来源的值来自完全不同的地方：常量就是字面量本身（<see cref="Literal"/>，
+        /// 恒定不变）；全局变量的值由采集引擎写进 <see cref="GlobalVariable.Value"/>；
+        /// 系统变量的值是**算出来的**，要由调用方传入当时的快照
+        /// （<see cref="SystemVariableValues.Capture"/>）。
         /// </para>
         /// </summary>
         /// <returns>取不到返回 <c>null</c>（调用方决定写成空串还是报错）。</returns>
@@ -112,6 +150,13 @@ namespace DSH_Modbus采集工具.Modeling
             if (string.IsNullOrWhiteSpace(name))
             {
                 return null;
+            }
+
+            // 常量：字面量即值，不依赖任何运行时状态
+            if (AcquisitionConstant.IsConstant(name)
+                && AcquisitionConstant.TryParse(name, out string literal, out _, out _, out _))
+            {
+                return literal;
             }
 
             if (SystemVariable.Find(name) != null)

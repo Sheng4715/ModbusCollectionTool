@@ -170,9 +170,37 @@ namespace DSH_Modbus采集工具.Modeling
         /// ⚠️ **写入变量**那一列不能共用这个 —— 它要映射到 PLC 地址，
         /// 系统变量没有地址，混进去只会让人填了才发现写不出去。
         /// </para>
+        /// <para>
+        /// 另附几条**常量写法示例**（2026-11-05 方案 B）：常量本身不必联想，
+        /// 但用户未必知道有这回事，列在末尾当语法提示用。它们插入后仍需改成自己的值。
+        /// </para>
         /// </summary>
-        public static List<CompletionCandidate> ForSourceVariable(IEnumerable<GlobalVariable>? globals) =>
-            ForExpression(globals);
+        public static List<CompletionCandidate> ForSourceVariable(IEnumerable<GlobalVariable>? globals)
+        {
+            var list = ForExpression(globals);
+
+            // 放在最后：候选按前缀命中优先排序，常量示例从不抢变量名的位置
+            list.Add(new CompletionCandidate
+            {
+                Text = "#123",
+                Detail = "常量 · 十进制整数",
+                Kind = "常量",
+            });
+            list.Add(new CompletionCandidate
+            {
+                Text = "#0x1F",
+                Detail = "常量 · 十六进制",
+                Kind = "常量",
+            });
+            list.Add(new CompletionCandidate
+            {
+                Text = "#\"ABCD\"",
+                Detail = "常量 · 字符串（双引号必填）",
+                Kind = "常量",
+            });
+
+            return list;
+        }
 
         /// <summary>
         /// 自由监控「元件名称」框的候选：**只有全局变量**。
