@@ -57,9 +57,15 @@ namespace DSH_Modbus采集工具.Ui
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // 错误行
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });   // 按钮行
 
-            // 用户名：下拉里就两档，默认选中当前已登录的那个
+            // 用户名：下拉里就两档，默认选中当前已登录的那个。
+            // ⚠️ **stretch: true**（而不是固定的 MakeCombo(150) 宽度）：
+            // 按钮行要和输入框左右对齐，两者就得**吃同一个列宽**（2026-11-06 用户要求）。
+            // 写死宽度的话，改一个字宽或换个语言就又会错位。
             AddLabel(root, "用户名", 0, bottomMargin: 0);
             _roleCombo = MakeCombo(150);
+            _roleCombo.Width = double.NaN;
+            _roleCombo.HorizontalAlignment = HorizontalAlignment.Stretch;
+
             foreach (UserRole role in UserRules.Roles)
             {
                 _roleCombo.Items.Add(new ComboItem<UserRole>(UserRules.NameOf(role), role));
@@ -75,18 +81,17 @@ namespace DSH_Modbus采集工具.Ui
             }
 
             _roleCombo.SelectionChanged += (_, _) => SyncPasswordEnabled();
-            Place(root, _roleCombo, 0, new Thickness(0), stretch: false);
+            Place(root, _roleCombo, 0, new Thickness(0), stretch: true);
 
             // 密码：只有工程师才需要，选技术员时置灰（那一档本来就免密码）
             AddLabel(root, "密码", 1, bottomMargin: 0);
             _passwordBox = new PasswordBox
             {
                 Style = RequireStyle("Dialog.PasswordBox"),
-                Width = 150,
-                HorizontalAlignment = HorizontalAlignment.Left,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
             };
 
-            Place(root, _passwordBox, 1, new Thickness(0), stretch: false);
+            Place(root, _passwordBox, 1, new Thickness(0), stretch: true);
 
             _error = new TextBlock
             {
@@ -103,16 +108,25 @@ namespace DSH_Modbus采集工具.Ui
             // ⚠️ PasswordBox 的事件是 PasswordChanged，**不是** TextChanged —— 抄错编译就过不了
             _passwordBox.PasswordChanged += (_, _) => HideError();
 
-            var buttons = new StackPanel
+            // 按钮行：**只占第 1 列**（与两个输入框同一列），不再 ColumnSpan=2 ——
+            // 跨两列右对齐时按钮组贴的是窗口右缘，与输入框的右边界对不上（2026-11-06 用户指出）。
+            //
+            // ⚠️ **两列都用 `*`（等分），不要 Auto**：用 Auto 时第一个 Star 列会把剩余空间
+            // 全吃掉，两个按钮被挤到右边 —— 右缘齐了、**左缘却差 100 多 DIP**
+            // （UIA 实测：输入框左 827 / 按钮组左 931）。等分后四个边都落在输入框的框线上。
+            var buttons = new Grid
             {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
                 Margin = new Thickness(0, 14, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
             };
+
+            buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
+            buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             // 左边「注销」、右边「登录」—— 用户给的顺序就是这样，且注销是次要动作
             Button logout = MakeButton("注销", primary: false);
-            logout.Margin = new Thickness(0, 0, 8, 0);
+            logout.HorizontalAlignment = HorizontalAlignment.Stretch;
             logout.IsCancel = true;
             logout.Click += (_, _) =>
             {
@@ -122,14 +136,17 @@ namespace DSH_Modbus采集工具.Ui
             };
 
             Button login = MakeButton("登录", primary: true);
+            login.HorizontalAlignment = HorizontalAlignment.Stretch;
             login.IsDefault = true;
             login.Click += Login_Click;
 
+            Grid.SetColumn(logout, 0);
+            Grid.SetColumn(login, 2);
             buttons.Children.Add(logout);
             buttons.Children.Add(login);
 
             Grid.SetRow(buttons, 3);
-            Grid.SetColumnSpan(buttons, 2);
+            Grid.SetColumn(buttons, 1);
             root.Children.Add(buttons);
 
             Content = root;
