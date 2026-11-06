@@ -256,7 +256,14 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        /// <summary>任务组下拉框换选中项。</summary>
+        /// <summary>
+        /// 任务组下拉框换选中项：**两个页签都要跟着换**。
+        /// <para>
+        /// ⚠️ 2026-11-06 修：早先这里只重置历史表 + 重读 CSV，**漏了实时画布** ——
+        /// 停在「实时数据」页签时换组，下拉框变了、画布还是上一组的卡片，
+        /// 看着就像「切换没生效」。两套内容必须一起换，因为它们是同一个「当前组」的两种呈现。
+        /// </para>
+        /// </summary>
         private void AcqGroupCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_acqComboRebuilding)
@@ -273,8 +280,15 @@ namespace DSH_Modbus采集工具
             }
 
             _acqHistoryGroup = name;
+
+            // 历史表：清空后强制整表重载（换组了，不能走「只追加尾部」那条路）
             ResetAcqHistory();
             RefreshAcqHistoryTable(force: true);
+
+            // 实时画布：卡片、背景图、布局全部按新组重建，并立刻刷一次值
+            // （不等下一拍定时器，否则那一瞬间显示的是占位符）
+            RebuildAcqLiveCanvas();
+            RefreshAcqLiveValues();
         }
 
         /// <summary>二级页签：实时数据 / 历史数据。</summary>
