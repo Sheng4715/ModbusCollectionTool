@@ -138,8 +138,16 @@
             左侧导航底部的「账户」按钮（2026-11-06，P 权限）。
 
             外观：左边一个 Win11 式圆形头像（主色实底 + 白色人形图标），右边当前用户名。
-            ⚠️ 几何参数（Margin 8,2 / Padding 14,0 / MinHeight 40）**必须与
-            NavRadioButton 一致** —— 它夹在「设置」上方，差 1px 就能看出左缘没对齐。
+
+            ⚠️ **左缘与 NavRadioButton 对齐、内部比它更紧凑**（2026-11-06 用户报
+            「技术员」被截断后调）：导航列固定 112 DIP、右边距让出后可用约 96 DIP，
+            而 NavRadioButton 是 Padding 14 + 头像 20 + 间距 10 + 间距 14 = 58，
+            留给「技术员」三个字只剩 **38 DIP** —— FontSize 14 下需要约 42，必然被裁。
+            故本样式单独收窄：**Padding 14→10、头像 20→18、图标右边距 10→8**，
+            省出 12 DIP（38 → 50），「技术员」「工程师」都不再截断。
+
+            ⚠️ 只改 Margin 的上下（2）与左缘（8）与 NavRadioButton 保持一致 ——
+            **左缘必须仍落在 8**，否则和下方「设置」错开。
 
             ⚠️ 头像用「圆形 Border + 图标」画，不要引图片资源：
             项目零第三方依赖，也没有随包分发的头像图；而且深色/浅色两套主题下
@@ -151,7 +159,8 @@
             <Setter Property="MinHeight" Value="40"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Margin" Value="8,2"/>
-            <Setter Property="Padding" Value="14,0"/>
+            <!-- 10 而不是 NavRadioButton 的 14：导航列太窄，省下这 4 DIP 才放得下三个汉字 -->
+            <Setter Property="Padding" Value="10,0"/>
             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -163,21 +172,21 @@
                                 Background="Transparent"
                                 HorizontalAlignment="Stretch">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <!-- 圆形头像：20 直径，主色底 + 白色人形 -->
+                                <!-- 圆形头像：18 直径（原 20），主色底 + 白色人形 -->
                                 <Border x:Name="Avatar"
-                                        Width="20" Height="20"
-                                        CornerRadius="10"
+                                        Width="18" Height="18"
+                                        CornerRadius="9"
                                         Background="{DynamicResource Brush.Accent.Fill}"
                                         VerticalAlignment="Center">
                                     <TextBlock Text="&#xE77B;"
                                                FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
-                                               FontSize="11"
+                                               FontSize="10"
                                                Foreground="{DynamicResource Brush.Text.OnAccent}"
                                                HorizontalAlignment="Center"
                                                VerticalAlignment="Center"/>
                                 </Border>
 
-                                <ContentPresenter Margin="10,0,0,0"
+                                <ContentPresenter Margin="8,0,0,0"
                                                   VerticalAlignment="Center"
                                                   HorizontalAlignment="Left"/>
                             </StackPanel>
@@ -2161,21 +2170,26 @@
                     </StackPanel>
 
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,12">
-                        <Separator Background="{DynamicResource Brush.Nav.Border}" BorderThickness="0" Margin="16,4,16,8"/>
-
                         <!--
                             账户按钮（2026-11-06 用户定案，P 权限）：Win11 头像 + 当前用户名。
-                            位置就在「设置」上方 —— 用户圈定的红框位置。
+                            **位置在「设置」上方、分隔线下方**（用户 2026-11-06 第二次定案）。
+
+                            ⚠️ **分隔线要留在「设置」正上方**，也就是放在账户按钮之后 ——
+                            早先它排在账户按钮前面，于是那条线跑到了「日志卡底部」和
+                            「账户按钮」之间，看起来像是给账户按钮划的，而不是把「设置」隔开
+                            （用户截图圈出的正是那条线）。
 
                             ⚠️ 用 Button 而不是 RadioButton：它开的是弹窗，不是切页面，
                             套 NavRadioButton 会带上「选中态」语义，点完还会有个高亮留在那儿。
                             几何参数（Margin 8,2 / Padding 14,0 / MinHeight 40）刻意与
-                            NavRadioButton 一致，否则它和上方的「设置」左缘对不齐。
+                            NavRadioButton 一致，否则它和下方的「设置」左缘对不齐。
                         -->
                         <Button x:Name="AccountButton"
                                 Style="{StaticResource AccountButton}"
                                 Click="AccountButton_Click"
                                 ToolTip="点击登录 / 切换账户"/>
+
+                        <Separator Background="{DynamicResource Brush.Nav.Border}" BorderThickness="0" Margin="16,4,16,8"/>
 
                         <RadioButton x:Name="SettingsNav"
                                      Style="{StaticResource NavRadioButton}" GroupName="Nav"

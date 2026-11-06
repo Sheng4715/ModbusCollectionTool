@@ -39,8 +39,26 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>用户是否点了「注销」。</summary>
         public bool LogoutRequested { get; private set; }
 
+        /// <summary>
+        /// 对话框宽度（DIP，2026-11-06 用户定为「输入框物理宽 260px」）。
+        /// <para>
+        /// 输入框宽度是**算出来的**：<c>窗口 − 边框 − 左右外边距(16×2) − 标签列(68)</c>。
+        /// 目标 260 物理px @150% 缩放 = <b>173.33 DIP</b>，故客户区需要 <c>173.33+68+32 = 273.33</c>。
+        /// </para>
+        /// <para>
+        /// ⚠️ **必须再补上窗口边框**：<c>Window.Width</c> 是**含边框**的总宽，
+        /// 而里面能用的只有客户区。实测 150% 缩放下每边边框 7.33 DIP、共 14.66 ——
+        /// 只写 273.33 时输入框量出来是 158.67 DIP（238px），比目标少 22px。
+        /// 故 <c>273.33 + 14.66 ≈ 288</c>。
+        /// </para>
+        /// <para>
+        /// ⚠️ 改这个数要连同标签列宽、边框补偿一起想；写死输入框宽度就会破坏对齐。
+        /// </para>
+        /// </summary>
+        private const double DialogWidth = 288;
+
         private LoginDialog(UserRole current)
-            : base("账户登录", 360)
+            : base("账户登录", DialogWidth)
         {
             ResultRole = current;
 
@@ -127,6 +145,10 @@ namespace DSH_Modbus采集工具.Ui
             // 左边「注销」、右边「登录」—— 用户给的顺序就是这样，且注销是次要动作
             Button logout = MakeButton("注销", primary: false);
             logout.HorizontalAlignment = HorizontalAlignment.Stretch;
+            // ⚠️ 清掉 MinWidth：Dialog.Button 默认 84，两个 84 + 8 间隔 = 176 DIP，
+            // 而窄窗口下这一列只有 173.33 —— 撑出去 2.7 DIP（实测物理 2px，右缘对不齐）。
+            // 按钮宽度这里**只由列宽决定**，不再有自己的下限。
+            logout.MinWidth = 0;
             logout.IsCancel = true;
             logout.Click += (_, _) =>
             {
@@ -137,6 +159,7 @@ namespace DSH_Modbus采集工具.Ui
 
             Button login = MakeButton("登录", primary: true);
             login.HorizontalAlignment = HorizontalAlignment.Stretch;
+            login.MinWidth = 0;
             login.IsDefault = true;
             login.Click += Login_Click;
 
