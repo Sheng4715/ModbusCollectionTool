@@ -48,6 +48,12 @@ namespace DSH_Modbus采集工具.Ui
         private readonly ComboBox _nameSizeBox;
         private readonly ComboBox _valueSizeBox;
 
+        /// <summary>
+        /// 小数显示位数（2026-11-06）。**只有浮点变量才显示这一行** ——
+        /// 整数 / BOOL / STRING 的位数栏没有意义，摆出来只会让人以为能改显示精度。
+        /// </summary>
+        private readonly ComboBox _decimalsBox;
+
         private readonly TextBox _xBox;
         private readonly TextBox _yBox;
 
@@ -56,7 +62,7 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>ShowOwned 要的初始焦点控件（基类没有这个字段，各子类自己持有）。</summary>
         private readonly Control _firstFocusable;
 
-        private AcquireLiveCardOptionDialog(AcquisitionItem item, Action resetPosition)
+        private AcquireLiveCardOptionDialog(AcquisitionItem item, bool isFloat, Action resetPosition)
             : base("实时数据选项", 360)
         {
             _resetPosition = resetPosition;
@@ -68,9 +74,12 @@ namespace DSH_Modbus采集工具.Ui
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(LabelColumnWidth) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            // 四行表单固定行高（AGENTS.md §9.3 第 8 条：行距对齐 = 行高固定，
-            // 不是每行留一样的下边距）；按钮行留 Auto
-            for (int i = 0; i < 4; i++)
+            // 表单固定行高（AGENTS.md §9.3 第 8 条：行距对齐 = 行高固定，
+            // 不是每行留一样的下边距）；按钮行留 Auto。
+            // 行数随「是不是浮点」变：浮点多一行「小数显示位数」。
+            int formRows = isFloat ? 5 : 4;
+
+            for (int i = 0; i < formRows; i++)
             {
                 root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(RowHeight) });
             }
@@ -86,13 +95,25 @@ namespace DSH_Modbus采集工具.Ui
             AddLabel(root, "数值字号", 1, bottomMargin: 0);
             Place(root, _valueSizeBox, 1, new Thickness(0), stretch: false);
 
+            int row = 2;
+
+            // 浮点才有这一行：整数没有小数位、BOOL 是 TRUE/FALSE、STRING 是文本
+            _decimalsBox = isFloat ? BuildDecimalsCombo(item.LiveFloatDecimals) : null!;
+
+            if (isFloat)
+            {
+                AddLabel(root, "小数显示位数", row, bottomMargin: 0);
+                Place(root, _decimalsBox, row, new Thickness(0), stretch: false);
+                row++;
+            }
+
             _xBox = BuildCoordinateBox(item.LiveX);
-            AddLabel(root, "X 坐标", 2, bottomMargin: 0);
-            Place(root, _xBox, 2, new Thickness(0), stretch: false);
+            AddLabel(root, "X 坐标", row, bottomMargin: 0);
+            Place(root, _xBox, row++, new Thickness(0), stretch: false);
 
             _yBox = BuildCoordinateBox(item.LiveY);
-            AddLabel(root, "Y 坐标", 3, bottomMargin: 0);
-            Place(root, _yBox, 3, new Thickness(0), stretch: false);
+            AddLabel(root, "Y 坐标", row, bottomMargin: 0);
+            Place(root, _yBox, row++, new Thickness(0), stretch: false);
 
             // 按钮行：左边「重置位置」，右边 [取消][确定]。
             // 「重置位置」放左边而不是单独占一行 —— 它是个**动作**，不是表单字段，
@@ -128,7 +149,9 @@ namespace DSH_Modbus采集工具.Ui
             Grid.SetColumn(okCancel, 2);
             buttonRow.Children.Add(okCancel);
 
-            Grid.SetRow(buttonRow, 4);
+            // ⚠️ 按钮行号跟着表单行数走（浮点 6 行、其它 5 行）。
+            // 写死 4 的话浮点模式下按钮会**叠在 Y 坐标行上**。
+            Grid.SetRow(buttonRow, row++);
             Grid.SetColumn(buttonRow, 0);
             Grid.SetColumnSpan(buttonRow, 2);
             root.Children.Add(buttonRow);
@@ -228,6 +251,37 @@ namespace DSH_Modbus采集工具.Ui
             return combo;
         }
 
+        /// <summary>
+        /// 小数显示位数的下拉框（0 ~ <see cref="AcquisitionTaskRules.MaxLiveFloatDecimals"/>）。
+        /// <para>
+        /// ⚠️ 缺省值 / 越界值都走 <see cref="AcquisitionLiveText.ClampLiveFloatDecimals"/>：
+        /// 旧 json 没有这个字段时读出来就是默认 1 位，不能让下拉框「一个都没选中」
+        /// （FormComboBox 的闭合态显示 SelectedItem，没选中就是一片空白，看着像没配）。
+        /// </para>
+        /// </summary>
+        private ComboBox BuildDecimalsCombo(int current)
+        {
+            ComboBox combo = MakeCombo(FieldWidth);
+
+            int clamped = AcquisitionLiveText.ClampLiveFloatDecimals(current);
+            int[] options = AcquisitionTaskRules.LiveFloatDecimalOptions;
+
+            int selected = 0;
+            for (int i = 0; i < options.Length; i++)
+            {
+                combo.Items.Add(new ComboItem<int>(
+                    options[i].ToString(CultureInfo.InvariantCulture), options[i]));
+
+                if (options[i] == clamped)
+                {
+                    selected = i;
+                }
+            }
+
+            combo.SelectedIndex = selected;
+            return combo;
+        }
+
         /// <summary>「重置位置」：把卡片挪回自动摆放位；字号不动。</summary>
         private void ResetPosition() => _resetPosition();
 
@@ -235,6 +289,8 @@ namespace DSH_Modbus采集工具.Ui
         {
             _nameSize = SelectedSize(_nameSizeBox, AcquisitionTaskRules.DefaultLiveNameFontSize);
             _valueSize = SelectedSize(_valueSizeBox, AcquisitionTaskRules.DefaultLiveValueFontSize);
+            _floatDecimals = SelectedDecimals(
+                _decimalsBox, AcquisitionTaskRules.DefaultLiveFloatDecimals);
 
             // 输入阶段已经把非法字符挡住了，这里只需把空串 / 纯「-」当 0。
             // 规则本体在 LiveCoordinateText.Parse（纯函数、可离线断言）。
@@ -251,6 +307,9 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>用户点「确定」时选定的数值字号。</summary>
         public double _valueSize;
 
+        /// <summary>用户点「确定」时选定的小数显示位数（仅浮点有意义）。</summary>
+        public int _floatDecimals;
+
         /// <summary>用户点「确定」时选定的 X 坐标（整数）。</summary>
         public double _x;
 
@@ -260,12 +319,24 @@ namespace DSH_Modbus采集工具.Ui
         private static double SelectedSize(ComboBox combo, double fallback) =>
             combo.SelectedItem is ComboItem<double> item ? item.Value : fallback;
 
-        /// <summary>打开对话框。点了确定才改字号与坐标；取消则原样不动。</summary>
+        /// <summary>非浮点（那一行根本没建）时回退到传入的当前值。</summary>
+        private static int SelectedDecimals(ComboBox? combo, int fallback) =>
+            combo?.SelectedItem is ComboItem<int> item ? item.Value : fallback;
+
+        /// <summary>打开对话框。点了确定才改字号 / 位数 / 坐标；取消则原样不动。</summary>
+        /// <param name="isFloat">
+        /// 这张卡片的变量是不是**浮点**（<see cref="DataType.Real"/>）。
+        /// <para>
+        /// 为 false 时**不建**「小数显示位数」那一行（整数没有小数位、BOOL 是 TRUE/FALSE、
+        /// STRING 是文本）—— 用户定案的条件就是这个「如果是浮点数数据」。
+        /// </para>
+        /// </param>
         public static bool Ask(
-            Window owner, AcquisitionItem item, Action resetPosition,
-            out double nameSize, out double valueSize, out double x, out double y)
+            Window owner, AcquisitionItem item, bool isFloat, Action resetPosition,
+            out double nameSize, out double valueSize, out double x, out double y,
+            out int floatDecimals)
         {
-            var dlg = new AcquireLiveCardOptionDialog(item, resetPosition);
+            var dlg = new AcquireLiveCardOptionDialog(item, isFloat, resetPosition);
             dlg.AttachOwner(owner);
 
             bool ok = dlg.ShowOwned(dlg._firstFocusable);
@@ -276,6 +347,7 @@ namespace DSH_Modbus采集工具.Ui
             // 取消时返回原坐标（「从未放置过」的 null → 0，调用方自行判断要不要写）
             x = ok ? dlg._x : item.LiveX.GetValueOrDefault();
             y = ok ? dlg._y : item.LiveY.GetValueOrDefault();
+            floatDecimals = ok ? dlg._floatDecimals : item.LiveFloatDecimals;
 
             return ok;
         }

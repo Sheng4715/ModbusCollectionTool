@@ -187,12 +187,10 @@ namespace DSH_Modbus采集工具
         {
             if (_scannerSet.Items.Count >= ScannerRules.MaxScanners)
             {
-                MessageBox.Show(
+                ThemeMessageDialog.Info(
                     this,
-                    $"最多只能添加 {ScannerRules.MaxScanners} 台扫码器。",
                     "无法新增",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    $"最多只能添加 {ScannerRules.MaxScanners} 台扫码器。");
                 return;
             }
 

@@ -91,7 +91,7 @@ namespace DSH_Modbus采集工具
             GlobalVarItem? item = _globalVarSet.Add(name, out string error);
             if (item == null)
             {
-                MessageBox.Show(this, error, "新增变量失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ThemeMessageDialog.Info(this, "新增变量失败", error);
                 return;
             }
 
@@ -125,9 +125,12 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            if (MessageBox.Show(this, $"确定删除全部 {_globalVarSet.Items.Count} 个变量？",
-                    "删除全部变量", MessageBoxButton.OKCancel, MessageBoxImage.Question)
-                != MessageBoxResult.OK)
+            if (!ThemeMessageDialog.Confirm(
+                    this,
+                    "删除全部变量",
+                    $"确定删除全部 {_globalVarSet.Items.Count} 个变量？",
+                    danger: true,
+                    confirmText: "删除"))
             {
                 return;
             }
@@ -496,12 +499,7 @@ namespace DSH_Modbus采集工具
             // 标题点出性质，正文后接具体规则。输入为空时不加引号。
             tb.Text = item.Name;
             string input = wanted.Length == 0 ? string.Empty : $"“{wanted}”";
-            MessageBox.Show(
-                this,
-                $"{input}{error}",
-                "变量名称不合法",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+            ThemeMessageDialog.Info(this, "变量名称不合法", $"{input}{error}");
         }
 
         /// <summary>变量名框失焦：交给唯一的提交点。</summary>
@@ -562,12 +560,7 @@ namespace DSH_Modbus采集工具
                 if (conflict != null)
                 {
                     // 提示格式由用户定稿：「{地址}」已被使用
-                    MessageBox.Show(
-                        this,
-                        $"\"{item.Address}\"已被使用",
-                        "地址重复",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
+                    ThemeMessageDialog.Info(this, "地址重复", $"\"{item.Address}\"已被使用");
 
                     // 回退到改之前的值（拿不出旧值时清空），避免界面上留着一条非法配置。
                     // ⚠️ 回退后要**重新解析一次**：ResolvedAddress / Area 还停在刚填的冲突地址上，
@@ -602,7 +595,7 @@ namespace DSH_Modbus采集工具
             GlobalVariableRules.DescribeAddressError(
                 kind, input, item.ResolveError, out string title, out string body);
 
-            MessageBox.Show(this, body, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemeMessageDialog.Info(this, title, body);
         }
 
         private void GlobalVarComment_LostFocus(object sender, RoutedEventArgs e)

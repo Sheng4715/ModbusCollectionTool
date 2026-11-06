@@ -715,8 +715,15 @@ namespace DSH_Modbus采集工具
 
             e.Handled = true;
 
+            // 「小数显示位数」只在变量是浮点时才出现（2026-11-06 用户定案的条件）。
+            // 变量查不到 / 没填时按「不是浮点」处理 —— 那种卡片本来就只显示占位符
+            GlobalVariable? liveVar = card.Item.VariableName.Length == 0
+                ? null
+                : _globalVarSet.FindByName(card.Item.VariableName);
+            bool isFloat = liveVar?.Type == DataType.Real;
+
             AcquireLiveCardOptionDialog.Ask(
-                this, card.Item,
+                this, card.Item, isFloat,
                 () =>
                 {
                     // 「重置位置」：把卡片挪回自动摆放位。**立即生效并落盘**，
@@ -727,10 +734,11 @@ namespace DSH_Modbus采集工具
                     _acqTaskSet.Save();
                 },
                 out double nameSize, out double valueSize,
-                out double x, out double y);
+                out double x, out double y, out int floatDecimals);
 
             card.Item.LiveNameFontSize = nameSize;
             card.Item.LiveValueFontSize = valueSize;
+            card.Item.LiveFloatDecimals = floatDecimals;
 
             // X / Y：对话框里填的坐标直接落下（整数）。只在「换了值」时写，
             // 避免把拖动留下的非整数值白白取整一次。
@@ -770,7 +778,7 @@ namespace DSH_Modbus采集工具
                 ? null
                 : _globalVarSet.FindByName(card.Item.VariableName);
 
-            card.ValueText.Text = AcquisitionLiveText.Format(variable);
+            card.ValueText.Text = AcquisitionLiveText.Format(variable, card.Item.LiveFloatDecimals);
         }
 
         // ---------- 背景图 ----------

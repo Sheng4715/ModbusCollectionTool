@@ -36,6 +36,20 @@
   </Style>
 
   <!--
+    提示 / 确认弹框的正文（ThemeMessageDialog）。
+
+    与 Dialog.Label 的区别：那个是**表单行标签**（12 号、次要色、单行、垂直居中），
+    这个是**整段句子**（13 号、主文字色、可折行）。用 Label 当正文会显得又小又灰，
+    与主窗口里其它说明文字不是一套。
+  -->
+  <Style x:Key="Dialog.Body" TargetType="TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="LineHeight" Value="20" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+
+  <!--
     滚动条：**必须显式给样式**。
     下拉弹层里的 ScrollViewer 用的是 WPF 默认滚动条 —— 白色轨道 + 系统箭头，
     在深色主题下是弹层里唯一一块亮白，非常扎眼（实测截图确认过）。
@@ -69,6 +83,18 @@
               </Track.Thumb>
             </Track>
           </Grid>
+          <!--
+            ⚠️ 横向必须把 IsDirectionReversed 翻回 False。
+            模板里那个 True 是给**纵向**的（Track 的 y 向下、Value 增大是往下）；
+            横向不翻的话 Value=0 时 Thumb 会贴在右端，看起来像「滚到最左、滑块却在右边」。
+            现在对话框里只有纵向滚动条，这条暂时不触发，但别再让它坏一次
+            （主窗口的细滚动条 2026-11-06 正是这么坏的，见 MainWindow.xaml 同段注释）。
+          -->
+          <ControlTemplate.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+              <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False" />
+            </Trigger>
+          </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
@@ -305,6 +331,18 @@
     <Setter Property="Background" Value="{DynamicResource Brush.Control.Background}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Brush.Input.Border}" />
+  </Style>
+
+  <!--
+    破坏性操作的确认按钮（删除 / 清空）：实心红 + 白字。
+    红 = 「这个动作要毁掉东西」，与主窗口行尾删除按钮同一个语义出口
+    （AGENTS.md §9.1：红＝配置要改 / 危险）。**不要**用它做普通提示的「确定」——
+    那条路径用 Primary 主色。
+  -->
+  <Style x:Key="Dialog.Button.Danger" TargetType="Button" BasedOn="{StaticResource Dialog.Button}">
+    <Setter Property="Background" Value="{DynamicResource Brush.Danger.Fill}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.OnAccent}" />
+    <Setter Property="BorderBrush" Value="Transparent" />
   </Style>
 
   <!--

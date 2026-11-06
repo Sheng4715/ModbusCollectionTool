@@ -162,7 +162,7 @@ namespace DSH_Modbus采集工具
 
         /// <summary>
         /// 删除全部监控项。此操作会**立即清空并落盘**，误点代价是整份配置，
-        /// 故先弹确认框（本项目汇报类交互统一用 <see cref="MessageBox"/>）。
+        /// 故先弹确认框（统一走 <see cref="ThemeMessageDialog"/>，与其余对话框同一套外观）。
         /// </summary>
         private void ClearMonitorItems_Click(object sender, RoutedEventArgs e)
         {
@@ -172,15 +172,12 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            MessageBoxResult answer = MessageBox.Show(
-                this,
-                $"确定要删除全部 {n} 个监控项吗？此操作无法撤销。",
-                "删除全部监控项",
-                MessageBoxButton.OKCancel,
-                MessageBoxImage.Warning,
-                MessageBoxResult.Cancel);
-
-            if (answer != MessageBoxResult.OK)
+            if (!ThemeMessageDialog.Confirm(
+                    this,
+                    "删除全部监控项",
+                    $"确定要删除全部 {n} 个监控项吗？此操作无法撤销。",
+                    danger: true,
+                    confirmText: "删除"))
             {
                 return;
             }
@@ -348,12 +345,10 @@ namespace DSH_Modbus采集工具
             if (SystemVariable.Find(typed.Trim()) != null)
             {
                 tb.Text = previous;
-                MessageBox.Show(
+                ThemeMessageDialog.Info(
                     this,
-                    $"“{typed.Trim()}”是系统变量，不能在自由监控中使用。",
                     "系统变量",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    $"“{typed.Trim()}”是系统变量，不能在自由监控中使用。");
                 return;
             }
 
@@ -389,12 +384,10 @@ namespace DSH_Modbus采集工具
                 if (item.HasError)
                 {
                     // ③ 变量本身合法，只是**不能用于采集**
-                    MessageBox.Show(
+                    ThemeMessageDialog.Info(
                         this,
-                        $"变量「{canonical}」不可用于监控：\n\n{varError}",
                         "变量无法采集",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
+                        $"变量「{canonical}」不可用于监控：\n\n{varError}");
 
                     tb.Text = previous;
                     item.SetName(previous, out _);
@@ -444,12 +437,7 @@ namespace DSH_Modbus采集工具
             string text = (input ?? string.Empty).Trim();
             string prefix = text.Length == 0 ? string.Empty : $"“{text}”";
 
-            MessageBox.Show(
-                this,
-                $"{prefix}不是有效软元件或变量",
-                "输入无效",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+            ThemeMessageDialog.Info(this, "输入无效", $"{prefix}不是有效软元件或变量");
         }
 
         /// <summary>

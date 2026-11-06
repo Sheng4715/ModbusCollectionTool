@@ -1778,7 +1778,7 @@
             </Border>
         </DataTemplate>
 
-        <!-- 细滚动条 -->
+        <!-- 细滚动条（纵向与横向共用一个模板） -->
         <Style TargetType="ScrollBar">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Width" Value="10"/>
@@ -1805,6 +1805,26 @@
                                 </Track.Thumb>
                             </Track>
                         </Grid>
+                        <!--
+                            ⚠️ **横向必须把 IsDirectionReversed 翻回 False**（2026-11-06 修）。
+
+                            模板默认写 True 是为**纵向**服务的：纵向 Track 的坐标 y 向下，
+                            而 Value 增大 = 往下滚，所以要把「值增加的方向」反过来，
+                            Thumb 才会随 Value 增大往下走。
+
+                            横向不反过来：Track 的 x 向右即值增加方向，Thumb 跟着向右就对了。
+                            只改宽高、不改这一项的话，**Value=0（滚到最左）时 Thumb 贴在右端**，
+                            看起来就是「表格在最左边、滑块却在右边」—— 历史表格的横向滚动条
+                            正是这么坏的（列多到放不下时才露出来，所以一直没被发现）。
+
+                            TargetName 只能在 ControlTemplate.Triggers 里设，不能写进 Style.Triggers
+                            （那里不认 TargetName）。WPF 自带模板也是这么做的。
+                        -->
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>

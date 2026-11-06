@@ -119,9 +119,12 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            if (MessageBox.Show(this, $"确定删除全部 {_acqTaskSet.Items.Count} 个任务组？",
-                    "删除全部任务组", MessageBoxButton.OKCancel, MessageBoxImage.Question)
-                != MessageBoxResult.OK)
+            if (!ThemeMessageDialog.Confirm(
+                    this,
+                    "删除全部任务组",
+                    $"确定删除全部 {_acqTaskSet.Items.Count} 个任务组？",
+                    danger: true,
+                    confirmText: "删除"))
             {
                 return;
             }
@@ -147,9 +150,12 @@ namespace DSH_Modbus采集工具
             }
 
             if (task.Items.Count > 0
-                && MessageBox.Show(this, $"确定删除任务组「{task.Name}」及其 {task.Items.Count} 个数据项？",
-                    "删除任务组", MessageBoxButton.OKCancel, MessageBoxImage.Question)
-                != MessageBoxResult.OK)
+                && !ThemeMessageDialog.Confirm(
+                    this,
+                    "删除任务组",
+                    $"确定删除任务组「{task.Name}」及其 {task.Items.Count} 个数据项？",
+                    danger: true,
+                    confirmText: "删除"))
             {
                 return;
             }
@@ -180,9 +186,12 @@ namespace DSH_Modbus采集工具
             }
 
             // 破坏性操作一律先问一句（同「删除全部任务组」「删除全部变量」）
-            if (MessageBox.Show(this, $"确定清空任务组「{task.Name}」的 {task.Items.Count} 个数据项？",
-                    "清空数据项", MessageBoxButton.OKCancel, MessageBoxImage.Question)
-                != MessageBoxResult.OK)
+            if (!ThemeMessageDialog.Confirm(
+                    this,
+                    "清空数据项",
+                    $"确定清空任务组「{task.Name}」的 {task.Items.Count} 个数据项？",
+                    danger: true,
+                    confirmText: "清空"))
             {
                 return;
             }
@@ -268,11 +277,12 @@ namespace DSH_Modbus采集工具
             if (!string.Equals(oldName, task.Name, StringComparison.Ordinal)
                 && task.Model.RecordEnabled)
             {
-                MessageBox.Show(this,
+                ThemeMessageDialog.Info(
+                    this,
+                    "改名提示",
                     $"任务组已改名为「{task.Name}」。\n\n"
                     + $"新数据将写入新文件夹：{task.Name}\\n"
-                    + $"原文件夹「{oldName}」保持不动，历史数据仍在里面。",
-                    "改名提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                    + $"原文件夹「{oldName}」保持不动，历史数据仍在里面。");
             }
 
             _acqTaskSet.Save();

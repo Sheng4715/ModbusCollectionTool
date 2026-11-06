@@ -106,6 +106,20 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>实时卡片「数值」字号（DIP）。默认 24 —— 数值要醒目，故比名称大得多。</summary>
         public double LiveValueFontSize { get; set; } = AcquisitionTaskRules.DefaultLiveValueFontSize;
 
+        /// <summary>
+        /// 实时卡片上**浮点数**的小数显示位数（2026-11-06 用户定案，默认 1 位）。
+        /// <para>
+        /// 只对 <see cref="DataType.Real"/> 生效；整数 / BOOL / STRING 一个字符都不受影响
+        /// （见 <see cref="AcquisitionLiveText.Format"/>）。
+        /// 用户原话：「如果是浮点数数据，则选项显示：小数显示位数（默认1位）」。
+        /// </para>
+        /// <para>
+        /// ⚠️ **存在数据项上而不是任务组上**：同一个任务组里各变量的量纲不同
+        /// （压力要 2 位、温度 1 位），按组统一会逼用户二选一。
+        /// </para>
+        /// </summary>
+        public int LiveFloatDecimals { get; set; } = AcquisitionTaskRules.DefaultLiveFloatDecimals;
+
         /// <summary>是否已经摆放过（两个坐标都有值）。</summary>
         [JsonIgnore]
         public bool HasLivePosition => LiveX.HasValue && LiveY.HasValue;
@@ -270,8 +284,21 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>浮点在实时卡片上，整数部分最多几位。</summary>
         public const int LiveFloatIntDigits = 5;
 
-        /// <summary>浮点在实时卡片上，小数部分最多几位。</summary>
-        public const int LiveFloatFracDigits = 2;
+        /// <summary>
+        /// 浮点小数显示位数的**默认值**（2026-11-06 用户定案：默认 1 位）。
+        /// <para>
+        /// ⚠️ 早先这里是写死的 2 位（常量 <c>LiveFloatFracDigits</c>）。现在改成
+        /// **每个数据项自己配**（<see cref="AcquisitionItem.LiveFloatDecimals"/>），
+        /// 本常量只作缺省值 —— 旧 json 没有这个字段，读出来就是它。
+        /// </para>
+        /// </summary>
+        public const int DefaultLiveFloatDecimals = 1;
+
+        /// <summary>可选的小数位数档位（选项框下拉框用）。</summary>
+        public static readonly int[] LiveFloatDecimalOptions = { 0, 1, 2, 3, 4 };
+
+        /// <summary>小数位数上限（= <see cref="LiveFloatDecimalOptions"/> 的表尾）。</summary>
+        public const int MaxLiveFloatDecimals = 4;
 
         /// <summary>截断用的省略号（单字符，不占两个字的宽度）。</summary>
         public const string Ellipsis = "…";
@@ -751,7 +778,11 @@ namespace DSH_Modbus采集工具.Modeling
         /// 把一个全局变量的当前值渲染成卡片文本。
         /// </summary>
         /// <param name="variable">变量；<c>null</c> = 名称没填或查不到 → 返回 <see cref="Placeholder"/>。</param>
-        public static string Format(GlobalVariable? variable)
+        /// <param name="floatDecimals">
+        /// 浮点小数位数（2026-11-06 新增）。**只对 <see cref="DataType.Real"/> 生效**；
+        /// 传 <c>null</c> 或越界值按 <see cref="AcquisitionTaskRules.DefaultLiveFloatDecimals"/> 处理。
+        /// </param>
+        public static string Format(GlobalVariable? variable, int? floatDecimals = null)
         {
             if (variable == null)
             {
@@ -778,7 +809,7 @@ namespace DSH_Modbus采集工具.Modeling
             }
 
             return variable.Type == DataType.Real
-                ? FormatFloat(number)
+                ? FormatFloat(number, floatDecimals)
                 : FormatInteger(number);
         }
 
@@ -806,9 +837,14 @@ namespace DSH_Modbus采集工具.Modeling
         }
 
         /// <summary>
-        /// 浮点：整数部分最多 5 位、小数部分最多 2 位；整数部分超出则以「…」结尾。
+        /// 浮点：整数部分最多 5 位；小数位数由 <paramref name="decimals"/> 决定
+        /// （默认 <see cref="AcquisitionTaskRules.DefaultLiveFloatDecimals"/>）。整数部分超出则以「…」结尾。
         /// </summary>
-        public static string FormatFloat(double value)
+        /// <param name="decimals">
+        /// 小数位数。`null` / 负数 → 默认 1 位；超过 <see cref="AcquisitionTaskRules.MaxLiveFloatDecimals"/>
+        /// 也不报错，按上限夹取（配置里一个荒唐的值不该让卡片显示不出来）。
+        /// </param>
+        public static string FormatFloat(double value, int? decimals = null)
         {
             if (double.IsNaN(value))
             {
@@ -825,8 +861,18 @@ namespace DSH_Modbus采集工具.Modeling
                 return "−∞";
             }
 
-            double rounded = Math.Round(value, AcquisitionTaskRules.LiveFloatFracDigits,
-                MidpointRounding.AwayFromZero);
+            int frac = ClampLiveFloatDecimals(decimals);
+
+            double rounded = Math.Round(value, frac, MidpointRounding.AwayFromZero);
+
+            // ⚠️ **负零要归成零**（2026-11-06 断言测出来的）：
+            // −0.04 按 1 位四舍五入得到 −0.0，ToString("F1") 会如实打印 "-0.0" ——
+            // 卡片上显示「-0.0」看起来像程序算错了，实际是符号位还留着。
+            // 判据用 `== 0`（−0.0 == 0 为真），只在「结果确实是零」时才抹掉负号。
+            if (rounded == 0)
+            {
+                rounded = 0;
+            }
 
             // 整数部分位数（不含负号）
             double abs = Math.Abs(Math.Truncate(rounded));
@@ -837,12 +883,27 @@ namespace DSH_Modbus采集工具.Modeling
                 // 整数部分已经放不下 —— 科学计数法比「123456…」更有信息量
                 return Truncate(
                     rounded.ToString("E2", CultureInfo.InvariantCulture),
-                    AcquisitionTaskRules.LiveFloatIntDigits + 1 + AcquisitionTaskRules.LiveFloatFracDigits + 1);
+                    AcquisitionTaskRules.LiveFloatIntDigits + 1 + frac + 1);
             }
 
-            // F2 会把 123.00 渲染成 "123.00"（需求就是要固定两位小数）
-            return rounded.ToString("F" + AcquisitionTaskRules.LiveFloatFracDigits,
-                CultureInfo.InvariantCulture);
+            // F{n} 会把 123 渲染成 "123.0"（需求就是要**固定**位数，不是「最多」几位）
+            return rounded.ToString("F" + frac, CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// 把小数位数夹进合法范围。`null` / 负数 → 默认值；超过上限 → 上限。
+        /// <para>纯函数，配 <see cref="FormatFloat"/> 一起断言。</para>
+        /// </summary>
+        public static int ClampLiveFloatDecimals(int? decimals)
+        {
+            if (decimals is not { } value || value < 0)
+            {
+                return AcquisitionTaskRules.DefaultLiveFloatDecimals;
+            }
+
+            return value > AcquisitionTaskRules.MaxLiveFloatDecimals
+                ? AcquisitionTaskRules.MaxLiveFloatDecimals
+                : value;
         }
 
         /// <summary>按**字符数**截断（不是字节数），超出补省略号。</summary>

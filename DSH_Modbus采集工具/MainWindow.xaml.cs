@@ -963,12 +963,10 @@ namespace DSH_Modbus采集工具
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
+                ThemeMessageDialog.Info(
                     this,
-                    $"保存路径无效：{ex.Message}\n\n已恢复为上一个可用路径。",
                     "日志保存路径",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    $"保存路径无效：{ex.Message}\n\n已恢复为上一个可用路径。");
                 ApplyLogDirectory(ThemeManager.LogDirectory);
                 return;
             }
@@ -1008,8 +1006,7 @@ namespace DSH_Modbus采集工具
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"无法打开文件夹：{ex.Message}", "日志保存",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                ThemeMessageDialog.Info(this, "日志保存", $"无法打开文件夹：{ex.Message}");
             }
         }
 
@@ -1243,7 +1240,7 @@ namespace DSH_Modbus采集工具
             if (_session.IsConnected)
             {
                 // 日志规则 2：已断开（红）—— 用户主动断开也走红色，与异常断开同色
-                AppendDeviceLog("已断开：用户主动断开", DeviceLogLevel.Disconnected);
+                AppendDeviceLog("PLC已断开：用户主动断开", DeviceLogLevel.Disconnected);
                 Disconnect();
                 return;
             }
@@ -1325,7 +1322,7 @@ namespace DSH_Modbus采集工具
                 ConnectButton.Content = "断开";
                 ConnectButton.IsEnabled = true;
                 SetStatus("已连接", "#0B7A0B");
-                AppendDeviceLog($"已连接：{target.Endpoint}", DeviceLogLevel.Connected);
+                AppendDeviceLog($"PLC已连接：{target.Endpoint}", DeviceLogLevel.Connected);
                 StartPolling(client, target.Driver);
                 return true;
             }
@@ -1337,7 +1334,7 @@ namespace DSH_Modbus采集工具
                     SetStatus("连接超时", "#C42B1C");
                     if (!isReconnect)
                     {
-                        AppendDeviceLog($"连接失败：{target.Endpoint} 连接超时", DeviceLogLevel.Disconnected);
+                        AppendDeviceLog($"PLC连接失败：{target.Endpoint} 连接超时", DeviceLogLevel.Disconnected);
                     }
                 }
                 return false;
@@ -1350,7 +1347,7 @@ namespace DSH_Modbus采集工具
                     SetStatus($"连接失败：{ClassifyDisconnectReason(ex.Message)}", "#C42B1C");
                     if (!isReconnect)
                     {
-                        AppendDeviceLog($"连接失败：{target.Endpoint} {ClassifyDisconnectReason(ex.Message)}",
+                        AppendDeviceLog($"PLC连接失败：{target.Endpoint} {ClassifyDisconnectReason(ex.Message)}",
                             DeviceLogLevel.Disconnected);
                     }
                 }
@@ -1933,7 +1930,7 @@ namespace DSH_Modbus采集工具
                         // 日志规则 5/6：连接仍在时的通讯异常（琥珀，对端回了合法异常码）
                         // 与心跳恢复（绿）。注意「完全无响应」不在这里 —— 它会走到下面的
                         // NotifyConnectionLost，按规则 2 记红色的「已断开」
-                        AppendDeviceLog(warning == null ? "通讯恢复" : $"通讯异常：{warning}",
+                        AppendDeviceLog(warning == null ? "PLC通讯恢复" : $"PLC通讯异常：{warning}",
                             warning == null ? DeviceLogLevel.Connected : DeviceLogLevel.Warning);
                     });
                 }, token);
@@ -2013,7 +2010,7 @@ namespace DSH_Modbus采集工具
             {
                 if (IsCurrentConnection(client, token))
                 {
-                    AppendDeviceLog($"通讯异常：{reason}", DeviceLogLevel.Warning);
+                    AppendDeviceLog($"PLC通讯异常：{reason}", DeviceLogLevel.Warning);
                 }
             }));
         }
@@ -2031,7 +2028,7 @@ namespace DSH_Modbus采集工具
                 {
                     // 日志规则 2：已断开（红）—— 异常导致断开，只写「已断开：原因」；
                     // 「通讯异常」在新规则里专指「连接还在」，不能挂在这句后面
-                    AppendDeviceLog($"已断开：{ClassifyDisconnectReason(reason)}",
+                    AppendDeviceLog($"PLC已断开：{ClassifyDisconnectReason(reason)}",
                         DeviceLogLevel.Disconnected);
                     // 注意这里直接用 Disconnect(status,color) 重载，而不是无参 Disconnect()：
                     // 后者会调 ForgetTarget() 清掉期望目标 —— 那是「用户主动断开」的语义，

@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 >
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **56272 B / 余量约 9.0 KB**；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **57668 B / 余量约 7.5 KB**；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 
@@ -109,10 +109,11 @@ DSH_Modbus采集工具/
 │   ├── MachineStateView.xaml(.cs)  # 状态机画布（本工程唯一 UserControl）
 │   ├── MachineStateEditDialog.cs / MachineLampEditDialog.cs  # 状态框 / 指示灯编辑窗（§5.5）
 │   ├── AcquisitionTaskDialog.cs   # 任务选项对话框
-│   ├── AcquireLiveCardOptionDialog.cs  # 实时卡片：两个字号 + X/Y 坐标 + 重置位置
+│   ├── AcquireLiveCardOptionDialog.cs  # 实时卡片：两个字号 + 小数位数(仅浮点) + X/Y + 重置
 │   ├── LiveImagePicker.cs      # 背景图选择弹框（两个入口共用）
 │   ├── ScannerErrorMark.cs     # 扫码器输入框标红用的 bool 附加属性
-│   └── NumberInputDialog.cs    # STRING 长度等单值输入弹窗
+│   ├── NumberInputDialog.cs    # STRING 长度等单值输入弹窗
+│   └── ThemeMessageDialog.cs   # 全应用唯一的提示 / 确认弹框（Info / Confirm，§9.3）
 └── Drivers/
     ├── CommDriver.cs           # ModbusArea / NumberBase / AddressArea / CommDriver
     ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
@@ -120,7 +121,7 @@ DSH_Modbus采集工具/
     └── ModbusHeartbeat.cs      # 独立心跳调度与异常分类
 ```
 
-> **不引用 WPF 的 8 个目录**（可脱离界面阅读/断言）：`Drivers/` `Expressions/` `Io/` `Logging/` `Modeling/` `Net/` `Polling/` `Scanners/` —— 它们**没有任何** `using System.Windows*`。控件写入（分页显隐、绑列、弹窗、`MessageBox`）一律留在 `MainWindow.*.cs`；新增逻辑按同一原则归位。
+> **不引用 WPF 的 8 个目录**（可脱离界面阅读/断言）：`Drivers/` `Expressions/` `Io/` `Logging/` `Modeling/` `Net/` `Polling/` `Scanners/` —— 它们**没有任何** `using System.Windows*`。控件写入（分页显隐、绑列、弹窗）一律留在 `MainWindow.*.cs`；新增逻辑按同一原则归位。
 > **引 WPF 的**：`Ui/` `Themes/` + 根目录的 `MainWindow*.cs` 八个 partial、`MonitorItem.cs` / `GlobalVarItem.cs` / `AcquisitionTaskItem.cs` / `SystemVarRow.cs` / `App.xaml.cs`。
 > ⚠️ 判断该不该碰 WPF 看**所在目录**：`MonitorItem.cs` 是 `DataPoint` 的界面包装、碰 WPF 属正常，但它在**根目录** —— 不要以为「根目录都不碰」。
 >
@@ -205,7 +206,7 @@ Window
 | `AreaChipTemplate` / `AreaItemsControlStyle` | 设备连接页「地址表元件」那排地址 chip |
 | `IconFont` | 图标字体族（`Segoe Fluent Icons, Segoe MDL2 Assets`） |
 | `EnumUpperConverter` / `EnumUpperTemplate` / `BoolToVis` | 枚举转大写 / 布尔转 `Visibility` |
-| **隐式 `ScrollBar`**（**无 `x:Key`**） | 细滚动条（10px）。⚠️ 隐式样式是唯一能命中 `ScrollViewer` 内部创建的滚动条的手段，**别改成 keyed** |
+| **隐式 `ScrollBar`**（**无 `x:Key`**） | 细滚动条（10px）。⚠️ 隐式样式是唯一能命中 `ScrollViewer` 内部创建的滚动条的手段，**别改成 keyed**。⚠️ **横向必须在 `ControlTemplate.Triggers` 里把 `PART_Track.IsDirectionReversed` 翻回 `False`**：模板那个 `True` 是给纵向的，横向不翻的话 `Value=0` 时滑块贴右端（2026-11-06 实测复现并修真，历史表格的横向条就是这么坏的） |
 
 ### 3.4 页面细节
 
@@ -301,7 +302,7 @@ Window
 | 轮询（入口在本类，实现在 `Polling/`） | `_poller.PollLoopAsync` → `PollOnceAsync`（按地址区分块 + 2000 点切窗 / `PollFreeMonitorAsync` 自由监控，按区选 FC01/03/04） |
 | `ICollectorHost` 实现 | `PollIntervalMs` / `MonitorSet` / `CaptureSnapshot()` / `IsCurrentConnection` / `RunOnUiAsync` / `NotifyConnectionLost` / `ClassifyDisconnectReason` / `ReportCommunicationWarning`（连续异常码告警，§5） |
 | 心跳编排 | `HeartbeatLoopAsync`（失败时转 `_poller.NotifyConnectionLost`） |
-| IO 点位集 / 分页 / 导入 | `RebuildIoPoints`（薄包装）→ `IoPointSet.Rebuild` / `TryCreatePoint` / `NormalizePointName` / `TryValidatePoint`；`ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（算术在 `IoPager`）；`ImportIoTableButton_Click` → `IoTableImporter.Read`（`MessageBox` 留本类） |
+| IO 点位集 / 分页 / 导入 | `RebuildIoPoints`（薄包装）→ `IoPointSet.Rebuild` / `TryCreatePoint` / `NormalizePointName` / `TryValidatePoint`；`ApplyIoPage` / `ChangeIoPage` / `UpdateIoPager`（算术在 `IoPager`）；`ImportIoTableButton_Click` → `IoTableImporter.Read`（结果弹框 `ThemeMessageDialog` 留本类） |
 | **自由监控 / 全局变量 / 系统变量** | 处理器清单见 `AGENTS-细节.md` §5.1 / §5.2 / §5.3（系统变量**没有任何编辑处理器**，只有 `AcqView_Checked` 切面板 + 构造期一次绑定） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（闸门 + 填下拉框）/ `TargetNicComboBox_SelectionChanged`；扫描与还原规则在 `Net/NicScanner.cs`，持久化见 §3.4 / `AGENTS-细节.md` §8.2 |
@@ -391,11 +392,12 @@ Window
 
 | 用途 | 键 |
 |---|---|
-| 标签 / 说明 / 红色错误 | `Dialog.Label` / `Dialog.Hint` / `Dialog.Error` |
+| 标签 / 说明 / 正文 / 红色错误 | `Dialog.Label` / `Dialog.Hint` / `Dialog.Body` / `Dialog.Error` |
 | 输入框 | `Dialog.TextBox` |
 | 下拉框 / 下拉项 | `Dialog.ComboBox` / `Dialog.ComboBoxItem` |
 | 单选框 | `Dialog.RadioButton`（16 圆圈，选中整圈填主色 + 6 白点，**文字在右**） |
-| 按钮（次色 / 主色） | `Dialog.Button.Secondary` / `Dialog.Button.Primary` |
+| 按钮（次色 / 主色 / 破坏性） | `Dialog.Button.Secondary` / `Dialog.Button.Primary` / `Dialog.Button.Danger` |
+| 提示 / 确认弹框 | **`Ui/ThemeMessageDialog.cs`**（`Info` / `Confirm`，见 §9.3 第 9 条） |
 | 窗口外壳（字体、边框、底色、深色标题栏） | `Ui/DialogWindow.cs` 基类构造里已调 `DialogChrome.Apply(this)` |
 
 **一律继承 `Ui/DialogWindow.cs`**（2026-10-29 抽出，四个对话框共减 445 行样板）。它已经包掉：居中归属（`AttachOwner`）、抢焦点 + `ShowDialog`（`ShowOwned`）、取不到样式就抛（`RequireStyle`）、控件工厂（`AddLabel` / `Place` / `MakeTextBox` / `MakeCombo` / `MakeRadio` / `MakeButton`）、`ComboItem<T>`（显示文本 + 真实取值，**不要靠字符串反解**）。**子类只写「自己有几行、每行放什么」**，不要再抄外壳代码：
@@ -422,16 +424,17 @@ public sealed class MyDialog : DialogWindow
 
 ⚠️ `MakeTextBox` **不写死宽度**：交给 `Place(..., stretch: true)` 随列宽拉伸，否则 150% DPI 下右边框会被裁掉。
 
-**八条容易踩的**：
+**九条容易踩的**：
 
 1. ⚠️ **样式取不到必须抛，不要静默用默认外观**。WPF 默认 ComboBox 模板把 ToggleButton 画成**硬编码的浅色渐变、完全忽略 `Background`** —— 深色主题下文字 `#F0F0F0` 落在 `#EBEBEB` 底上，实测对比度 **1.05:1**（等于看不见）。这种「改了颜色却没用」的 bug 极难查，所以宁可启动就崩。
 2. ⚠️ **ComboBox 必须用 `Dialog.ComboBox`，不能只改颜色**。原因同上：默认模板不吃 `Background`，只有整份重绘才修得掉。
 3. ⚠️ **`Dialog.ScrollBar` 必须是隐式样式**（`<Style TargetType="ScrollBar" .../>` 无 `x:Key`）。弹层里的滚动条由 `ScrollViewer` **内部创建**，拿不到 keyed 样式，深色下会是一条白条。**不能**把样式写进 `ControlTemplate` 里的 `ScrollViewer.Resources`：模板作用域内 `StaticResource` 查不到后定义的键，会直接崩。
 4. ⚠️ **输入框不要写死 `Width`，让它在列里拉伸**。对话框客户区比看起来窄：`Width=442` 的窗口在 150% DPI 下，列 1 只有约 **327 DIP**。写死 `Width=330` 会超出 3 DIP 被裁掉 —— 表现为**右边框整条不见了**（左/上/下三条都在，因为那 1px 落在被裁的像素上）。用 `Place(..., stretch: true)`。
 5. ⚠️ **TextBox 模板里不要再给 `PART_ContentHost` 套 `Margin="{TemplateBinding Padding}"`**。`TextBoxView` 自己就会吃一遍 `Padding`，套两次等于双倍：实测文字起点距左边框 20 DIP，而下拉框只有 10 DIP。只保留 `TextBox.Padding` 一处。
-6. ⚠️ **错误提示一律内联（`Dialog.Error` 红字），不要用 `MessageBox`**：系统消息框不跟主题（深色下弹一块白板）、且会抢焦点打断「改到对为止」的循环。**联动坑**：若校验失败后会**程序回填**输入框（如恢复上次有效值），`TextChanged` 里那个「一改字就清错误」的逻辑会把刚显示的错误**立刻擦掉** —— 表现为「校验失败了但界面一个字都不显示」。加一个 `_reverting` 标志挡住程序回填。
+6. ⚠️ **对话框内的错误提示一律内联（`Dialog.Error` 红字）**：在「改到对为止」的循环里弹窗会抢焦点打断它。**联动坑**：若校验失败后会**程序回填**输入框（如恢复上次有效值），`TextChanged` 里那个「一改字就清错误」的逻辑会把刚显示的错误**立刻擦掉** —— 表现为「校验失败了但界面一个字都不显示」。加一个 `_reverting` 标志挡住程序回填。
 7. ⚠️ **一组单选按钮必须显式给 `GroupName`**。WPF 默认按**逻辑父容器**分组，而对话框里常把某个选项和它的参数框放同一个 `StackPanel`（如「周期（s）」+ 秒数输入框），于是几个单选按钮各自成组、**可以同时选中**。真机截图里就是两个蓝圈同亮 —— 表现为「切到触发档，但表达式框仍是灰的」。实测踩过一次，见 `AcquisitionTaskDialog`。
 8. ⚠️ **「行距对齐」= 行高固定，不是每行留一样的下边距**。`Place(..., margin)` 的 10 DIP 是靠 `Auto` 行高**叠加**在内容高度上的，于是行距 = 内容高 + 10：同屏有单选行（16）、文本框行（30）、带按钮的路径行（32）时，实测行距变成 60/49/39/51/62/60 px（150% DPI）。**正确做法**是给表单行统一的 `RowDefinition.Height`（`AcquisitionTaskDialog` 用 40 = 该行最高的内容 32 + 呼吸），标签与控件都 `VerticalAlignment=Center`；此时 `Place` 的边距要传 `Thickness(0)`、`AddLabel` 要传 `bottomMargin: 0`。错误行与按钮行仍留 `Auto`。
+9. ⚠️ **提示 / 确认一律用 `Ui/ThemeMessageDialog.cs`，不要再写 `MessageBox.Show`**（2026-11-06 用户定案「所有弹出对话框风格统一」）：系统消息框不吃主题，深色下弹一块白板，字体/圆角/按钮与其余对话框完全不是一套。两个入口 —— `ThemeMessageDialog.Info(owner, 标题, 正文)`、`ThemeMessageDialog.Confirm(owner, 标题, 正文, danger:, confirmText:)` 返回 `bool`。**破坏性操作（删除 / 清空）传 `danger: true`**：确定钮是实心红（`Dialog.Button.Danger`）**且默认焦点落在「取消」**，防误按回车。正文用 `Dialog.Body`（13 号、可折行），别用 `Dialog.Label`（那 12 号灰字是表单行标签）。
 
 ## 10. 任务速查
 
@@ -440,6 +443,7 @@ public sealed class MyDialog : DialogWindow
 | **加输入框 / 下拉框 / 按钮（新增控件必读）** | 套用现成样式，别手写外观 —— 见 **§9.1 控件风格约定** |
 | **改任何颜色（必读）** | 用主题键，**不要写字面量** —— 见 **§9.2 主题与配色** |
 | **新增 / 改对话框（必读）** | 继承 `Ui/DialogWindow.cs` + 用 `Dialog.*` 样式，别复用主窗口样式 —— 见 **§9.3 对话框控件** |
+| **弹提示 / 弹确认** | `Ui/ThemeMessageDialog.cs` 的 `Info` / `Confirm`（**不要 `MessageBox.Show`**）—— 见 **§9.3 第 9 条** |
 | **加/改主题、深色适配、跟随系统** | `Themes/`（`Light.xaml` / `Dark.xaml` 同键）+ `Themes/ThemeManager.cs`；C# 侧画刷见 §9.2 |
 | **设置页（P5）** | `SettingsPanel` + `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；项目信息 `RefreshProjectInfo`（§7.3）。⚠️ 自动连接**不在设置页**了（2026-11-05）：PLC 的在 `DeviceConfigPanel` 表单末行 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` / `TryAutoConnect`，扫码器用行上「启用」（§7.2） |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |

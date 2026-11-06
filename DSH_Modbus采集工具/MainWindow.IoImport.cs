@@ -53,16 +53,16 @@ namespace DSH_Modbus采集工具
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"导入失败：{ex.Message}", "导入 IO 表",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
+                ThemeMessageDialog.Info(this, "导入 IO 表", $"导入失败：{ex.Message}");
                 return;
             }
 
             if (result.SourceRowCount == 0)
             {
-                MessageBox.Show(this,
-                    "未在表中识别到点位地址（应形如 X0 / Y37），当前注释未变更。",
-                    "导入 IO 表", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ThemeMessageDialog.Info(
+                    this,
+                    "导入 IO 表",
+                    "未在表中识别到点位地址（应形如 X0 / Y37），当前注释未变更。");
                 return;
             }
 
@@ -70,10 +70,11 @@ namespace DSH_Modbus采集工具
 
             if (ok == 0)
             {
-                MessageBox.Show(this,
-                    $"成功导入 0 项，失败 {result.FailureCount} 项。\n\n" +
-                    $"{IoTableImporter.FormatFailures(result.Failures)}\n\n当前注释未变更。",
-                    "导入 IO 表", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ThemeMessageDialog.Info(
+                    this,
+                    "导入 IO 表",
+                    $"成功导入 0 项，失败 {result.FailureCount} 项。\n\n"
+                    + $"{IoTableImporter.FormatFailures(result.Failures)}\n\n当前注释未变更。");
                 return;
             }
 
@@ -87,8 +88,7 @@ namespace DSH_Modbus采集工具
                 message += $"\n\n失败明细：\n{IoTableImporter.FormatFailures(result.Failures)}";
             }
 
-            MessageBox.Show(this, message, "导入 IO 表", MessageBoxButton.OK,
-                result.FailureCount > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+            ThemeMessageDialog.Info(this, "导入 IO 表", message);
         }
 
     }
