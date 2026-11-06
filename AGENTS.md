@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 >
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **57668 B / 余量约 7.5 KB**；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **58562 B / 余量约 6.8 KB**；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 
@@ -46,6 +46,7 @@ DSH_Modbus采集工具/
 ├── MainWindow.AcquisitionView.cs  # partial：总览「数据采集」骨架
 ├── MainWindow.AcquisitionLive.cs  # partial：实时画布（拖动 / 缩放 / 背景图）
 ├── MainWindow.Scanner.cs       # partial：扫码器（连接 + 交互已合并一页）
+├── MainWindow.Account.cs       # partial：账户与权限（登录 / 注销 / 自由监控写入置灰）
 ├── Scanners/                   # 扫码器（无 WPF）
 │   ├── ScannerDefinition.cs    # 定义 + 规则 + scanner.json
 │   ├── ScannerTcpClient.cs     # 裸 TCP：原样发 + 按结束符收帧
@@ -84,6 +85,7 @@ DSH_Modbus采集工具/
 │   ├── GlobalReadPlan.cs       # 读计划 + 回填（按可见页面采集）
 │   ├── CompletionSource.cs     # 变量名补全纯逻辑（取词 / 筛选 / 候选表）
 │   ├── SystemVariable.cs / SystemVariableValues.cs   # 16 项清单 / 取值（脉冲·时钟·运行时长）
+│   ├── UserSession.cs          # 账户角色 + 密码常量 + 写入权限（纯逻辑）
 │   ├── MachineState.cs         # 状态机模型 + 布局常量 + Lamps + machine-state.json
 │   ├── AcquisitionTask.cs      # 任务组 / 项模型 + 规则 + acquisition-tasks.json
 │   ├── AcquisitionTaskCheck.cs # 配置错误判据
@@ -113,6 +115,7 @@ DSH_Modbus采集工具/
 │   ├── LiveImagePicker.cs      # 背景图选择弹框（两个入口共用）
 │   ├── ScannerErrorMark.cs     # 扫码器输入框标红用的 bool 附加属性
 │   ├── NumberInputDialog.cs    # STRING 长度等单值输入弹窗
+│   ├── LoginDialog.cs          # 账户登录框（用户名下拉 + 密码掩码 + 注销/登录）
 │   └── ThemeMessageDialog.cs   # 全应用唯一的提示 / 确认弹框（Info / Confirm，§9.3）
 └── Drivers/
     ├── CommDriver.cs           # ModbusArea / NumberBase / AddressArea / CommDriver
@@ -393,7 +396,7 @@ Window
 | 用途 | 键 |
 |---|---|
 | 标签 / 说明 / 正文 / 红色错误 | `Dialog.Label` / `Dialog.Hint` / `Dialog.Body` / `Dialog.Error` |
-| 输入框 | `Dialog.TextBox` |
+| 输入框 / **密码框** | `Dialog.TextBox` / **`Dialog.PasswordBox`**（`PasswordBox` 与 `TextBox` 是两个类型，样式不通用） |
 | 下拉框 / 下拉项 | `Dialog.ComboBox` / `Dialog.ComboBoxItem` |
 | 单选框 | `Dialog.RadioButton`（16 圆圈，选中整圈填主色 + 6 白点，**文字在右**） |
 | 按钮（次色 / 主色 / 破坏性） | `Dialog.Button.Secondary` / `Dialog.Button.Primary` / `Dialog.Button.Danger` |
@@ -467,6 +470,7 @@ public sealed class MyDialog : DialogWindow
 | **写入的文本解析与范围校验** | `ValueCodec.TryParseIntegerLiteral`（DEC 支持 `0x`/`0b` 前缀与负号）+ `CheckIntegerRange`；**校验必须在位宽截断前**（`-32769` 截成 `0x7FFF` 会变成合法值） |
 | 改 IO 行高/列宽、加分段切换 | `IoItemTemplate` 的 `Height`/`Margin`；`IoColumnsGrid`/`YIoColumnsGrid`（4×`*`）；`IoSegmentRadioButton` + `XViewSegment` / `YViewSegment` / `FreeViewSegment` + `IoView_Checked` |
 | **自由监控增删改/校验** | `MonitorItem.cs`（`MonitorItem` / `MonitorItemSet`）+ `MainWindow.Monitor.cs` 的 `Monitor*` 处理器（§5.1） |
+| **账户与权限（P 权限）** | `Modeling/UserSession.cs`（`UserRole` / `UserRules`：密码 `Admin8080`、`CanWriteMonitor` 唯一出口、`TryLogin`）+ `Ui/LoginDialog.cs` + `MainWindow.Account.cs`（`_currentRole` / `AccountButton_Click` / `MonitorValueTextBoxReadOnly` 依赖属性）。置灰走 `MonitorValueTextBox` 的 **Style.Triggers** 绑窗口 DP，**不要逐行设 IsEnabled**（行在 DataTemplate 里会重建，逐个设必然漏） |
 | 元件名称 → 符号+编号、类型候选 | `CommDriver.TrySplitName`（与 `TryResolve`、自由监控共用）；`CommDriver.AreasOfElement` + `DataTypes.CoilTypes` / `RegisterTypes` |
 | 监控项持久化 | `DataPointStore`（`data-points.json`）；模型 `Modeling/DataPoint.cs` |
 | **字节顺序（字序/字符串序）** | `Modeling/ByteOrderSettings.cs`（三套值）+ 设备连接页三个下拉框 + `ApplyByteOrders` / `SyncByteOrderCombos`（§8.1）；读取用 `MonitorItemSet.ByteOrders` |

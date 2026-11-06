@@ -154,6 +154,64 @@
     </Setter>
   </Style>
 
+  <!--
+    密码框（P 权限，2026-11-06）。
+
+    ⚠️ 必须单独一份样式：`PasswordBox` 与 `TextBox` 是**两个不同的控件类型**，
+    `Style TargetType` 不通用，`Dialog.TextBox` 套不上去（编译期就报不匹配）。
+    其余全部照抄 `Dialog.TextBox` —— 两者在同一个对话框里并排出现，
+    边框、圆角、内距、聚焦色差一点就能看出来。
+
+    ⚠️ 掩码字符由 <c>PasswordChar</c> 给（默认就是 ●），这里**不要**改：
+    显示明文是需求明确禁止的（用户 2026-11-06：「密码不要显示明文」）。
+    `PasswordBox` 本身就不提供 `Text` 属性，只能 `Password` 取值，这一点恰好兜住了 ——
+    别为了「方便」改用 TextBox + 手动打码，那会在窗口里留一份可读明文。
+  -->
+  <Style x:Key="Dialog.PasswordBox" TargetType="PasswordBox">
+    <Setter Property="Height" Value="30" />
+    <Setter Property="SnapsToDevicePixels" Value="True" />
+    <Setter Property="UseLayoutRounding" Value="True" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Padding" Value="10,0,10,0" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}" />
+    <Setter Property="Background" Value="{DynamicResource Brush.Input.Background}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Input.Border}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CaretBrush" Value="{DynamicResource Brush.Text.Primary}" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource Brush.Accent}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="PasswordBox">
+          <Border x:Name="Bd"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="6"
+                  SnapsToDevicePixels="True">
+            <!-- 与 Dialog.TextBox 同理：只保留 PasswordBox.Padding 一处，模板里不再套 -->
+            <ScrollViewer x:Name="PART_ContentHost"
+                          VerticalAlignment="Center"
+                          Focusable="False"
+                          HorizontalScrollBarVisibility="Hidden"
+                          VerticalScrollBarVisibility="Hidden" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Input.Border.Hover}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Accent}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}" />
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Input.Background.Disabled}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- 下拉框 -->
 
   <Style x:Key="Dialog.ComboBoxItem" TargetType="ComboBoxItem">

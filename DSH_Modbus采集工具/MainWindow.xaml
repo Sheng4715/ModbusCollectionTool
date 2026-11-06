@@ -134,6 +134,67 @@
             <EventSetter Event="Checked" Handler="Nav_Checked"/>
         </Style>
 
+        <!--
+            左侧导航底部的「账户」按钮（2026-11-06，P 权限）。
+
+            外观：左边一个 Win11 式圆形头像（主色实底 + 白色人形图标），右边当前用户名。
+            ⚠️ 几何参数（Margin 8,2 / Padding 14,0 / MinHeight 40）**必须与
+            NavRadioButton 一致** —— 它夹在「设置」上方，差 1px 就能看出左缘没对齐。
+
+            ⚠️ 头像用「圆形 Border + 图标」画，不要引图片资源：
+            项目零第三方依赖，也没有随包分发的头像图；而且深色/浅色两套主题下
+            图片不会跟着变，圆形底 + 主色反而天然适配。
+        -->
+        <Style x:Key="AccountButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="MinHeight" Value="40"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="8,2"/>
+            <Setter Property="Padding" Value="14,0"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Backplate"
+                                MinHeight="{TemplateBinding MinHeight}"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="4"
+                                Background="Transparent"
+                                HorizontalAlignment="Stretch">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <!-- 圆形头像：20 直径，主色底 + 白色人形 -->
+                                <Border x:Name="Avatar"
+                                        Width="20" Height="20"
+                                        CornerRadius="10"
+                                        Background="{DynamicResource Brush.Accent.Fill}"
+                                        VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE77B;"
+                                               FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource Brush.Text.OnAccent}"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"/>
+                                </Border>
+
+                                <ContentPresenter Margin="10,0,0,0"
+                                                  VerticalAlignment="Center"
+                                                  HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Subtle}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Backplate" Property="Background" Value="{DynamicResource Brush.Overlay.Medium}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- IO 元件区分段切换（输入X / 输出Y）：灰底胶囊轨道 + 选中白底浮起 -->
         <Style x:Key="IoSegmentRadioButton" TargetType="RadioButton">
             <Setter Property="Cursor" Value="Hand"/>
@@ -685,6 +746,32 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <!--
+                账户权限（P 权限，2026-11-06）：技术员无写入权限 → 这一格置灰。
+
+                ⚠️ 用 **Style.Triggers 绑窗口上的依赖属性**，不要逐行设 IsEnabled：
+                这一格在 DataTemplate 里，每行一份、增删会重建，
+                逐个设置必然漏（新建的行拿不到，表现为「已置灰但新加的项还能写」）。
+                触发器在样式上，所有行（含将来新建的）自动跟随。
+
+                ⚠️ 绑的是 RelativeSource AncestorType=Window 上的
+                MonitorValueTextBoxReadOnly，**不是**行的属性 ——
+                权限是「当前账户」的属性，不是「这一行」的。
+
+                置灰走 IsEnabled=False：模板里本来就有该触发器
+                （底色切 Input.Background.Disabled + 字色 Muted），不必再写一遍外观。
+                ToolTipService.ShowOnDisabled 不能少 —— 禁用控件默认不弹提示，
+                而「为什么不能写」恰恰只在禁用态才需要说。
+            -->
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding MonitorValueTextBoxReadOnly,
+                                               RelativeSource={RelativeSource AncestorType=Window}}"
+                             Value="True">
+                    <Setter Property="IsEnabled" Value="False"/>
+                    <Setter Property="ToolTip" Value="当前账户（技术员）无写入权限，请用左下角账户按钮登录工程师"/>
+                    <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <!-- 枚举 → 大写名（显示格式用；BIN/DEC/HEX/ASCII 按惯例全大写） -->
@@ -2075,6 +2162,21 @@
 
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,12">
                         <Separator Background="{DynamicResource Brush.Nav.Border}" BorderThickness="0" Margin="16,4,16,8"/>
+
+                        <!--
+                            账户按钮（2026-11-06 用户定案，P 权限）：Win11 头像 + 当前用户名。
+                            位置就在「设置」上方 —— 用户圈定的红框位置。
+
+                            ⚠️ 用 Button 而不是 RadioButton：它开的是弹窗，不是切页面，
+                            套 NavRadioButton 会带上「选中态」语义，点完还会有个高亮留在那儿。
+                            几何参数（Margin 8,2 / Padding 14,0 / MinHeight 40）刻意与
+                            NavRadioButton 一致，否则它和上方的「设置」左缘对不齐。
+                        -->
+                        <Button x:Name="AccountButton"
+                                Style="{StaticResource AccountButton}"
+                                Click="AccountButton_Click"
+                                ToolTip="点击登录 / 切换账户"/>
+
                         <RadioButton x:Name="SettingsNav"
                                      Style="{StaticResource NavRadioButton}" GroupName="Nav"
                                      Content="设置"/>

@@ -36,6 +36,25 @@
 设备监控页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**
 （第四分段「系统变量」见 §5.4）。
 
+**账户权限（P 权限，2026-11-06）**：这一页是**全应用唯一受权限管控的地方** ——
+「当前值」可以对 PLC 随意写入，故技术员账户下整列置灰。
+
+- 角色与密码在 `Modeling/UserSession.cs`（`UserRole` / `UserRules`），登录框 `Ui/LoginDialog.cs`，
+  接线 `MainWindow.Account.cs`；入口是**左侧导航底部**的账户按钮（Win11 头像 + 用户名）
+- ⚠️ **置灰走 `MonitorValueTextBox` 的 `Style.Triggers`，不要逐行设 `IsEnabled`**：
+  这一格在 `DataTemplate` 里、每行一份，增删会重建，逐个设置必然漏
+  （新建的行拿不到，表现为「已置灰但新加的项还能写」）。
+  触发器绑窗口上的 `MonitorValueTextBoxReadOnly` 依赖属性（`RelativeSource AncestorType=Window`）——
+  权限是「当前账户」的属性，不是「这一行」的
+- ⚠️ **只挡写入，不挡其它操作**：名称框、增删、排序照旧（用户原话「除了自由监控不可以写入值，其他无限制」）。
+  采集任务的写入、扫码器回写、全局变量编辑**一律不受限** —— 别顺手也加限制
+- 缺省技术员（免登录）、注销即退回技术员、**登录状态不落盘**（每次启动都是技术员）
+- ⚠️ **登录 / 注销不写运行日志**（用户 2026-11-06 定案）：那是界面操作不是设备状态；
+  当前账户一直显示在导航底部按钮上，不需要日志复述
+- ⚠️ **密码框必须是 `PasswordBox`**（`Dialog.PasswordBox` 样式），不是 TextBox 手动打码 ——
+  后者会在窗口里留一份可读明文。注意 `PasswordBox` 的取值属性是 `Password` 不是 `Text`，
+  事件是 `PasswordChanged` 不是 `TextChanged`
+
 **排序（2026-10-31）**：表头右端有 **↑ / ↓** 两个按钮，作用于**当前选中行**，
 与全局变量表（§5.2）同一套交互 —— 点行内任意处选中、底色变 `Brush.Accent.Subtle`、
 首行 ↑ 灰 / 末行 ↓ 灰 / 没选中都灰。判断只在 `UpdateMonitorMoveButtons` 一处，
