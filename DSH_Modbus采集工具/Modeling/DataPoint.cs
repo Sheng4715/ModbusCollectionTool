@@ -95,45 +95,10 @@ namespace DSH_Modbus采集工具.Modeling
 
         public static string FilePath => Path.Combine(AppContext.BaseDirectory, FileName);
 
-        public static List<DataPoint> Load()
-        {
-            try
-            {
-                string path = FilePath;
-                if (!File.Exists(path))
-                {
-                    return new List<DataPoint>();
-                }
+        public static List<DataPoint> Load() => AtomicFile.ReadList<DataPoint>(FilePath, Options);
 
-                string json = File.ReadAllText(path);
-                if (string.IsNullOrWhiteSpace(json))
-                {
-                    return new List<DataPoint>();
-                }
-
-                var list = JsonSerializer.Deserialize<List<DataPoint>>(json, Options);
-                return list ?? new List<DataPoint>();
-            }
-            catch
-            {
-                // 与 LoadComments 一致：读失败不阻断启动，视为空集合
-                return new List<DataPoint>();
-            }
-        }
-
-        public static bool Save(IEnumerable<DataPoint> points)
-        {
-            try
-            {
-                string json = JsonSerializer.Serialize(points, Options);
-                File.WriteAllText(FilePath, json);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        public static bool Save(IEnumerable<DataPoint> points) =>
+            AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(points, Options));
 
         /// <summary>
         /// 用驱动校验并解析一项的地址。成功时回填 <see cref="DataPoint.Address"/> /

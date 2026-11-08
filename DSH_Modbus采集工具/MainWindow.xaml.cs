@@ -139,6 +139,13 @@ namespace DSH_Modbus采集工具
         private CancellationTokenSource? _pollCts;
 
         /// <summary>
+        /// 采集/心跳两条循环的合流 Task（<see cref="RunConnectionTasksAsync"/> 的返回值）。
+        /// 断开时先 await 它、等循环真正退出再释放客户端 —— 否则 <see cref="StopPolling"/>
+        /// 只发取消信号，此刻若某拍还卡在套接字读上，立刻 Dispose 客户端就是 use-after-dispose。
+        /// </summary>
+        private Task? _pollCompletion;
+
+        /// <summary>
         /// 窗口是否已关闭。UI 线程写、后台线程经 <see cref="IsCurrentConnection"/> 读。
         /// <para>
         /// ⚠️ <c>volatile</c>：它是「UI 写、后台读」的跨线程标志，与其余几个可见性字段同口径。
@@ -265,8 +272,12 @@ namespace DSH_Modbus采集工具
         /// 只在表达式或变量定义变动时重算（<see cref="RefreshMachineGlobals"/>），
         /// 采集每拍只交引用、不在后台线程里遍历表达式 —— 快照必须便宜。
         /// </para>
+        /// <para>
+        /// ⚠️ <c>volatile</c>：UI 线程整体替换数组引用、采集线程每拍读引用，
+        /// 与其它可见性字段同口径（引用赋值虽原子，漏标仍可能长期读到陈旧引用）。
+        /// </para>
         /// </summary>
-        private IReadOnlyList<GlobalVariable> _machineGlobals = Array.Empty<GlobalVariable>();
+        private volatile IReadOnlyList<GlobalVariable> _machineGlobals = Array.Empty<GlobalVariable>();
 
         /// <summary>
         /// 采集任务组引用的全局变量（P3.1）—— **常驻采集，与页面可见性无关**。
@@ -274,8 +285,9 @@ namespace DSH_Modbus采集工具
         /// 与 <see cref="_machineGlobals"/> 的区别只在于「什么时候采」：那份跟着可见性，
         /// 这份每拍都采。原因见 <see cref="ModbusPoller.PollAcquisitionGlobalsAsync"/>。
         /// </para>
+        /// <para>⚠️ <c>volatile</c>：同 <see cref="_machineGlobals"/>，UI 线程替换、采集线程读引用。</para>
         /// </summary>
-        private IReadOnlyList<GlobalVariable> _acquisitionGlobals = Array.Empty<GlobalVariable>();
+        private volatile IReadOnlyList<GlobalVariable> _acquisitionGlobals = Array.Empty<GlobalVariable>();
 
         /// <summary>
         /// 每个任务组的运行时状态（下次该采的时刻、表达式上一拍的值）。
@@ -635,6 +647,7 @@ namespace DSH_Modbus采集工具
             // 主题已由 App.OnStartup 应用（窗口构造前），这里只同步分段选中态
             SyncThemeSegments();
             Themes.ThemeManager.ThemeChanged += OnThemeChanged;
+            Themes.ThemeManager.SettingsSaveFailed += OnSettingsSaveFailed;
 
             // P5-2：日志保存设置同样在 App 启动时已载入，这里只回填界面
             SyncLogSaveToggle();
@@ -828,12 +841,24 @@ namespace DSH_Modbus采集工具
             // 日志：LogEntry.LevelBrush 构造时定色，只能按新主题重建整表
             RefreshDeviceLogColors();
 
+            // 采集数据「来源变量」框：SourceForegroundConverter 取的是主题色快照，
+            // 换主题不自动重算 —— 触发一次 INPC 让 MultiBinding 按新主题重取颜色。
+            _acqTaskSet.RaiseSourceColorRefresh();
+
             // 底栏：按当前状态重取颜色（文字不变）
             _statusBar?.ReapplyTheme();
 
             // 窗口边缘线是 DWM 画的，DynamicResource 换不到它，得按新主题重设一次
             WindowCorners.SyncBorderColor(this);
         }
+
+        /// <summary>
+        /// 主题 / 网卡名 / IP / 端口 / 日志设置 / 自动连接 / 应用标题等偏好共用
+        /// <see cref="ThemeManager.Save"/>，一次失败意味着**这一项改动没存上、下次启动会回退**。
+        /// 上浮到运行日志（琥珀警告）让用户当场看到，而不是静默吞掉。
+        /// </summary>
+        private void OnSettingsSaveFailed(string reason) =>
+            AppendDeviceLog(reason, DeviceLogLevel.Warning);
 
         // ---------- 设置：日志保存（P5-2） ----------
 
@@ -1700,11 +1725,44 @@ namespace DSH_Modbus采集工具
             // 顺序有讲究：先取消在途的连接尝试，再停采集，最后释放客户端 ——
             // 反过来的话，正在 ConnectAsync 里等着的那一段会拿着已释放的客户端收尾。
             _session.CancelConnect();
+
+            Task? pending = _pollCompletion;
+            ModbusTcpClient? clientToRelease = _session.Client;
             StopPolling();
-            _session.ReleaseClient();
+
+            // StopPolling 只发取消信号、不等待后台循环真正退出；若此刻某拍正卡在
+            // 套接字读上，立刻 ReleaseClient 就是在正在 IO 的套接字上 Dispose。
+            // 故改为等循环退出后再释放；Disconnect 恒在 UI 线程，await 后仍回 UI 线程。
+            _ = ReleaseClientAfterPollAsync(pending, clientToRelease);
+
             ConnectButton.Content = "连接";
             SetInputsEnabled(true);
             SetStatus(statusText, colorHex);
+        }
+
+        /// <summary>
+        /// 等采集/心跳循环真正退出后，再释放「断连发生当时」的那个客户端。
+        /// 用 <paramref name="client"/> 的引用相等守卫：紧接着的重连若已接管**新**客户端，
+        /// 这里就绝不去拆它（旧连接的回调不得误操作新连接）。
+        /// </summary>
+        private async Task ReleaseClientAfterPollAsync(Task? pending, ModbusTcpClient? client)
+        {
+            if (pending != null)
+            {
+                try
+                {
+                    await pending;
+                }
+                catch
+                {
+                    // 循环异常已在 RunConnectionTasksAsync 里收敛；这里只确保它已退出
+                }
+            }
+
+            if (client != null && ReferenceEquals(_session.Client, client))
+            {
+                _session.ReleaseClient();
+            }
         }
 
         // ---------- 自动重连：循环与退避（P1-1） ----------
@@ -1766,6 +1824,30 @@ namespace DSH_Modbus采集工具
             catch (OperationCanceledException)
             {
                 // 用户取消或关窗：静默退出
+            }
+            catch (Exception ex)
+            {
+                // 预期外的异常（SetStatus 等）会把重连循环整个打断。本方法是 fire-and-forget
+                // （`_ = ReconnectLoopAsync(...)`），不接住的话没有任何地方会观察它：
+                // 自动重连静默停摆、界面停在「按钮写着取消重连 + 表单锁定」，日志里一个字都没有 ——
+                // 现场只会觉得「它自己不再连了」，是最难解释的那种故障。
+                //
+                // ⚠️ 这与「重连尝试不写日志」（ADR-14）不冲突：那条管的是**尝试失败**（退避表里
+                // 每次 delay 后的连接结果是常规现象）；这里是**重连循环本身挂了**，属于异常事件，
+                // 必须留痕。文案带 PLC 前缀，与日志卡其余条目一致。
+                //
+                // 不重试：异常来自代码缺陷而非通讯状况，原地重试只会把同一条异常刷屏，
+                // 干净地停下并交还控制权更安全（用户可手动再连）。
+                if (!_windowClosed && !token.IsCancellationRequested)
+                {
+                    string reason = ClassifyDisconnectReason(ex.Message);
+                    AppendDeviceLog($"PLC自动重连已停止：{reason}", DeviceLogLevel.Disconnected);
+                    SetStatus($"自动重连已停止：{reason}", "#C42B1C");
+
+                    // 与「取消重连」按钮那条路径落到同一个可用状态，避免按钮文案与实际行为不符
+                    ConnectButton.Content = "连接";
+                    SetInputsEnabled(true);
+                }
             }
             finally
             {
@@ -2303,7 +2385,7 @@ namespace DSH_Modbus采集工具
             var cts = new CancellationTokenSource();
             _pollCts = cts;
             // 两项任务持有自己的连接和驱动快照，结束后才释放取消源。
-            _ = RunConnectionTasksAsync(client, driver, cts);
+            _pollCompletion = RunConnectionTasksAsync(client, driver, cts);
         }
 
         private async Task RunConnectionTasksAsync(ModbusTcpClient client, CommDriver driver,
@@ -2410,6 +2492,8 @@ namespace DSH_Modbus采集工具
 
         Task ICollectorHost.RunOnUiAsync(Action action) => Dispatcher.InvokeAsync(action).Task;
 
+        Task<T> ICollectorHost.RunOnUiAsync<T>(Func<T> func) => Dispatcher.InvokeAsync(func).Task;
+
         void ICollectorHost.NotifyConnectionLost(ModbusTcpClient client, CancellationToken token, string reason) =>
             NotifyConnectionLost(client, token, reason);
 
@@ -2495,6 +2579,7 @@ namespace DSH_Modbus采集工具
             _sysVarTimer.Stop();
 
             Themes.ThemeManager.ThemeChanged -= OnThemeChanged;
+            Themes.ThemeManager.SettingsSaveFailed -= OnSettingsSaveFailed;
             CancelReconnect();
             Disconnect();
             ShutdownScanners();

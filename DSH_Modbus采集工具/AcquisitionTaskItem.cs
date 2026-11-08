@@ -289,6 +289,20 @@ namespace DSH_Modbus采集工具
             Raise(nameof(CanEditVariable));
         }
 
+        /// <summary>
+        /// 换主题后让「来源变量」框的前景绑定重算。
+        /// <para>
+        /// <c>AcquisitionSourceBox</c> 的 <c>SourceForegroundConverter</c> 取的是
+        /// <see cref="ThemeManager.GetBrush"/> 的**一次性快照**，换主题不会自动重算；
+        /// 这两条 INPC 通知一到，MultiBinding 就重跑转换器、按新主题重取颜色。
+        /// </para>
+        /// </summary>
+        public void RaiseSourceColorRefresh()
+        {
+            Raise(nameof(SourceVariableName));
+            Raise(nameof(HasSourceError));
+        }
+
         public event PropertyChangedEventHandler? PropertyChanged;
 
         private void Raise([CallerMemberName] string? name = null)
@@ -618,6 +632,15 @@ namespace DSH_Modbus采集工具
             RefreshConfigError();
         }
 
+        /// <summary>换主题后刷新所有项的「来源变量」前景色（见 <see cref="AcquisitionItemRow.RaiseSourceColorRefresh"/>）。</summary>
+        public void RaiseSourceColorRefresh()
+        {
+            foreach (AcquisitionItemRow row in Items)
+            {
+                row.RaiseSourceColorRefresh();
+            }
+        }
+
         private void ReindexItems()
         {
             for (int i = 0; i < Items.Count; i++)
@@ -749,6 +772,15 @@ namespace DSH_Modbus采集工具
             foreach (AcquisitionTaskItem item in _items)
             {
                 item.RefreshVariables();
+            }
+        }
+
+        /// <summary>换主题后刷新所有组的「来源变量」前景色。</summary>
+        public void RaiseSourceColorRefresh()
+        {
+            foreach (AcquisitionTaskItem item in _items)
+            {
+                item.RaiseSourceColorRefresh();
             }
         }
 

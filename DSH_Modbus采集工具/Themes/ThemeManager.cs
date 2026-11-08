@@ -44,6 +44,12 @@ namespace DSH_Modbus采集工具.Themes
         /// <summary>主题变化后触发，供窗口同步非 XAML 的颜色（如 IoPoint 的灯刷、日志级别色）。</summary>
         public static event Action? ThemeChanged;
 
+        /// <summary>最近一次设置落盘失败的原因；成功写入后为 <c>null</c>。</summary>
+        public static string? LastSaveError { get; private set; }
+
+        /// <summary>设置落盘失败时触发（参数为失败原因），供界面提示用户「改了配置但没存上」。</summary>
+        public static event Action<string>? SettingsSaveFailed;
+
         /// <summary>设置文件路径（与 io-comments.json / data-points.json 同级，都在 exe 旁）。</summary>
         public static string SettingsFilePath =>
             Path.Combine(AppContext.BaseDirectory, "app-settings.json");
@@ -204,7 +210,7 @@ namespace DSH_Modbus采集工具.Themes
                 return;
             }
 
-            Application.Current?.Dispatcher.Invoke(() => Apply(ThemeMode.System));
+            Application.Current?.Dispatcher.BeginInvoke(() => Apply(ThemeMode.System));
         }
 
         /// <summary>按模式解析出实际主题并换字典（幂等）。</summary>
@@ -396,7 +402,7 @@ namespace DSH_Modbus采集工具.Themes
                 ? mode
                 : ThemeMode.System;
 
-        private static void Save(AppSettings settings)
+        private static bool Save(AppSettings settings)
         {
             try
             {
@@ -415,11 +421,26 @@ namespace DSH_Modbus采集工具.Themes
                 string json = JsonSerializer.Serialize(
                     settings,
                     new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(SettingsFilePath, json);
+
+                bool ok = Modeling.AtomicFile.WriteAllText(SettingsFilePath, json);
+                if (ok)
+                {
+                    LastSaveError = null;
+                    return true;
+                }
+
+                string failReason = "设置写入失败：" + SettingsFilePath;
+                LastSaveError = failReason;
+                SettingsSaveFailed?.Invoke(failReason);
+                return false;
             }
-            catch
+            catch (Exception ex)
             {
-                // 忽略写入失败：下次启动回到默认主题，不影响功能
+                // 归一化或序列化异常 → 同样视为写失败并上浮，不再静默
+                string failReason = "设置保存异常：" + ex.Message;
+                LastSaveError = failReason;
+                SettingsSaveFailed?.Invoke(failReason);
+                return false;
             }
         }
     }

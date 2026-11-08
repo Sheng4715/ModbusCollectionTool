@@ -872,8 +872,7 @@ namespace DSH_Modbus采集工具.Modeling
                     }).ToList(),
                 };
 
-                File.WriteAllText(FilePath, JsonSerializer.Serialize(file, Options));
-                return true;
+                return AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(file, Options));
             }
             catch
             {

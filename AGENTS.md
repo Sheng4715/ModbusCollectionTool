@@ -9,9 +9,10 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **62628 B / 余量约 2.5 KB**；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **63677 B / 余量约 1.5 KB**；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
+> ⚠️ **余量只剩 1.5 KB**：再要往这里加内容，先看能不能挪进 `AGENTS-细节.md`（它不受此预算约束）。
 
 ---
 
@@ -76,7 +77,8 @@ DSH_Modbus采集工具/
 │   ├── IoPager.cs              # 分页纯计算（页数 / 夹取 / 切片 / 翻页 / 页号文本）
 │   ├── IoTableImporter.cs      # xlsx → 注释表 + 失败明细
 │   └── XlsxIoTableReader.cs    # xlsx 解析（零依赖 zip + XML）
-├── Modeling/                   # 数据模型与纯逻辑（18 个，均无 WPF）
+├── Modeling/                   # 数据模型与纯逻辑（23 个，均无 WPF）
+│   ├── AtomicFile.cs           # 配置文件原子写（.tmp→Replace+`.bak`）+ 容错读（逐元素抢救）
 │   ├── DataTypes.cs            # 类型枚举 + 规格表
 │   ├── ValueCodec.cs           # 寄存器 ↔ 类型值编解码 + 显示格式化
 │   ├── ByteOrderSettings.cs    # 三套字节顺序（整数 / 浮点 / 字符串）
@@ -323,7 +325,7 @@ Window
 | **项目信息（P5.3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（§7.3） |
 | **开机自启动（P5.5）** | `Startup/AutoStartCommand.cs`（纯逻辑：命令串 / 同 exe 判定 / 禁用记录 `& 0x01` 判据）+ `Startup/AutoStartRegistry.cs`（HKCU `Run` + `StartupApproved` 读写）；窗口侧 `AutoStartToggle_Changed` / `SyncAutoStartToggle` / `RefreshAutoStartStatus`（§7.4） |
 | **应用标题（P5.6）** | `Modeling/AppTitle.cs`（纯逻辑：两个默认值 / 清洗换行与超长 / 默认识别）+ `ThemeManager.AppTitleText` / `SetAppTitle`；窗口侧 `ApplyAppTitle` / `ApplyAppTitlePermission` / `AppTitleTextBox_LostFocus`；权限 `UserRules.CanEditAppTitle`（§7.5）。⚠️ 改的是**两处**：`TitleBarCaption` + `Window.Title`。⚠️ 卡上只有「标题」+ 输入框：**清空即恢复默认**，没有按钮、没有账户说明（2026-11-08 定案） |
-| 关键字段 | `_session` / `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter` / `_logWriter` / `_statusBar`。**`volatile` 共 7 个**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` |
+| 关键字段 | `_session` / `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter` / `_logWriter` / `_statusBar`。**`volatile` 共 9 个**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_machineGlobals` / `_acquisitionGlobals` |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -386,6 +388,7 @@ Window
 | `IoPoint.StateBrush`（灯色） | 每次取值都 `ThemeManager.GetBrush("Io.*")`；换主题后由 `OnThemeChanged` 调 `RaiseStateBrushChanged()` 通知绑定重算 |
 | `LogEntry.LevelBrush`（日志行色） | 构造时按主题取（类在 `Ui/DeviceLogPresenter.cs`）；换主题后 `RefreshDeviceLogColors()` → `DeviceLogPresenter.RefreshThemeColors()` 重建整表（保留原 `DateTime`，不重新 `Parse` 文本） |
 | `SetStatus(text, colorHex)`（底栏） | 实现在 `Ui/StatusBarPresenter.cs`：入参仍是**浅色字面值**，由内部 `BrushKey()` 映射到语义键；它记住上次的文字与颜色，换主题后 `ReapplyTheme()` 重设一次 |
+| `Ui/SourceForegroundConverter`（采集「来源变量」框字色） | `IMultiValueConverter` 拿到的是**一次性快照画刷**，换主题不会自动重算；`OnThemeChanged` 调 `AcquisitionTaskItemSet.RaiseSourceColorRefresh()` 触发两条 INPC，让 MultiBinding 重跑转换器 |
 
 **几条容易踩的**：
 
@@ -484,6 +487,7 @@ public sealed class MyDialog : DialogWindow
 | **账户与权限（P 权限）** | `Modeling/UserSession.cs`（`UserRole` / `UserRules`：密码 `Admin8080`、`CanWriteMonitor` 唯一出口、`TryLogin`）+ `Ui/LoginDialog.cs` + `MainWindow.Account.cs`（`_currentRole` / `AccountButton_Click` / `MonitorValueTextBoxReadOnly` 依赖属性）。置灰走 `MonitorValueTextBox` 的 **Style.Triggers** 绑窗口 DP，**不要逐行设 IsEnabled**（行在 DataTemplate 里会重建，逐个设必然漏）。入口在导航底部 `AccountButton`（`AccountButton` 样式：头像 18 + Padding 10，**比 `NavRadioButton` 紧凑**，否则「技术员」被 112 DIP 的导航列截断；分隔线在它**之后**、设置之前） |
 | 元件名称 → 符号+编号、类型候选 | `CommDriver.TrySplitName`（与 `TryResolve`、自由监控共用）；`CommDriver.AreasOfElement` + `DataTypes.CoilTypes` / `RegisterTypes` |
 | 监控项持久化 | `DataPointStore`（`data-points.json`）；模型 `Modeling/DataPoint.cs` |
+| **配置落盘 / 容错读 / 写失败可见（改任何 `*Store` 必读）** | 一律走 `Modeling/AtomicFile.cs`：写走「临时文件 → `Flush(flushToDisk)` → `File.Replace` 保留 `.bak`」；读走「整体失败 → 逐元素抢救 + 原文件备份 `.bad-时间戳`」。`ThemeManager.Save` 失败经 `SettingsSaveFailed` 上浮到运行日志。**不要再用 `File.WriteAllText` 直写配置** —— 见 `AGENTS-细节.md` §13 |
 | **字节顺序（字序/字符串序）** | `Modeling/ByteOrderSettings.cs`（三套值）+ 设备连接页三个下拉框 + `ApplyByteOrders` / `SyncByteOrderCombos`（§8.1）；读取用 `MonitorItemSet.ByteOrders` |
 | **类型值编解码与显示格式化** | `Modeling/ValueCodec.cs`（入参传字节顺序，不读全局状态） |
 | Modbus 报文/超时、心跳 | `Drivers/ModbusTcpClient.cs`；`Drivers/ModbusHeartbeat.cs` → `RunAsync`、`HeartbeatIfIdleAsync` |

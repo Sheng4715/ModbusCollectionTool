@@ -1351,6 +1351,14 @@ ScrollViewer                        ← 画布放不下就滚
 | 通讯异常 | `PLC通讯异常：<原因>`（**仅当连接仍在**，对端回合法异常码） | 琥珀 `#B26A00` |
 | 通讯恢复 | `PLC通讯恢复` | 绿 |
 
+- ⚠️ **第 6 条例外：`PLC自动重连已停止：<原因>`**（红，2026-11-09 加）。它与上表五条的
+  性质不同 —— 上表是**连接状态变化**，这条是**重连循环被预期外异常打断**：
+  `ReconnectLoopAsync` 是 fire-and-forget（`_ = ReconnectLoopAsync(...)`），不接住异常就
+  没有任何地方观察它，表现为「自动重连静默停摆 + 按钮停在取消重连 + 表单锁着」，而日志
+  一个字都没有。故补了 `catch (Exception ex)`：记这一条、把按钮/表单恢复成「连接」可用态，
+  **不原地重试**（异常来自代码缺陷而非通讯状况，重试只会刷屏）。
+  ⚠️ 与 ADR-14「重连尝试不写日志」不冲突：那条管**尝试失败**（常规现象），这条管**循环本身挂了**。
+
 - ⚠️ **日志文案必须带设备前缀**（2026-11-06 用户定案）：PLC 五条带 `PLC`，扫码器自带 `扫码器「X」`。
   日志卡里两种连接混排，不带前缀看不出是谁。**底栏不带**（底栏只表示 PLC 一条连接）。
   例外：采集任务组的活动日志（`LogTaskActivity`）按任务组报，不属于连接状态
@@ -1689,3 +1697,202 @@ OrderProbe <ip> <port> <unitId> <localIp|-> <addr:count> [addr:count ...]
 ```powershell
 Find-NetRoute -RemoteIPAddress <PLC>
 ```
+
+## 13. 持久化与健壮性加固（2026-11-09）
+
+> 本章是 2026-11-08/09 一轮健壮性审查 + 加固的落地记录。
+> **改任何 `*Store` / 配置文件 / 断连逻辑 / 跨线程集合访问之前先读本章**，
+> 里面的每一条都对应一个已修掉的真实缺陷，别再退回去。
+
+### 13.1 为什么要做：一条完整的「静默丢数据」链路
+
+加固前的四个 Store（`DataPointStore` / `GlobalVariableStore` / `AcquisitionTaskStore` / `IoPointSet`）
+长得一模一样，且都踩同一个坑：
+
+```csharp
+// 加固前的形状（已删，不要再写回来）
+public static List<T> Load()
+{
+    try { ... return JsonSerializer.Deserialize<List<T>>(json, Options) ?? new(); }
+    catch { return new List<T>(); }   // ← ① 反序列化失败静默回空
+}
+public static bool Save(IEnumerable<T> items)
+{
+    File.WriteAllText(FilePath, json);   // ← ③ 无条件整体覆盖
+}
+```
+
+触发链（**四个条件缺一不可，但现场全都会碰到**）：
+
+1. `data-points.json` / `GlobalVar.json` / `acquisition-tasks.json` / `io-comments.json`
+   被**瞬时锁住**（杀软扫描、编辑器未关）、写到一半断电、或人手改错一个字段类型；
+2. `Load()` 反序列化抛异常 → catch → **返回空集合** → 界面看起来「配置全没了」；
+3. 用户以为是自己弄丢的，随手补一条 / 重新导入一次；
+4. `Save()` **把这一条覆盖式写回** → 原文件里剩下没读出来的数据**永久消失**。
+
+第 ②③ 步之间没有任何提示，第 ④ 步把证据也抹了。`MachineStateStore` 早年踩过一次，
+用「逐条容错」修了，但另外四个没跟上 —— 本章把这件事收成统一实现。
+
+### 13.2 `Modeling/AtomicFile.cs`（唯一出口）
+
+**纯逻辑、无 WPF**，可链接进断言工程。两个方法，都不抛异常：
+
+| 方法 | 做什么 |
+|---|---|
+| `WriteAllText(path, content)` | 原子写：`path + ".tmp"` → `StreamWriter` + `Flush()` + `fs.Flush(flushToDisk: true)` → `File.Replace(tmp, path, path + ".bak")`。`File.Replace` 在跨卷 / 权限受限时失败则退化为 `File.Move(overwrite: true)`。返回 `bool` |
+| `ReadList<T>(path, options)` | 容错读：文件不存在/空白 → 空集合；整体反序列化成功 → 原样返回；**整体失败 → 逐个元素抢救**（`JsonDocument` 遍历，单条 `try` 失败就跳过）**并把原文件改名备份为 `path + ".bad-yyyyMMddHHmmss"`** |
+| `BackupBad(path)` | 上一条内部用，也可单独调（`IoPointSet` 用） |
+
+**几条必须守住的**：
+
+- ⚠️ **`Flush(flushToDisk: true)` 不能省**：只调 `StreamWriter.Flush()` 只是把托管缓冲推给 OS，
+  断电时 OS 缓存里的内容照样丢。这一句才是「关机/掉电也不留半个文件」的关键
+- ⚠️ **写失败要能让调用方知道**：`WriteAllText` 返回 `bool`，别把它当 `void` 用。
+  配置类（`ThemeManager`）靠这个 `bool` 上浮提示用户（§13.3）；数据类 Store 返回 `bool` 给调用方
+- ⚠️ **`.bad-时间戳` 备份是「抢救证据」，不是「恢复入口」**：它只保证原始字节还在，
+  恢复得人工看 json。**不要**在启动时自动读 `.bad-*` —— 那等于把坏文件当配置用
+- ⚠️ **备份失败不阻断**（`try/catch` 吞掉）：磁盘只读时备份也做不成，但不能因此让程序起不来
+- ⚠️ **`ReadList` 的「整体成功」优先**：只有整体反序列化真的抛了才走逐元素。
+  否则正常文件也要多遍历一遍 `JsonDocument`，白白多一次分配
+
+### 13.3 五处接入点（改了哪、没改哪）
+
+| 文件 | 接入方式 |
+|---|---|
+| `Modeling/DataPoint.cs` | `Load()` → `AtomicFile.ReadList`；`Save()` → `AtomicFile.WriteAllText` |
+| `Modeling/GlobalVariable.cs` | 同上 |
+| `Modeling/AcquisitionTask.cs` | 同上 |
+| `Modeling/MachineState.cs` | 只有 `Save` 改原子写（**读**仍是它自己那套「逐条容错 + `ReadElementByElement`」，早就有，别动） |
+| `Io/IoPointSet.cs` | `Save()` 改原子写；`Load()` 因为结构是 `Dictionary<string,string>`（不是 List），自带一套 `TryReadCommentsElementByElement` + `AtomicFile.BackupBad` |
+
+- ⚠️ **`IoPointSet.Load` 里那个「逐条重建字典」的循环不能省**：
+  `new Dictionary(loaded, StringComparer.OrdinalIgnoreCase)` 在键只差大小写时抛 `ArgumentException`
+  （`{"x17":"a","X17":"b"}` 就会命中），而 json 是人手可改的
+- ⚠️ **`MachineStateStore.Save(items, edges)` 那个两参重载会丢指示灯段**（`lamps: null`），
+  **产品代码一处都不能调** —— 生产路径走三参。保留只是为了断言工程能单独测状态/连线往返
+- ⚠️ **新增 `*Store` 一律用 `AtomicFile`**，不要再写 `File.WriteAllText` 直写配置
+
+### 13.4 设置落盘失败要「看得见」（`ThemeManager`）
+
+`app-settings.json` 装着**主题 / 日志开关与目录 / 网卡名 / IP / 端口 / 自动连接 / 应用标题**七项，
+一次 `Save` 写整个对象。加固前 `catch { }` 全吞，后果是：
+
+> 用户改了主题 → 界面立刻变了 → 关掉重开又变回去，**而且一条日志都没有**（写日志本身也可能失败）。
+
+现在：
+
+- `Save(AppSettings)` 返回 `bool`，并设 `LastSaveError`
+- 失败时触发静态事件 `SettingsSaveFailed(string reason)`
+- 窗口 `Window_Loaded` 订阅、`OnClosed` 退订；处理器 `OnSettingsSaveFailed` 把它写进**运行日志（琥珀警告）**
+
+⚠️ **这是唯一一处「配置写失败会出现在运行日志里」的通道**，别绕开 `Save` 自己写 json。
+⚠️ 事件订阅/退订必须成对（`OnThemeChanged` 旁边那两行），否则窗口关了还会被回调。
+
+### 13.5 断连：先等采集循环退出，再 `Dispose` 客户端
+
+**加固前的错误顺序**（看着天经地义，实际有竞态）：
+
+```
+CancelConnect() → StopPolling()（只 Cancel，不 await）→ ReleaseClient()（立刻 Dispose TcpClient）
+```
+
+`StopPolling` 只是**发取消信号**，后台 `PollLoopAsync` / `HeartbeatLoopAsync` 可能正卡在
+`NetworkStream.ReadAsync` 上。UI 线程那条语句相当于「在正在 IO 的套接字上 Dispose」——
+典型的 use-after-dispose。当前靠 `RequestAsync` 的 catch-all 兜住，不崩也不泄漏，
+但这是**没有串行化保证**的受控竞态。
+
+现在的做法（`MainWindow.xaml.cs`）：
+
+- `_pollCompletion` 字段记住 `RunConnectionTasksAsync(...)` 返回的 Task（`StartPolling` 里赋值）
+- `Disconnect(status,color)` 里先取快照 `pending` 与 `clientToRelease`，再 `StopPolling()`，
+  然后 `_ = ReleaseClientAfterPollAsync(pending, clientToRelease)`
+- `ReleaseClientAfterPollAsync`：`await pending`（异常吞掉，循环内部已收敛）→
+  **`ReferenceEquals(_session.Client, client)` 才 `ReleaseClient()`**
+
+⚠️ **引用相等守卫不能省**：`await` 期间自动重连可能已经接管了**新**客户端，
+不加守卫就会把刚建好的连接拆掉 —— 与 `ScannerSession.NotifyScannerLost` 那条同理。
+⚠️ `Disconnect` 恒在 UI 线程调用，`await` 后仍回 UI 线程，不需要额外 `Dispatcher`。
+
+### 13.6 自由监控读计划必须回 UI 线程算
+
+`PollFreeMonitorAsync` 原先是 `_host.MonitorSet.BuildReadPlan()` **直接在采集线程**执行，
+而 `MonitorItemSet._items` 是 UI 线程维护的 `ObservableCollection`。连接期间自由监控页仍可增删行
+（只有设备连接表单被锁），字节顺序下拉框**刻意不锁**且会写 `_monitorSet` —— 撞上就是
+`InvalidOperationException: Collection was modified`，再被 `PollLoopAsync` 的 `catch (Exception)`
+**当成通讯断线**：记一条红色「已断开」并触发自动重连。**一次纯粹的界面编辑被误判成断线。**
+
+现在 `ICollectorHost` 多了一个重载：
+
+```csharp
+Task<T> RunOnUiAsync<T>(Func<T> func);   // 窗口侧 = Dispatcher.InvokeAsync(func).Task
+```
+
+```csharp
+List<ReadBlock> plan = await _host.RunOnUiAsync(() => _host.MonitorSet.BuildReadPlan());
+```
+
+⚠️ **不要在后台线程遍历任何 `ObservableCollection` / 界面持有的 `List`**。要么像
+`PollSnapshot` 那样由 UI 线程交**不可变快照**，要么用这个重载把计算搬回 UI 线程。
+⚠️ `VisiblePage` / `MachineGlobals` / `AcquisitionGlobals` 三个字段走的是「UI 线程整体替换数组引用」，
+所以后台**只交引用**是安全的 —— 但前提是**没人就地改那个数组**（保持「整体替换」这个约定）。
+
+### 13.7 `volatile` 的口径（9 个）
+
+UI 线程写、采集线程每拍读的字段，一律显式 `volatile`：
+
+`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` /
+`_yPageIndex` / `_visiblePage` / **`_machineGlobals`** / **`_acquisitionGlobals`**
+
+后两个是 2026-11-09 补的（漏标）：引用赋值本身原子，但没有内存屏障时后台**可能长期读到陈旧引用**，
+表现为「采的变量集合与配置对不上」。⚠️ 新增跨线程字段时**先判断是不是这一档**，别等审查发现。
+
+### 13.8 全局异常兜底（顺序 + 可见性）
+
+`App.OnStartup` 里两处改动：
+
+1. **异常兜底注册挪到 `ThemeManager.Initialize()` 之前**。`ValidateKeyParity()` 是故意「启动即崩」的，
+   但兜底晚于它注册时，那种崩溃**连 `crash.log` 都不会写**（WinExe 无控制台，用户只看到窗口消失）；
+2. **界面异常除了写日志，还弹一次 `ThemeMessageDialog.Info`**。原来只 `File.AppendAllText`，
+   现场表现是「窗口还在但没反应」，而多数人不知道 exe 旁有个 crash.log。
+   用 `_fatalDialogShown` 去重，防止兜底里的弹窗再触发异常造成连环弹。
+
+⚠️ 后台异常（`AppDomain.UnhandledException`）**不弹窗** —— 进程可能马上就没，弹窗没有意义。
+⚠️ 别在兜底里再抛异常：`ReportFatal` / `ShowFatalNotice` 内部都有 `try/catch`。
+
+### 13.9 换主题时两处必须手工刷新（不是 `DynamicResource`）
+
+| 位置 | 症状（漏了会怎样） | 修法 |
+|---|---|---|
+| `Ui/SourceForegroundConverter`（采集「来源变量」框字色） | 转换器拿的是 `ThemeManager.GetBrush` 的**一次性快照**，`IMultiValueConverter` 只在绑定路径变化时重算 → 浅↔深切换后停在旧主题的近黑 `#1A1A1A`，压在深色输入框底 `#1E1E1E` 上几乎不可读 | `OnThemeChanged` 调 `_acqTaskSet.RaiseSourceColorRefresh()` → 逐层转给 `AcquisitionItemRow.RaiseSourceColorRefresh()`，触发 `SourceVariableName` + `HasSourceError` 两条 INPC，MultiBinding 重跑转换器 |
+| `Ui/MachineStateView.LabelVisual` | 换主题本身没问题，但 `Bind()` 重建画面时**旧 visual 订阅的模型 `PropertyChanged` 从未退订** → 模型（长命对象）一直持有已脱离可视树的 `Border`/`TextBox`，每次 `Bind` 泄漏一批 | `LabelVisual.Detach()` 退订；`Bind()` 开头先遍历旧 `_labels` 逐个 `Detach()` 再 `Clear()` |
+
+⚠️ **凡是 C# 侧「取一次画刷存起来」的地方，都要问一句「换主题谁负责刷新」** ——
+`DynamicResource` 只管 XAML。完整清单见 `AGENTS.md` §9.2 那张表。
+
+### 13.10 自动重连循环的异常兜底（第 6 条日志）
+
+`ReconnectLoopAsync` 是 fire-and-forget（`_ = ReconnectLoopAsync(...)`），加固前只捕 `OperationCanceledException`。
+若 `SetStatus` 之类抛出别的异常，任务静默故障：**自动重连停摆、按钮停在「取消重连」、表单锁着、
+日志里一个字都没有** —— 现场只会觉得「它自己不再连了」。
+
+现在多一个 `catch (Exception ex)`（`finally` 里的 `EndReconnect` / `Dispose` 不变）：
+
+- 非关窗、非取消时：记 `PLC自动重连已停止：<原因>`（红）+ 底栏同文案 + 按钮恢复「连接」+ 表单解锁
+- **不原地重试**：异常来自代码缺陷而非通讯状况，重试只会刷屏
+
+⚠️ 与 ADR-14「重连尝试不写日志」**不冲突**：那条管「尝试失败」（退避表里每次 delay 后的结果是常规现象），
+这条管「循环本身挂了」。文案规则见 §7 的「第 6 条例外」。
+
+### 13.11 断言工程的连带维护（新增源文件必读）
+
+`.tmp/*Check` 与 `ModelingCheck/` 都是**链接源码**（`<Compile Include="..\..\DSH_Modbus采集工具\..." />`），
+不是引 dll。所以：
+
+- **新增一个被 Store 引用的源文件，必须同步往这些 csproj 里加链接**，否则断言工程编不过
+  （本次新增 `AtomicFile.cs` 就漏了这一步，`ExpressionCheck` 报 `CS0103: 不存在名称 AtomicFile`）
+- 已加链接的：`ExpressionCheck` / `AcquisitionCheck` / `GlobalVarCheck` / `MonitorVarCheck` /
+  `SystemVarCheck` / `DriverSwitchCheck` / `IoCheck` / `ModelingCheck` / `ModelingCheck/live`
+- ⚠️ `.tmp/AcquisitionCheck` 与 `.tmp/MonitorVarCheck` 里还有**陈旧的**编译错误
+  （`AcquisitionConstant` 未链接、`AcquisitionWriteStatus.Skipped` 已改名 `CannotAddress`、
+  `WritePlan.cs` 路径写错），与本章无关，属于更早迭代留下的 —— 要跑它们得先修这些
+- ⚠️ 跑 `.tmp` 下的工程前先 `$env:TEMP = "$PWD\.tmp\<名字>-temp"`（沙箱下 `%TEMP%` 挂 ACE，建目录会被拒）

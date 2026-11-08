@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using DSH_Modbus采集工具.Drivers;
+using DSH_Modbus采集工具.Modeling;
 
 namespace DSH_Modbus采集工具.Io
 {
@@ -159,38 +160,90 @@ namespace DSH_Modbus采集工具.Io
         /// <summary>读取 exe 旁的 io-comments.json；文件不存在或损坏时保持内置默认，不阻断启动。</summary>
         public void Load()
         {
+            if (!File.Exists(CommentsFilePath))
+            {
+                return;
+            }
+
+            string json;
             try
             {
-                if (!File.Exists(CommentsFilePath))
-                {
-                    return;
-                }
-
-                var loaded = JsonSerializer
-                    .Deserialize<Dictionary<string, string>>(File.ReadAllText(CommentsFilePath));
-                if (loaded != null)
-                {
-                    // ⚠️ **逐条重建，不要 new Dictionary(loaded, OrdinalIgnoreCase)**：
-                    // 那个构造函数在遇到「仅大小写不同」的两个键时抛 ArgumentException ——
-                    // 而 json 是人手可改的，写成 {"x17":"a","X17":"b"} 就会命中。
-                    // 被外层 catch 吞掉后整表回退为空，用户看到的是「导入的 IO 表全没了」。
-                    // 这里后者覆盖前者（与 json 里后出现的键生效一致），并按忽略大小写比较。
-                    var rebuilt = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (KeyValuePair<string, string> pair in loaded)
-                    {
-                        rebuilt[pair.Key] = pair.Value;
-                    }
-
-                    _comments = rebuilt;
-                }
+                json = File.ReadAllText(CommentsFilePath);
             }
             catch
             {
-                // 损坏/不可读 → 回退内置注释
+                // 读不了（锁定 / 权限）→ 保持空，不阻断启动
+                return;
+            }
+
+            Dictionary<string, string>? loaded;
+            bool degraded = false;
+            try
+            {
+                loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+            }
+            catch
+            {
+                loaded = null;
+                degraded = true;
+            }
+
+            if (loaded == null && degraded)
+            {
+                // 整体反序列化失败 → 逐个属性抢救 + 原文件备份，避免后续 Save 覆盖掉原始数据
+                loaded = TryReadCommentsElementByElement(json);
+                AtomicFile.BackupBad(CommentsFilePath);
+            }
+
+            if (loaded != null)
+            {
+                // ⚠️ **逐条重建，不要 new Dictionary(loaded, OrdinalIgnoreCase)**：
+                // 那个构造函数在遇到「仅大小写不同」的两个键时抛 ArgumentException ——
+                // 而 json 是人手可改的，写成 {"x17":"a","X17":"b"} 就会命中。
+                // 这里后者覆盖前者（与 json 里后出现的键生效一致），并按忽略大小写比较。
+                var rebuilt = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (KeyValuePair<string, string> pair in loaded)
+                {
+                    rebuilt[pair.Key] = pair.Value;
+                }
+
+                _comments = rebuilt;
             }
         }
 
-        /// <summary>整表写回 io-comments.json（导入后调用）。失败仅意味着下次启动不记得本次导入，不提示打断。</summary>
+        /// <summary>
+        /// 兜底读法：注释表整体反序列化失败时，改用 <see cref="JsonDocument"/> 逐个属性解析，
+        /// 只收字符串值、非字符串的坏条目跳过 —— 一条写坏不影响同表其它注释。
+        /// 完全不是 JSON 对象时返回 <c>null</c>。
+        /// </summary>
+        private static Dictionary<string, string>? TryReadCommentsElementByElement(string json)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return null;
+                }
+
+                var result = new Dictionary<string, string>();
+                foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.String)
+                    {
+                        result[prop.Name] = prop.Value.GetString() ?? string.Empty;
+                    }
+                }
+
+                return result;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>整表写回 io-comments.json（导入后调用）。原子写 + 保留 .bak；失败不抛。</summary>
         public void Save()
         {
             try
@@ -198,11 +251,11 @@ namespace DSH_Modbus采集工具.Io
                 string json = JsonSerializer.Serialize(
                     _comments,
                     new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(CommentsFilePath, json);
+                AtomicFile.WriteAllText(CommentsFilePath, json);
             }
             catch
             {
-                // 忽略写入失败
+                // 序列化异常（不应发生）→ 忽略，不打断导入流程
             }
         }
 

@@ -50,6 +50,7 @@
     <Compile Include="..\DSH_Modbus采集工具\Expressions\ExpressionNode.cs" Link="ExpressionNode.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Expressions\ExpressionParser.cs" Link="ExpressionParser.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Expressions\CompiledExpression.cs" Link="CompiledExpression.cs" />
+      <Compile Include="..\DSH_Modbus采集工具\Modeling\AtomicFile.cs" Link="AtomicFile.cs" />
   </ItemGroup>
 
 </Project>

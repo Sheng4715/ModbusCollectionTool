@@ -217,7 +217,11 @@ internal sealed class ModbusPoller
     /// </summary>
     public async Task PollFreeMonitorAsync(ModbusTcpClient modbus, CancellationToken token)
     {
-        List<ReadBlock> plan = _host.MonitorSet.BuildReadPlan();
+        // 读计划涉及遍历 _monitorSet（UI 线程维护的 ObservableCollection），
+        // 不能在采集线程裸枚举 —— 用户此刻增删行 / 改字节顺序会抛
+        // "Collection was modified"，再被 PollLoopAsync 误判成断线。
+        // 故回 UI 线程把计划算成不可变结果，采集线程只拿回来用。
+        List<ReadBlock> plan = await _host.RunOnUiAsync(() => _host.MonitorSet.BuildReadPlan());
         if (plan.Count == 0)
         {
             return;

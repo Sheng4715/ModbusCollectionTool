@@ -13,6 +13,12 @@ Release/
 *.log
 *.pdb
 
+# 配置原子写的产物（Modeling/AtomicFile.cs 生成，不进版本库）
+# .bak  = File.Replace 保留的上一版；.bad-* = 整体反序列化失败时改名的原始文件
+*.bak
+*.bad-*
+*.tmp
+
 # 系统文件
 Thumbs.db
 Desktop.ini

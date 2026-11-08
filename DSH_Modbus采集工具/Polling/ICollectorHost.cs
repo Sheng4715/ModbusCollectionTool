@@ -34,6 +34,13 @@ internal interface ICollectorHost
     /// <summary>回 UI 线程执行（内部即 <c>Dispatcher.InvokeAsync</c>）。</summary>
     Task RunOnUiAsync(Action action);
 
+    /// <summary>
+    /// 回 UI 线程执行并取回结果（内部即 <c>Dispatcher.InvokeAsync(Func&lt;T&gt;)</c>）。
+    /// 用于把「必须碰 UI 维护集合」的工作（如自由监控读计划）搬到 UI 线程上算，
+    /// 后台线程只拿结果，避免跨线程枚举集合。
+    /// </summary>
+    Task<T> RunOnUiAsync<T>(Func<T> func);
+
     /// <summary>异常断线：记日志 → 保留重连目标地断开 → 启动自动重连。</summary>
     void NotifyConnectionLost(ModbusTcpClient client, CancellationToken token, string reason);
 

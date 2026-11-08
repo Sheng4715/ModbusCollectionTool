@@ -309,40 +309,10 @@ namespace DSH_Modbus采集工具.Modeling
 
         public static string FilePath => Path.Combine(AppContext.BaseDirectory, FileName);
 
-        public static List<GlobalVariable> Load()
-        {
-            try
-            {
-                string path = FilePath;
-                if (!File.Exists(path))
-                {
-                    return new List<GlobalVariable>();
-                }
+        public static List<GlobalVariable> Load() => AtomicFile.ReadList<GlobalVariable>(FilePath, Options);
 
-                string json = File.ReadAllText(path);
-                var list = JsonSerializer.Deserialize<List<GlobalVariable>>(json, Options);
-                return list ?? new List<GlobalVariable>();
-            }
-            catch
-            {
-                // 与 DataPointStore.Load 一致：读失败不阻断启动，视为空集合
-                return new List<GlobalVariable>();
-            }
-        }
-
-        public static bool Save(IEnumerable<GlobalVariable> variables)
-        {
-            try
-            {
-                string json = JsonSerializer.Serialize(variables, Options);
-                File.WriteAllText(FilePath, json);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        public static bool Save(IEnumerable<GlobalVariable> variables) =>
+            AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(variables, Options));
 
         /// <summary>
         /// 用驱动解析一条变量的映射地址。空地址视为合法（内存变量），直接返回 true。

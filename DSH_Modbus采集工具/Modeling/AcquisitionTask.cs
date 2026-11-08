@@ -612,38 +612,10 @@ namespace DSH_Modbus采集工具.Modeling
 
         public static string FilePath => Path.Combine(AppContext.BaseDirectory, FileName);
 
-        public static List<AcquisitionTask> Load()
-        {
-            try
-            {
-                string path = FilePath;
-                if (!File.Exists(path))
-                {
-                    return new List<AcquisitionTask>();
-                }
+        public static List<AcquisitionTask> Load() => AtomicFile.ReadList<AcquisitionTask>(FilePath, Options);
 
-                var list = JsonSerializer.Deserialize<List<AcquisitionTask>>(File.ReadAllText(path), Options);
-                return list ?? new List<AcquisitionTask>();
-            }
-            catch
-            {
-                // 与 DataPointStore / GlobalVariableStore 一致：读失败不阻断启动，视为空集合
-                return new List<AcquisitionTask>();
-            }
-        }
-
-        public static bool Save(IEnumerable<AcquisitionTask> tasks)
-        {
-            try
-            {
-                File.WriteAllText(FilePath, JsonSerializer.Serialize(tasks, Options));
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        public static bool Save(IEnumerable<AcquisitionTask> tasks) =>
+            AtomicFile.WriteAllText(FilePath, JsonSerializer.Serialize(tasks, Options));
     }
 
     /// <summary>

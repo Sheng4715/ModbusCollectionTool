@@ -4,6 +4,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.ComponentModel;
 using DSH_Modbus采集工具.Modeling;
 
 namespace DSH_Modbus采集工具.Ui
@@ -57,6 +58,14 @@ namespace DSH_Modbus采集工具.Ui
         {
             RootCanvas.Children.Clear();
             _boxes.Clear();
+
+            // 旧 LabelVisual 订阅了模型的 PropertyChanged，不先退订就丢弃，
+            // 模型会一直持有它们 → 每次 Bind 泄漏一批已经被移出可视树的旧 visual。
+            foreach (LabelVisual visual in _labels.Values)
+            {
+                visual.Detach();
+            }
+
             _labels.Clear();
             _lamps.Clear();
 
@@ -443,8 +452,17 @@ namespace DSH_Modbus采集工具.Ui
                 _border.MouseLeftButtonDown += Border_MouseLeftButtonDown;
                 _editor.PreviewKeyDown += Editor_PreviewKeyDown;
                 _editor.LostFocus += Editor_LostFocus;
-                _model.PropertyChanged += (_, _) => Refresh();
+                _model.PropertyChanged += OnModelPropertyChanged;
             }
+
+            /// <summary>
+            /// 退订模型的 <see cref="INotifyPropertyChanged.PropertyChanged"/>。
+            /// <see cref="Bind"/> 重建画面前必须对旧 visual 逐个调用 —— 模型是长命对象，
+            /// 不退订的话模型会一直持有这批已移出可视树的旧 visual（内存泄漏 + 幽灵刷新）。
+            /// </summary>
+            public void Detach() => _model.PropertyChanged -= OnModelPropertyChanged;
+
+            private void OnModelPropertyChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
 
             /// <summary>空文字时留一个可见的小空框，否则那条连线就再也点不回来了。</summary>
             public void Refresh()
