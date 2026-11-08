@@ -67,6 +67,31 @@ namespace DSH_Modbus采集工具.Io
         public void Replace(Dictionary<string, string> comments) => _comments = comments;
 
         /// <summary>
+        /// 清空整份 IO 表并落盘（切换设备类型前用，2026-11-08 用户定案）。
+        /// <para>
+        /// 为什么必须清：注释表是按**当前品牌**的地址表校验过的产物 ——
+        /// 换品牌后同一批点位名可能越界、甚至元件根本不存在（如信捷的 X0–X77 对汇川的 X0–X1777）。
+        /// 留着不删只会得到一堆静默失效的点位。
+        /// </para>
+        /// <returns>清掉了几个点位（0 = 本来就没导入过，不必落盘）。</returns>
+        /// </summary>
+        public int ClearAll()
+        {
+            int n = _comments.Count;
+            if (n == 0)
+            {
+                return 0;
+            }
+
+            _comments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            XPoints.Clear();
+            YPoints.Clear();
+
+            Save();
+            return n;
+        }
+
+        /// <summary>
         /// 把 "X17" 这类点位名转成 <see cref="IoPoint"/>：仅接受 X / Y 元件，
         /// 且地址须在当前驱动定义范围内。
         /// </summary>

@@ -1983,7 +1983,44 @@ namespace DSH_Modbus采集工具
             }
 
             string name = DeviceTypeComboBox.SelectedItem as string ?? DeviceTypeComboBox.Text;
-            _currentDriver = DriverRegistry.GetByDisplayName(name);
+            CommDriver? next = DriverRegistry.GetByDisplayName(name);
+
+            // 程序化回填（取消切换时把下拉框选回原项）会再触发一次本方法 —— 挡掉
+            if (_revertingDeviceType)
+            {
+                return;
+            }
+
+            // 只有**真的换了品牌**才谈得上清理；重建点位集/重解析在下面统一做
+            if (!ReferenceEquals(next, _currentDriver))
+            {
+                DriverSwitchImpactKind impact = ConfirmDriverSwitch(next);
+                if (impact == DriverSwitchImpactKind.Cancelled)
+                {
+                    // 用户反悔：把下拉框选回原来那一项。
+                    // ⚠️ 必须罩在 _revertingDeviceType 里 —— 否则这次回填又会进本方法一次
+                    _revertingDeviceType = true;
+                    try
+                    {
+                        DeviceTypeComboBox.SelectedItem = _currentDriver?.DisplayName;
+                        if (DeviceTypeComboBox.SelectedIndex < 0)
+                        {
+                            // 理论上不会发生（原驱动一定在列表里）；兜底回第 0 项而不是留空
+                            DeviceTypeComboBox.SelectedIndex = 0;
+                        }
+                    }
+                    finally
+                    {
+                        _revertingDeviceType = false;
+                    }
+
+                    return;
+                }
+
+                ApplyDriverSwitchCleanup(impact);
+            }
+
+            _currentDriver = next;
 
             // 换驱动后 X/Y 的 Modbus 地址随之变化，按新驱动重建点位地址（构造期尚未就绪，跳过）
             if (_ioInitialized)
@@ -2005,6 +2042,111 @@ namespace DSH_Modbus采集工具
             RefreshGlobalVarView();
 
             UpdateOverviewStatus();
+        }
+
+        /// <summary>取消切换时回填下拉框用的闸门（与 <c>_restoringNicSelection</c> 同一手法）。</summary>
+        private bool _revertingDeviceType;
+
+        /// <summary>确认切换的结果：取消 / 没东西要删 / 用户确认要删。</summary>
+        private enum DriverSwitchImpactKind
+        {
+            /// <summary>用户点了取消（或关掉了确认框）。</summary>
+            Cancelled,
+
+            /// <summary>确实换了品牌，但没有任何东西会被删 —— 静默切换。</summary>
+            NothingToDelete,
+
+            /// <summary>用户确认，需要清映射地址 + 删元件监控项。</summary>
+            Confirmed,
+        }
+
+        /// <summary>
+        /// 切换设备类型前的确认（2026-11-08 用户定案）。
+        ///
+        /// <para>
+        /// **为什么要问**：换品牌会清掉全局变量的映射地址、删掉自由监控里的元件监控项 ——
+        /// 这两件事不可撤销，而切换本身只是一个下拉框动作，用户很容易误触。
+        /// </para>
+        /// <para>
+        /// **为什么要先算数字**：弹框里要写清「将删除 N 个」。数字为 0 时**不弹框直接切** ——
+        /// 没有东西会丢的时候还拦一道，会让用户养成「看都不看就点确定」的习惯，
+        /// 真正有删除时那道确认也就失效了。
+        /// </para>
+        /// </summary>
+        private DriverSwitchImpactKind ConfirmDriverSwitch(CommDriver? next)
+        {
+            int mapped = DriverSwitchImpact.CountMappedVariables(
+                _globalVarSet.Items.Select(x => x.Model));
+
+            int elements = DriverSwitchImpact.CountElementMonitorItems(
+                _monitorSet.Items.Select(x => x.Model));
+
+            int ioPoints = DriverSwitchImpact.CountIoPoints(
+                _ioSet.XPoints.Count, _ioSet.YPoints.Count);
+
+            string prompt = DriverSwitchImpact.BuildPrompt(
+                next?.DisplayName ?? DeviceTypeComboBox.Text, mapped, elements, ioPoints);
+
+            if (prompt.Length == 0)
+            {
+                return DriverSwitchImpactKind.NothingToDelete;
+            }
+
+            // danger: true —— 这是破坏性操作，确定钮实心红、默认焦点在「取消」
+            bool ok = ThemeMessageDialog.Confirm(
+                this,
+                "切换设备类型",
+                prompt,
+                danger: true,
+                confirmText: "切换并删除");
+
+            return ok ? DriverSwitchImpactKind.Confirmed : DriverSwitchImpactKind.Cancelled;
+        }
+
+        /// <summary>
+        /// 执行切换带来的清理。只在用户确认后调用。
+        /// <para>
+        /// 顺序要紧：先清地址、再删监控项与 IO 表 —— 每步各自 <c>Save()</c> 写盘，
+        /// 中途中断也只会在「已清地址、未删项」这个可接受的状态停下（下次切换会再清一遍）。
+        /// </para>
+        /// </summary>
+        private void ApplyDriverSwitchCleanup(DriverSwitchImpactKind impact)
+        {
+            if (impact != DriverSwitchImpactKind.Confirmed)
+            {
+                return;
+            }
+
+            int cleared = _globalVarSet.ClearAllAddresses();
+            if (GlobalVarItemsControl != null)
+            {
+                // 地址框走的是「失焦提交」，不会自动跟着模型变 —— 必须整行重建
+                GlobalVarItemsControl.Items.Refresh();
+            }
+
+            int removed = _monitorSet.RemoveElementItems();
+            if (removed > 0)
+            {
+                MonitorItemsControl?.Items.Refresh();
+            }
+
+            int ioCleared = _ioSet.ClearAll();
+            if (ioCleared > 0)
+            {
+                // 点位列表已由 ClearAll 清空，界面上把「空提示」同步过去。
+                // ⚠️ 这里**不调** RebuildIoPoints：本方法在 _currentDriver 赋值**之前**执行，
+                // 此刻重建会用旧驱动 —— 随后的正常流程会按新驱动重建一次。
+                ApplyIoPage();
+            }
+
+            // 清理结果记一条运行日志：这三个数字事后要能查（重启后只会看到「地址都没了」）
+            if (cleared > 0 || removed > 0 || ioCleared > 0)
+            {
+                AppendDeviceLog(
+                    $"已切换设备类型：清空 {cleared} 个映射地址、删除 {removed} 个元件监控项、"
+                    + $"清除 IO 表 {ioCleared} 个点位",
+                    DeviceLogLevel.Warning);
+            }
         }
 
         /// <summary>

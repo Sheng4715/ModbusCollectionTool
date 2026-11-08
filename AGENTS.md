@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **60750 B / 余量约 4.4 KB**；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **61370 B / 余量约 3.8 KB**；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 
@@ -95,6 +95,7 @@ DSH_Modbus采集工具/
 │   ├── AcquisitionConstant.cs  # # 开头的常量字面量（语法 / 进制自标定），方案 B
 │   ├── LiveImageStore.cs       # 背景图拷贝规则（同名加序号 / 同内容复用）
 │   ├── LiveCoordinateText.cs   # 卡片坐标框文本规则（只接受整数）
+│   ├── DriverSwitchImpact.cs   # 切换设备类型的影响统计 + 确认文案（P4.3）
 │   └── AppTitle.cs             # 应用标题：默认值 / 清洗 / 默认识别（P5.6）
 ├── Logging/                    # 日志（无 WPF）
 │   ├── DeviceLogFileWriter.cs  # 按天追加 .log + 跨天换文件 + 失败自愈
@@ -459,6 +460,7 @@ public sealed class MyDialog : DialogWindow
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备连接字段 | `DeviceConfigPanel` + `SetInputsEnabled` |
+| **切换设备类型（品牌）** | `DeviceTypeComboBox_SelectionChanged` → `ConfirmDriverSwitch`（计数 + 确认框）→ `ApplyDriverSwitchCleanup`（清映射地址 / 删元件监控项 / 清 IO 表）→ 才换 `_currentDriver`。纯逻辑 `Modeling/DriverSwitchImpact.cs`，执行在 `GlobalVarItemSet.ClearAllAddresses` / `MonitorItemSet.RemoveElementItems` / `IoPointSet.ClearAll`（§7.6）。⚠️ 取消要回填下拉框并罩 `_revertingDeviceType`；清理必须在 `_currentDriver` 赋值之前 |
 | 总览状态格式 / 底栏文字颜色 | 窗口 `BuildConnectionDetail()` 拼串 → `Ui/StatusBarPresenter.cs`（`Set` / `RefreshDetail` / `ReapplyTheme`）；窗口侧 `SetStatus` / `UpdateOverviewStatus` 只是薄包装 |
 | 底栏布局/对齐、最大化被任务栏遮住 | 主体 Grid 末尾的底栏 `Border`（§3.5，**改前必读**）；`Ui/MaximizedInset.cs`（§3.6） |
 | 自动重连退避/触发/取消 | `Polling/ReconnectPolicy.cs`（退避表）+ `Polling/ConnectionSession.cs`（目标/计数）+ 窗口 `StartReconnect` / `CancelReconnect`（§6.1） |

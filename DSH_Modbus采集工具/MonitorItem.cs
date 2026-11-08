@@ -821,6 +821,43 @@ namespace DSH_Modbus采集工具
             Save();
         }
 
+        /// <summary>
+        /// 删除所有**按元件名**的监控项，保留引用全局变量的行（切换设备类型前用，2026-11-08 用户定案）。
+        /// <para>
+        /// 为什么只删元件项：元件名（<c>HD100</c> / <c>D0</c>）绑的是具体品牌的地址表，
+        /// 换品牌后可能根本不存在；而变量行写的是**变量名**，变量本身还在（只是映射地址被清空了），
+        /// 它应当保留下来等用户重新填地址 —— 删掉等于把用户的组织结构也一起扔了。
+        /// </para>
+        /// <returns>实际删除了几项（0 = 本来就没有元件项，不必落盘）。</returns>
+        /// </summary>
+        public int RemoveElementItems()
+        {
+            var doomed = _items.Where(x => !x.Model.IsVariable).ToList();
+            if (doomed.Count == 0)
+            {
+                return 0;
+            }
+
+            foreach (MonitorItem item in doomed)
+            {
+                _items.Remove(item);
+            }
+
+            // 序号重排，避免出现「显示 2、5」这种跳号
+            for (int i = 0; i < _items.Count; i++)
+            {
+                MonitorItem row = _items[i];
+                if (row.Model.Id != i + 1)
+                {
+                    row.Model.Id = i + 1;
+                    row.RaiseIdChanged();
+                }
+            }
+
+            Save();
+            return doomed.Count;
+        }
+
         /// <summary>某项的类型 / 格式 / 编号 / 备注被改动后调用：重解析 + 落盘。</summary>
         public void AfterChange(MonitorItem item)
         {

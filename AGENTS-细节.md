@@ -1388,6 +1388,7 @@ ScrollViewer                        ← 画布放不下就滚
   绑定目标是 `EffectiveEnabled`（`Model.Enabled && !HasConfigError`），`Click` 早于源更新，
   此时读 `item.Enabled` 拿到旧值会把「关掉」当成「打开」、反而去连一次（实测：点关后连接数不降反升）
 
+
 ### 7.3 项目信息（P5.3）
 
 设置页第三张卡，显示 **名称 / 版本 / 构建日期 / 运行环境**。全是常量，在 `Window_Loaded` 里 `RefreshProjectInfo()` 填一次。
@@ -1490,6 +1491,53 @@ ScrollViewer                        ← 画布放不下就滚
 - **功能自验证**：`.tmp/AppTitleCheck`（`AppTitleCheck.exe` 42 项纯逻辑断言 + `uia-title.ps1` 端到端）。
   ⚠️ UIA 有个坑：**带 Owner 的对话框是主窗口的子孙节点，不是独立顶层窗口** ——
   按顶层窗口枚举找一个都找不到（登录框实测踩过）。取 `$win.FindFirst(TreeScope.Descendants, ControlType.Window)`。
+
+### 7.6 切换设备类型的清理与确认（P4.3，2026-11-08）
+
+切换「设备类型」（品牌）是**破坏性操作**：它会清掉三类按旧品牌地址表建立起来的配置。
+`DeviceTypeComboBox_SelectionChanged` 里先问、再清、最后才真正换驱动。
+
+| 会被处理的东西 | 处置 | 为什么 |
+|---|---|---|
+| 全局变量的**映射地址** | **清空**（变量本身保留：名字 / 类型 / 注释都在） | 地址是元件名，换品牌后可能不存在或指向别处 |
+| 自由监控的**元件监控项** | **整条删除** | 元件名绑具体品牌的地址表，换品牌后可能根本不存在 |
+| **已导入的 IO 表** | **整份清除**并落盘 | 注释表是按旧品牌校验过的产物，换品牌后点位可能越界/不存在 |
+| 自由监控里**引用全局变量**的行 | **保留** | 它靠变量名，变量还在，下一拍按新地址重解析 |
+
+**实现位置**：`Modeling/DriverSwitchImpact.cs`（纯逻辑：计数 + 提示文案）+ `MainWindow.xaml.cs` 的
+`ConfirmDriverSwitch` / `ApplyDriverSwitchCleanup` + 各集合的执行方法
+（`GlobalVarItemSet.ClearAllAddresses` / `MonitorItemSet.RemoveElementItems` / `IoPointSet.ClearAll`）。
+
+**几条容易踩的**：
+
+- ⚠️ **三个数字先算再问**：弹框里要写「将删除 N 个」。`DriverSwitchImpact` 是纯逻辑，
+  `.tmp/DriverSwitchCheck` 31 项断言覆盖（含「真实表的规模：15 条里 11 条有地址」这种口径）。
+- ⚠️ **三项都是 0 时不弹框、直接切**：没有东西会丢的时候还拦一道，会让用户养成
+  「看都不看就点确定」的习惯，真正有删除时那道确认也就失效了（`BuildPrompt` 返回空串即此意）。
+- ⚠️ **取消必须把下拉框选回原项**，且回填要罩在 `_revertingDeviceType` 闸门里 ——
+  否则这次回填又会进 `SelectionChanged` 一次。与 `_restoringNicSelection` 同一手法。
+- ⚠️ **清理必须在 `_currentDriver` 赋值之前**：`RebuildIoPoints` 用 `_currentDriver`，
+  在清理里调它就会用**旧驱动**重建一遍（先删了又按旧品牌建回来）。清理里只调 `ApplyIoPage`
+  刷空提示，真正的重建留给后面的正常流程。
+- **确认框 `danger: true`**：确定钮实心红、默认焦点落「取消」（§9.3 第 9 条）。
+- **确认后记一条运行日志**（WARNING 级）：`已切换设备类型：清空 N 个映射地址、删除 N 个元件监控项、清除 IO 表 N 个点位`。
+  这三个数字事后要能查 —— 重启后用户只会看到「地址都没了」。
+- **只在真的换了品牌时才问**：`ReferenceEquals(next, _currentDriver)` 为真（同一个对象）直接跳过，
+  避免构造期 `SelectedIndex = 0` 也弹框。
+
+**验证**：`.tmp/DriverSwitchCheck` 31 项纯逻辑断言；UIA 端到端两条路径 ——
+取消（下拉框回退到信捷、三类数据一个没动）、确认（汇川 + 地址全空 + 只剩变量行 + IO 表 0 点位 + 日志一条）。
+弹框实测文案：
+
+```
+切换到「汇川Easy系列」后，以下内容将被删除且无法撤销：
+
+· 全局变量表中的 2 个映射地址（变量本身保留）
+· 自由监控表中的 2 个元件监控项
+· 已导入的 IO 表（4 个点位）
+
+确定要切换吗？
+```
 
 ## 8. 通讯驱动标准
 

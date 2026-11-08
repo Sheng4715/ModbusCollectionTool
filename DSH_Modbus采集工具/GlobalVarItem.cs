@@ -308,6 +308,48 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        /// <summary>
+        /// 清空**所有**变量的映射地址（切换设备类型前用，2026-11-08 用户定案）。
+        /// <para>
+        /// 变量本身保留（名称 / 类型 / 注释都不动），只把 <c>Address</c> 置空、
+        /// 连带把解析状态清干净 —— 否则会留下「地址空了、ResolvedAddress 还指着旧品牌」的鬼状态。
+        /// </para>
+        /// <returns>实际清掉了几个（0 = 本来就没有映射地址）。</returns>
+        /// </summary>
+        public int ClearAllAddresses()
+        {
+            int cleared = 0;
+
+            foreach (GlobalVariable v in _set.Items)
+            {
+                if (!v.HasAddress)
+                {
+                    continue;
+                }
+
+                v.Address = string.Empty;
+
+                // 解析产物必须一起清：它们指向的是**旧品牌**的绝对地址
+                v.ResolvedAddress = -1;
+                v.ResolveError = string.Empty;
+                v.IsReadOnly = false;
+                cleared++;
+            }
+
+            if (cleared > 0)
+            {
+                // 界面包装的 ResolveError 也刷一遍，别留着上次的红字
+                foreach (GlobalVarItem item in _items)
+                {
+                    item.ResolveError = string.Empty;
+                }
+
+                Save();
+            }
+
+            return cleared;
+        }
+
         /// <summary>落盘（只写定义）</summary>
         public bool Save() => _set.Save();
 
