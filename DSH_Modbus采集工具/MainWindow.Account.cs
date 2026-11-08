@@ -32,12 +32,23 @@ namespace DSH_Modbus采集工具
         private bool CanWriteMonitor => UserRules.CanWriteMonitor(_currentRole);
 
         /// <summary>
+        /// 当前账户能不能改**应用标题**（2026-11-08 用户新增）。
+        /// <para>
+        /// ⚠️ 与 <see cref="CanWriteMonitor"/> 一样走 <see cref="UserRules"/>，不要在窗口里
+        /// 直接写 <c>_currentRole == UserRole.Engineer</c> —— 权限规则要能离线断言，
+        /// 且两处判定必须同源（否则将来改角色定义会漏改一处）。
+        /// </para>
+        /// </summary>
+        private bool CanEditAppTitle => UserRules.CanEditAppTitle(_currentRole);
+
+        /// <summary>
         /// 初始化账户按钮。在构造函数末尾调一次（那时 XAML 里的控件都已就位）。
         /// </summary>
         private void InitializeAccount()
         {
             SyncAccountButton();
             ApplyMonitorWritePermission();
+            ApplyAppTitlePermission();
         }
 
         /// <summary>导航底部账户按钮的文字 = 当前用户名。</summary>
@@ -107,6 +118,9 @@ namespace DSH_Modbus采集工具
 
             SyncAccountButton();
             ApplyMonitorWritePermission();
+
+            // 标题权限跟着账户走：登录 / 注销后立刻生效（无需重开设置页）
+            ApplyAppTitlePermission();
         }
     }
 }

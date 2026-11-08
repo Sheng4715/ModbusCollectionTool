@@ -166,6 +166,22 @@ namespace DSH_Modbus采集工具.Themes
             Save(_settings);
         }
 
+        // ==== 应用标题 ====
+
+        /// <summary>
+        /// 自定义应用标题；空串表示「没设置过」，界面用 <see cref="Modeling.AppTitle"/> 的默认值。
+        /// </summary>
+        public static string AppTitleText => _settings.AppTitleText;
+
+        /// <summary>记住自定义应用标题并落盘。传空串表示恢复默认。</summary>
+        public static void SetAppTitle(string? title)
+        {
+            // 归一在入口做一次：落到 json 里的必须是清洗后的值（换行/超长/纯空白都要挡住）
+            string normalized = Modeling.AppTitle.Normalize(title);
+            _settings.AppTitleText = normalized;
+            Save(_settings);
+        }
+
         /// <summary>
         /// 显式选了默认目录时，存空串而非绝对路径（见 <see cref="SetMode"/>）。
         /// 由 <see cref="Save"/> 统一调用，**不放在各个 Setter 里**。
@@ -332,6 +348,20 @@ namespace DSH_Modbus采集工具.Themes
             /// </para>
             /// </summary>
             public bool AutoConnectPlc { get; set; } = true;
+
+            /// <summary>
+            /// 自定义应用标题（P5.6）。空串 = 没设置过，界面用 <c>Modeling.AppTitle</c> 的默认值。
+            /// <para>
+            /// 与 <see cref="LogDirectory"/> 同一不变式：**等于默认值时也归回空串**
+            /// （由 <see cref="Save"/> 统一处理），这样「用户原样敲一遍默认标题」不会
+            /// 在 json 里留下一条看着像自定义、实际与默认相同的记录。
+            /// </para>
+            /// <para>
+            /// 旧版 json 没有这个字段 → 反序列化得空串 → 界面显示默认标题，
+            /// 与升级前完全一致，无需迁移。
+            /// </para>
+            /// </summary>
+            public string AppTitleText { get; set; } = string.Empty;
         }
 
         private static AppSettings Load()
@@ -375,6 +405,12 @@ namespace DSH_Modbus采集工具.Themes
                 // （如 SetTargetNic）都会把「看一眼路径」留下的绝对默认路径写进文件。
                 // 放在这里，调用方就不必记得这件事。
                 NormalizeLogDirectory();
+
+                // 标题同理：等于默认值（或纯空白）就归回空串，与「没设置过」同一个表示
+                if (Modeling.AppTitle.IsDefault(_settings.AppTitleText))
+                {
+                    _settings.AppTitleText = string.Empty;
+                }
 
                 string json = JsonSerializer.Serialize(
                     settings,

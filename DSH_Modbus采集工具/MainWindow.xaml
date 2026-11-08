@@ -2138,7 +2138,7 @@
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="16,0,8,0" VerticalAlignment="Center">
                     <TextBlock Text="&#xE71D;" FontFamily="{StaticResource IconFont}" FontSize="15"
                            Foreground="{DynamicResource Brush.Accent}" VerticalAlignment="Center"/>
-                    <TextBlock Text="数据采集Demo" FontSize="13" Foreground="{DynamicResource Brush.Text.Primary}"
+                    <TextBlock x:Name="TitleBarCaption" Text="数据采集Demo" FontSize="13" Foreground="{DynamicResource Brush.Text.Primary}"
                            Margin="8,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
 
@@ -3782,8 +3782,8 @@
                     </StackPanel>
 
                     <!-- ================= 设置（P5） =================
-                         主题外观（P5-1）+ 日志保存（P5-2）+ 项目信息（P5-3），见 Brief.md P5。
-                         三张卡都是实装；项目信息的值由 AppInfo + csproj 生成的构建日期常量提供。 -->
+                         主题外观（P5.1）+ 日志保存（P5.2）+ 开机自启动（P5.5）+ 应用标题（P5.6）+ 项目信息（P5.3）。
+                         五张卡都是实装；项目信息的值由 AppInfo + csproj 生成的构建日期常量提供。 -->
                     <StackPanel x:Name="SettingsPanel" Visibility="Collapsed"
                                 d:Visibility="Collapsed">
 
@@ -3793,10 +3793,47 @@
                                    Foreground="{DynamicResource Brush.Text.Primary}"
                                    Margin="0,10,0,10"/>
 
-                        <!-- 显示外观 -->
+                        <!-- 应用标题（P5.6） -->
                         <Border Background="{DynamicResource Brush.Card.Background}"
                                 BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
                                 CornerRadius="8" Padding="24,20,24,20">
+                            <StackPanel>
+                                <TextBlock Text="应用标题"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.Text.Primary}"/>
+
+                                <!-- 改完**失焦生效**（与 IP / 端口、日志路径同一约定）。
+                                     ⚠️ 只有工程师能改，置灰走代码设 IsEnabled（这里只有一个固定控件，
+                                     不像自由监控那格在 DataTemplate 里要防重建），见 ApplyAppTitlePermission。
+                                     没有「恢复默认」按钮：**清空输入框即恢复默认**（空串 = 没设置过）。 -->
+                                <Grid Margin="0,16,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0"
+                                               Text="标题"
+                                               FontSize="14"
+                                               Foreground="{DynamicResource Brush.Text.Primary}"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,12,0"/>
+
+                                    <TextBox x:Name="AppTitleTextBox"
+                                             Style="{StaticResource FormTextBox}"
+                                             Grid.Column="1"
+                                             Width="Auto"
+                                             HorizontalAlignment="Stretch"
+                                             MaxLength="40"
+                                             LostFocus="AppTitleTextBox_LostFocus"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 显示外观 -->
+                        <Border Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -3838,6 +3875,51 @@
                                     </StackPanel>
                                 </Border>
                             </Grid>
+                        </Border>
+
+                        <!-- 开机自启动（P5.5） -->
+                        <Border Background="{DynamicResource Brush.Card.Background}"
+                                BorderBrush="{DynamicResource Brush.Card.Border}" BorderThickness="1"
+                                CornerRadius="8" Padding="24,20,24,20" Margin="0,16,0,0">
+                            <StackPanel>
+                                <!-- 开关行：与「日志保存」卡同款两列（左标题 + 右开关）。
+                                     开关自带状态文字「开 / 关」在轨道左侧，故不再单列「启用」标签。 -->
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="开机自启动"
+                                                   FontSize="14" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource Brush.Text.Primary}"/>
+                                        <TextBlock Text="登录 Windows 后自动启动本程序，无需手动双击。"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource Brush.Text.Muted}"
+                                                   Margin="0,4,0,0"/>
+                                    </StackPanel>
+
+                                    <CheckBox x:Name="AutoStartToggle"
+                                              Grid.Column="1"
+                                              Style="{StaticResource ToggleSwitch}"
+                                              Content="开"
+                                              Margin="16,0,0,0"
+                                              VerticalAlignment="Center"
+                                              Checked="AutoStartToggle_Changed"
+                                              Unchecked="AutoStartToggle_Changed"/>
+                                </Grid>
+
+                                <!-- 提示行：正常时整行隐藏（Collapsed 不占位）。
+                                     只说明「登记的是另一个 exe」这一种界面看不出来的情形；
+                                     被 Windows「启动应用」页禁用时**不提示** —— 开关已显示「关」。 -->
+                                <TextBlock x:Name="AutoStartStatusText"
+                                           FontSize="12"
+                                           Foreground="{DynamicResource Brush.Text.Muted}"
+                                           Margin="0,10,0,0"
+                                           TextWrapping="Wrap"
+                                           Visibility="Collapsed"/>
+                            </StackPanel>
                         </Border>
 
                         <!-- 日志保存（P5-2） -->

@@ -71,6 +71,20 @@ namespace DSH_Modbus采集工具.Modeling
         public static bool CanWriteMonitor(UserRole role) => role == UserRole.Engineer;
 
         /// <summary>
+        /// 这个角色能不能改**应用标题**（P5.6，2026-11-08 用户新增）。
+        /// <para>
+        /// 用户原话：「该功能只有工程师权限可操作，无权限时输入框置灰」。
+        /// 与 <see cref="CanWriteMonitor"/> 并列，**不要**在窗口里另写一份
+        /// <c>== UserRole.Engineer</c>：两个判定必须同源，将来改角色定义才不用满工程找。
+        /// </para>
+        /// <para>
+        /// ⚠️ 这是继自由监控之后**第二个**受权限管控的功能 —— 2026-11-06 那条
+        /// 「不要顺手给别的功能加限制」仍然有效，别据此把采集 / 扫码器 / 全局变量也锁上。
+        /// </para>
+        /// </summary>
+        public static bool CanEditAppTitle(UserRole role) => role == UserRole.Engineer;
+
+        /// <summary>
         /// 尝试登录工程师。成功返回 <c>true</c> 并给出角色；失败给出原因。
         /// <para>
         /// ⚠️ 校验用 <see cref="string.Equals(string,string,StringComparison)"/> 的

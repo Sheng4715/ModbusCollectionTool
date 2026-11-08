@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **59133 B / 余量约 6.0 KB**；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **60750 B / 余量约 4.4 KB**；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 
@@ -94,7 +94,8 @@ DSH_Modbus采集工具/
 │   ├── AcquisitionSource.cs    # 来源解析（常量 → 系统变量 → 全局变量）
 │   ├── AcquisitionConstant.cs  # # 开头的常量字面量（语法 / 进制自标定），方案 B
 │   ├── LiveImageStore.cs       # 背景图拷贝规则（同名加序号 / 同内容复用）
-│   └── LiveCoordinateText.cs   # 卡片坐标框文本规则（只接受整数）
+│   ├── LiveCoordinateText.cs   # 卡片坐标框文本规则（只接受整数）
+│   └── AppTitle.cs             # 应用标题：默认值 / 清洗 / 默认识别（P5.6）
 ├── Logging/                    # 日志（无 WPF）
 │   ├── DeviceLogFileWriter.cs  # 按天追加 .log + 跨天换文件 + 失败自愈
 │   └── DisconnectReasonClassifier.cs  # 异常原文 → 简短中文（底栏与日志共用）
@@ -117,6 +118,9 @@ DSH_Modbus采集工具/
 │   ├── NumberInputDialog.cs    # STRING 长度等单值输入弹窗
 │   ├── LoginDialog.cs          # 账户登录框（用户名下拉 + 密码掩码 + 注销/登录）
 │   └── ThemeMessageDialog.cs   # 全应用唯一的提示 / 确认弹框（Info / Confirm，§9.3）
+├── Startup/                    # 开机自启动（无 WPF）
+│   ├── AutoStartCommand.cs     # 纯逻辑：命令串 / 同 exe 判定 / 禁用记录判据
+│   └── AutoStartRegistry.cs    # 只做注册表 IO（HKCU Run + StartupApproved）
 └── Drivers/
     ├── CommDriver.cs           # ModbusArea / NumberBase / AddressArea / CommDriver
     ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
@@ -124,7 +128,7 @@ DSH_Modbus采集工具/
     └── ModbusHeartbeat.cs      # 独立心跳调度与异常分类
 ```
 
-> **不引用 WPF 的 8 个目录**（可脱离界面阅读/断言）：`Drivers/` `Expressions/` `Io/` `Logging/` `Modeling/` `Net/` `Polling/` `Scanners/` —— 它们**没有任何** `using System.Windows*`。控件写入（分页显隐、绑列、弹窗）一律留在 `MainWindow.*.cs`；新增逻辑按同一原则归位。
+> **不引用 WPF 的 9 个目录**（可脱离界面阅读/断言）：`Drivers/` `Expressions/` `Io/` `Logging/` `Modeling/` `Net/` `Polling/` `Scanners/` `Startup/` —— 它们**没有任何** `using System.Windows*`。控件写入（分页显隐、绑列、弹窗）一律留在 `MainWindow.*.cs`；新增逻辑按同一原则归位。
 > **引 WPF 的**：`Ui/` `Themes/` + 根目录的 `MainWindow*.cs` 八个 partial、`MonitorItem.cs` / `GlobalVarItem.cs` / `AcquisitionTaskItem.cs` / `SystemVarRow.cs` / `App.xaml.cs`。
 > ⚠️ 判断该不该碰 WPF 看**所在目录**：`MonitorItem.cs` 是 `DataPoint` 的界面包装、碰 WPF 属正常，但它在**根目录** —— 不要以为「根目录都不碰」。
 >
@@ -157,7 +161,7 @@ Window
 | `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **两档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接 / 右交互，见 §5.9） |
 | `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，见 §5.7）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5 只读清单，见 §5.3）。⚠️ 第四档「扫码器」已于 2026-11-04 删除，并入设备连接页 |
-| `SettingsNav` 设置 | `SettingsPanel` | 显示外观（P5.1）+ 日志保存（P5.2）+ 项目信息（P5.3）。⚠️ 「自动连接」卡已于 2026-11-05 删除：PLC 的搬去设备连接页，扫码器改用行上「启用」（§7.2） |
+| `SettingsNav` 设置 | `SettingsPanel` | **卡片顺序（2026-11-08 定案）**：应用标题（P5.6）→ 显示外观（P5.1）→ 开机自启动（P5.5）→ 日志保存（P5.2）→ 项目信息（P5.3）。⚠️ 「自动连接」卡已于 2026-11-05 删除：PLC 的搬去设备连接页，扫码器改用行上「启用」（§7.2） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
 
@@ -315,6 +319,8 @@ Window
 | **主题（P5.1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged`（底栏状态色映射在 `Ui/StatusBarPresenter.cs`） |
 | **日志落盘（P5.2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveToggle_Changed` / `SyncLogSaveToggle` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（§7.1） |
 | **项目信息（P5.3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（§7.3） |
+| **开机自启动（P5.5）** | `Startup/AutoStartCommand.cs`（纯逻辑：命令串 / 同 exe 判定 / 禁用记录 `& 0x01` 判据）+ `Startup/AutoStartRegistry.cs`（HKCU `Run` + `StartupApproved` 读写）；窗口侧 `AutoStartToggle_Changed` / `SyncAutoStartToggle` / `RefreshAutoStartStatus`（§7.4） |
+| **应用标题（P5.6）** | `Modeling/AppTitle.cs`（纯逻辑：两个默认值 / 清洗换行与超长 / 默认识别）+ `ThemeManager.AppTitleText` / `SetAppTitle`；窗口侧 `ApplyAppTitle` / `ApplyAppTitlePermission` / `AppTitleTextBox_LostFocus`；权限 `UserRules.CanEditAppTitle`（§7.5）。⚠️ 改的是**两处**：`TitleBarCaption` + `Window.Title`。⚠️ 卡上只有「标题」+ 输入框：**清空即恢复默认**，没有按钮、没有账户说明（2026-11-08 定案） |
 | 关键字段 | `_session` / `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter` / `_logWriter` / `_statusBar`。**`volatile` 共 7 个**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
@@ -449,7 +455,7 @@ public sealed class MyDialog : DialogWindow
 | **新增 / 改对话框（必读）** | 继承 `Ui/DialogWindow.cs` + 用 `Dialog.*` 样式，别复用主窗口样式 —— 见 **§9.3 对话框控件** |
 | **弹提示 / 弹确认** | `Ui/ThemeMessageDialog.cs` 的 `Info` / `Confirm`（**不要 `MessageBox.Show`**）—— 见 **§9.3 第 9 条** |
 | **加/改主题、深色适配、跟随系统** | `Themes/`（`Light.xaml` / `Dark.xaml` 同键）+ `Themes/ThemeManager.cs`；C# 侧画刷见 §9.2 |
-| **设置页（P5）** | `SettingsPanel` + `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；项目信息 `RefreshProjectInfo`（§7.3）。⚠️ 自动连接**不在设置页**了（2026-11-05）：PLC 的在 `DeviceConfigPanel` 表单末行 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` / `TryAutoConnect`，扫码器用行上「启用」（§7.2） |
+| **设置页（P5）** | `SettingsPanel` + `SettingsNav` + `Nav_Checked`；主题分段 `ThemeSegment_Checked`；日志开关 `LogSaveToggle_Changed`、路径 `LogDirectoryTextBox_LostFocus`；开机自启动 `AutoStartToggle_Changed` / `SyncAutoStartToggle` / `RefreshAutoStartStatus`（§7.4）；应用标题 `AppTitleTextBox_LostFocus` / `ApplyAppTitlePermission`（§7.5，**工程师专属**，清空即恢复默认）；项目信息 `RefreshProjectInfo`（§7.3）。⚠️ 自动连接**不在设置页**了（2026-11-05）：PLC 的在 `DeviceConfigPanel` 表单末行 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` / `TryAutoConnect`，扫码器用行上「启用」（§7.2） |
 | 改导航项/页面显隐 | `MainWindow.xaml` 导航区 + `Nav_Checked` |
 | 加通讯品牌 | `Drivers/DriverRegistry.cs`（§8） |
 | 加设备连接字段 | `DeviceConfigPanel` + `SetInputsEnabled` |

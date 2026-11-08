@@ -1410,6 +1410,87 @@ ScrollViewer                        ← 画布放不下就滚
 - 生成的 `BuildInfo.g.cs` 落在 `obj/` 下，**不要手改、也不要提交**（已在 `.gitignore` 覆盖范围内）
 - 四行标签用 `SharedSizeGroup="InfoLabel"` 对齐；**末行不留底边距**（否则卡片底部多出一段空白）
 
+### 7.4 开机自启动（P5.5，2026-11-08）
+
+设置页第三张卡（在「日志保存」与「项目信息」之间），右边是 `AutoStartToggle`（`ToggleSwitch`）。
+
+**实现位置**：`Startup/AutoStartCommand.cs`（**纯逻辑**，无 WPF/无注册表）+ `Startup/AutoStartRegistry.cs`（只做注册表 IO）。
+窗口侧三个处理器在 `MainWindow.xaml.cs`：`AutoStartToggle_Changed` / `SyncAutoStartToggle` / `RefreshAutoStartStatus`。
+
+| 项 | 值 |
+|---|---|
+| 位置 | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`（**当前用户，不需要管理员**） |
+| 值名 | `DSH_Modbus采集工具`（与产品名一致，任务管理器「启动应用」页显示的就是它） |
+| 值 | `"<exe 完整路径>"` —— **带引号**（路径含空格），**不带任何参数** |
+
+**几条容易踩的**：
+
+- ⚠️ **持久化不写 `app-settings.json`**：真值只有一个，就是注册表。另存一份必然漂移 ——
+  用户在任务管理器「启动应用」页关掉它，json 里还写着「开」，下次启动界面就在撒谎。
+  故开关每次切换都是「写注册表 → 读回来 → 按读回结果回填」。
+- ⚠️ **「已启用」= 已登记 且 未被系统禁用 且 指向当前 exe**，三条缺一不可（`AutoStartRegistry.IsEnabled`）。
+  对应三种真实情形：没登记 / 被「启动应用」页单独禁用 / 登记的是旧路径（exe 被移动或换了发布目录）。
+  只判其一，开关就会撒谎。
+- ⚠️ **系统禁用记录的首字节判据是 `& 0x01`，不是「≥ 3」**：实际出现的四个值是
+  `0x02`/`0x06` = 启用、`0x03`/`0x07` = 禁用，按数值大小比较会把 `0x06` 这个**启用**态误判成禁用。
+  这个错误是 `.tmp/AutoStartCheck` 断言抓出来的（38 项），别改回去。
+- ⚠️ **打开开关时必须同时清掉 `StartupApproved` 的禁用记录**（写一条首字节 `0x02` 的 12 字节值）：
+  否则「Run 里有值 + 设置页开关是开的 + 开机就是不起来」，这是本功能最难向用户解释的状态。
+- **关闭只删 `Run` 里的值**，不动 `StartupApproved`（删不删都不影响结果，那条记录带着「何时被禁用」的时间戳，
+  留着与用户在「启动应用」页手动关掉后的系统状态一致）。值本来不存在时不算失败（幂等）。
+- **`ExecutablePath` 优先用 `Environment.ProcessPath`**，仅当它的文件名等于「程序集名 + .exe」时才采信；
+  否则退回 `AppContext.BaseDirectory + 程序集名 + .exe` —— 前者在 `dotnet exec` 一类宿主下会返回宿主的 exe，
+  照抄就会把 `dotnet.exe` 写进自启项。（本程序是 apphost 形态，正常路径走不到回退分支。）
+- **`_revertingAutoStart` 闸门**：`SyncAutoStartToggle(raiseEvents: false)` 程序化回填时挡住
+  `Checked` 事件再写一次注册表；写注册表**失败**时也走这条（否则「回填 → 再触发 → 再失败」）。
+  与 `_restoringNicSelection` / `_syncingByteOrderCombos` 同一手法。
+- **进设置页时重读一次**（`Nav_Checked` 的 `settingsVisible` 分支）：用户很可能在**本程序之外**
+  用任务管理器改掉了它，程序收不到任何通知，只有重读才不会显示旧状态。
+- **提示行只在需要用户处理时显示**（正常时 `Collapsed` 不占位，与日志保存卡的失败提示同一取向），两种：
+  ① 被「启动应用」页禁用；② 登记的是另一个路径（提示里带上那个旧路径）。
+  颜色走 `Brush.Warning` 琥珀，与日志写入失败提示同色。
+- **功能自验证**：`.tmp/AutoStartCheck`（`AutoStartCheck.exe` 38 项纯逻辑断言 +
+  `uia-e2e.ps1` / `uia-edge.ps1` / `uia-restart.ps1` 三段 UIA 端到端）。⚠️ 跑这些脚本会**真的改注册表**，
+  脚本末尾自带清场；跑完用 `Get-ItemProperty HKCU:\...\Run` 确认没有残留。
+
+### 7.5 应用标题（P5.6，2026-11-08）
+
+设置页**第一张卡**（最上方，「显示外观」之上）：只有一行标签「标题」+ 输入框，**失焦生效**。
+
+**实现位置**：`Modeling/AppTitle.cs`（**纯逻辑**：默认值 / 清洗 / 默认识别）+ `Themes/ThemeManager.cs`
+（`AppTitleText` / `SetAppTitle`，落 `app-settings.json`）+ 窗口侧 `ApplyAppTitle` / `ApplyAppTitlePermission` /
+`AppTitleTextBox_LostFocus`。
+
+| 项 | 值 |
+|---|---|
+| 标题栏那行字 | `TitleBarCaption`（`MainWindow.xaml` 里那个 `TextBlock`），默认 `数据采集Demo` |
+| `Window.Title` | 任务栏 / Alt+Tab，默认 `采集工具` |
+| 持久化 | `app-settings.json` → `AppTitleText`，**空串 = 没设置过** |
+| 权限 | `UserRules.CanEditAppTitle`（工程师），窗口侧 `CanEditAppTitle` 只是薄包装 |
+
+**设置页卡片顺序**（2026-11-08 用户定案）：**应用标题 → 显示外观 → 开机自启动 → 日志保存 → 项目信息**。
+
+**几条容易踩的**：
+
+- ⚠️ **两个默认值本来就不同**（`数据采集Demo` / `采集工具`），本次**刻意没有统一** ——
+  统一会改掉现有外观。所以未设置时各回各自默认，设置了才两处都换。
+- ⚠️ **必须清洗换行**：这个值要进 `TextBlock` 与窗口标题，含 `\r\n` 时标题栏那行会变两行、
+  把 48px 的标题栏撑变形（粘贴多行文本就会触发）。`AppTitle.Normalize` 把 `\r`/`\n`/`\t`
+  压成空格、连续空格合并、超 40 字截断并去掉截断处的尾部空白。
+- ⚠️ **卡片上只有这一个控件，不要再加第二个**（2026-11-08 用户定案）：曾有过「恢复默认」按钮与
+  「当前账户：X」说明文字，都被要求删掉。**清空输入框就是恢复默认**（空串 = 没设置过），
+  多一个按钮反而多一处要同步置灰；当前账户在导航底部那个按钮上一直显示着，卡片里重复一遍是噪声。
+- **这里可以直接设 `IsEnabled`**，与自由监控那格不同：自由监控在 `DataTemplate` 里、每行一份还会重建，
+  逐个设必然漏；这里只有一个固定控件。别把两者当成同一套写法。
+- **权限要跟账户走**：`MainWindow.Account.cs` 的 `InitializeAccount` 与 `AccountButton_Click`
+  都会调 `ApplyAppTitlePermission()`，登录 / 注销后立即生效，无需重开设置页。
+- **登录 / 注销本身不改标题**：标题是全局设置，注销只是降权限，不该把用户设的标题清掉。
+- **等默认值归空串放在 `Save()` 里**（与 `LogDirectory` 同一不变式）：用户原样敲一遍默认标题并失焦，
+  不该在 json 里留下一条看着像自定义、实际与默认相同的记录。
+- **功能自验证**：`.tmp/AppTitleCheck`（`AppTitleCheck.exe` 42 项纯逻辑断言 + `uia-title.ps1` 端到端）。
+  ⚠️ UIA 有个坑：**带 Owner 的对话框是主窗口的子孙节点，不是独立顶层窗口** ——
+  按顶层窗口枚举找一个都找不到（登录框实测踩过）。取 `$win.FindFirst(TreeScope.Descendants, ControlType.Window)`。
+
 ## 8. 通讯驱动标准
 
 新增品牌 = 在 `DriverRegistry.Drivers` 追加一个 `CommDriver`：

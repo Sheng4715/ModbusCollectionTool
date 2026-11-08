@@ -20,6 +20,7 @@ using DSH_Modbus采集工具.Expressions;
 using DSH_Modbus采集工具.Modeling;
 using DSH_Modbus采集工具.Net;
 using DSH_Modbus采集工具.Polling;
+using DSH_Modbus采集工具.Startup;
 using DSH_Modbus采集工具.Themes;
 using DSH_Modbus采集工具.Ui;
 
@@ -178,6 +179,13 @@ namespace DSH_Modbus采集工具
         /// 那些都不是用户意图，不该被写进持久化偏好。
         /// </summary>
         private bool _restoringNicSelection;
+
+        /// <summary>
+        /// 程序化回填开机自启动开关时为 <c>true</c>，挡住 <see cref="AutoStartToggle_Changed"/>
+        /// 把「回填」当成用户操作再写一次注册表。与 <c>_restoringNicSelection</c>、
+        /// <c>_syncingByteOrderCombos</c> 同一手法。
+        /// </summary>
+        private bool _revertingAutoStart;
 
         /// <summary>自由监控项集合（增删改 + 落盘 + 地址解析）。</summary>
         private readonly MonitorItemSet _monitorSet = new();
@@ -632,6 +640,14 @@ namespace DSH_Modbus采集工具
             SyncLogSaveToggle();
             ApplyLogDirectory(ThemeManager.LogDirectory);
 
+            // P5.5：开机自启动没有单独的持久化文件，真值就在注册表里，回填即读一次
+            SyncAutoStartToggle(raiseEvents: false);
+            RefreshAutoStartStatus();
+
+            // P5.6：自定义应用标题（两处：标题栏 + Window.Title）
+            ApplyAppTitle();
+            ApplyAppTitlePermission();
+
             // 连接参数与「自动连接」开关同理：启动时已从 app-settings.json 载入，这里只回填
             ApplyConnectionSettings();
             SyncAutoConnectToggle();
@@ -712,6 +728,12 @@ namespace DSH_Modbus采集工具
                 if (settingsVisible)
                 {
                     RefreshLogSaveStatus();
+
+                    // 自启动同理，且多一层原因：用户很可能在**本程序之外**（任务管理器
+                    // 「启动应用」页）把它关掉，那个改动本程序收不到通知 —— 只能进页面时重读一次，
+                    // 否则开关会一直显示着上一次的旧状态。
+                    SyncAutoStartToggle(raiseEvents: false);
+                    RefreshAutoStartStatus();
                 }
             }
 
@@ -842,6 +864,241 @@ namespace DSH_Modbus采集工具
             bool enabled = ThemeManager.LogSaveEnabled;
             LogSaveToggle.IsChecked = enabled;
             LogSaveToggle.Content = enabled ? "开" : "关";
+        }
+
+        // ---------- 设置：应用标题（P5.6） ----------
+
+        /// <summary>
+        /// 把自定义标题应用到两处：标题栏里那行字与 <see cref="Window.Title"/>。
+        ///
+        /// <para>
+        /// **两处都改**：标题栏是用户眼睛看着的地方，<c>Window.Title</c> 决定任务栏按钮与
+        /// Alt+Tab 里显示什么。只改一处会出现「标题栏写着 A、任务栏写着 B」，比不改更容易被当成 bug。
+        /// 未自定义时两边各用**各自的**默认值（历史上就不同：`数据采集Demo` / `采集工具`）——
+        /// 这样升级用户的观感与改动前完全一致。
+        /// </para>
+        /// </summary>
+        private void ApplyAppTitle()
+        {
+            string saved = ThemeManager.AppTitleText;
+
+            if (TitleBarCaption != null)
+            {
+                TitleBarCaption.Text = Modeling.AppTitle.CaptionOf(saved);
+            }
+
+            Title = Modeling.AppTitle.WindowTitleOf(saved);
+
+            if (AppTitleTextBox != null)
+            {
+                // 没设置过时把默认标题显示出来，用户才知道「原样长什么样」
+                AppTitleTextBox.Text = Modeling.AppTitle.CaptionOf(saved);
+            }
+        }
+
+        /// <summary>
+        /// 把权限落到「应用标题」输入框上（技术员只读）。
+        /// <para>
+        /// ⚠️ 这里**可以直接设 IsEnabled**，与自由监控那格不同：那一格在 <c>DataTemplate</c> 里、
+        /// 每行一份还会随增删重建，逐个设必然漏；这里只有一个固定控件，代码设一次即可。
+        /// </para>
+        /// <para>
+        /// **卡片上没有第二个可改这个值的控件**：曾经有个「恢复默认」按钮，2026-11-08 用户定案删掉 ——
+        /// 「清空输入框」本身就是恢复默认的手势，多一个按钮反而多一处要同步置灰。
+        /// </para>
+        /// </summary>
+        private void ApplyAppTitlePermission()
+        {
+            if (AppTitleTextBox == null)
+            {
+                return;
+            }
+
+            AppTitleTextBox.IsEnabled = CanEditAppTitle;
+        }
+
+        /// <summary>
+        /// 标题改动在**失焦时**提交（与 IP / 端口、日志路径同一套「失焦提交」规则）：
+        /// 逐字符写盘毫无意义，且中途的半截文本会闪现在标题栏上。
+        /// </summary>
+        private void AppTitleTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (!CanEditAppTitle)
+            {
+                // 只读时即便被外部代码触发了失焦，也不能让它写盘
+                ApplyAppTitle();
+                return;
+            }
+
+            string typed = Modeling.AppTitle.Normalize(AppTitleTextBox.Text);
+
+            // 归一后为空 = 恢复默认（清空输入框是一种合理的「去掉自定义」手势）
+            ThemeManager.SetAppTitle(typed);
+
+            // 回填：让用户看到归一后的结果（换行被压平 / 超长被截断 / 空回默认）
+            ApplyAppTitle();
+        }
+
+        // ---------- 设置：开机自启动（P5.5） ----------
+
+        /// <summary>
+        /// 开机自启动开关被切换。
+        ///
+        /// <para>
+        /// 状态**唯一真值在注册表**（<c>HKCU\...\Run</c> + <c>StartupApproved</c>），
+        /// 不另存一份到 <c>app-settings.json</c> —— 两份真值必然漂移：用户在任务管理器的
+        /// 「启动应用」页关掉它，json 里却还写着「开」，下次启动界面就在撒谎。
+        /// 故这里每次切换都是「写注册表 → 读回来 → 按读回结果回填开关」。
+        /// </para>
+        /// <para>
+        /// ⚠️ 与 <see cref="LogSaveToggle_Changed"/> 一样，<see cref="SyncAutoStartToggle"/>
+        /// 把 <c>IsChecked</c> 赋同一个值时会再触发一次本方法，那次写的是同样的结果，幂等。
+        /// 写注册表失败时 `_revertingAutoStart` 挡住重入，避免「回填 → 再触发 → 再失败」的循环。
+        /// </para>
+        /// </summary>
+        private void AutoStartToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_revertingAutoStart)
+            {
+                return;
+            }
+
+            bool want = AutoStartToggle.IsChecked == true;
+            string? error = null;
+
+            try
+            {
+                if (want)
+                {
+                    AutoStartRegistry.Enable();
+                }
+                else
+                {
+                    AutoStartRegistry.Disable();
+                }
+            }
+            catch (Exception ex)
+            {
+                // 无权限 / 组策略锁定：目标状态没达成，开关必须退回原样，否则界面在撒谎
+                error = ex.Message;
+            }
+
+            // 以注册表的实际状态为准回填（成功时必然等于 want，失败时退回原状态）
+            SyncAutoStartToggle(raiseEvents: false);
+
+            if (error != null)
+            {
+                ShowAutoStartStatus($"设置开机自启动失败：{error}");
+            }
+            else
+            {
+                RefreshAutoStartStatus();
+            }
+        }
+
+        /// <summary>
+        /// 按注册表实际状态回填开关，并刷新提示行。
+        /// </summary>
+        /// <param name="raiseEvents">
+        /// 是否让赋值触发 <see cref="AutoStartToggle_Changed"/>。程序化回填时传 <c>false</c>，
+        /// 免得「回填」被当成用户操作再写一次注册表。
+        /// </param>
+        private void SyncAutoStartToggle(bool raiseEvents = true)
+        {
+            if (AutoStartToggle == null)
+            {
+                return;
+            }
+
+            bool enabled = AutoStartRegistry.IsEnabled();
+
+            if (!raiseEvents)
+            {
+                _revertingAutoStart = true;
+                try
+                {
+                    AutoStartToggle.IsChecked = enabled;
+                }
+                finally
+                {
+                    _revertingAutoStart = false;
+                }
+            }
+            else
+            {
+                AutoStartToggle.IsChecked = enabled;
+            }
+
+            // 与其余两个开关同口径：状态文字必须在这里改（模板触发器赢不过控件局部值）
+            AutoStartToggle.Content = enabled ? "开" : "关";
+        }
+
+        /// <summary>
+        /// 刷新提示行。**只在需要用户处理时显示**（与日志保存那张卡的失败提示同一取向）：
+        /// 正常时整行 <c>Collapsed</c>，不占位也不留空隙。
+        ///
+        /// <para>
+        /// ⚠️ **只剩一种要显示的情形**：注册表登记的是**别的路径**（exe 被移动/换目录）——
+        /// 开机起来的是旧副本，对当前程序等于没生效，而这一点在界面上**看不出来**
+        /// （开关只会显示「关」，用户会以为自己没开过），所以必须说明。
+        /// </para>
+        /// <para>
+        /// **「被 Windows「启动应用」页禁用」刻意不再提示**（2026-11-08 用户定案）：
+        /// 那种情况下开关已经如实显示「关」，再补一行黄字属于重复告知 ——
+        /// 用户原话「这个其实没有必要」。⚠️ 但**开关状态仍要照旧判**（`AutoStartRegistry.IsEnabled`
+        /// 里的「未被系统禁用」那条不能去掉），否则界面会显示「开」而开机不起来，
+        /// 那才是真正的问题：删的是提示，不是判断。
+        /// </para>
+        /// </summary>
+        private void RefreshAutoStartStatus()
+        {
+            if (AutoStartStatusText == null)
+            {
+                return;
+            }
+
+            string? message = null;
+
+            try
+            {
+                string? command = AutoStartRegistry.ReadCommand();
+
+                // 被系统禁用（blocked）时**不出提示**，见上。只有「登记的是另一个 exe」才说明。
+                if (command != null
+                    && !AutoStartCommand.IsSameExecutable(
+                        command, AutoStartRegistry.ExecutablePath))
+                {
+                    message = $"注册表里登记的是另一个路径（{AutoStartCommand.ExtractPath(command)}），"
+                        + "开机启动的是那份副本；重新打开本开关即可改指当前程序。";
+                }
+            }
+            catch
+            {
+                // 读失败就不显示提示：写不进去的失败在切换路径上已经报过了，
+                // 这里再报一次只会让「看一眼设置页」也弹出错误。
+            }
+
+            if (message == null)
+            {
+                AutoStartStatusText.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            ShowAutoStartStatus(message);
+        }
+
+        /// <summary>把提示行显示成琥珀色原因（与日志写入失败提示同色）。</summary>
+        private void ShowAutoStartStatus(string message)
+        {
+            if (AutoStartStatusText == null)
+            {
+                return;
+            }
+
+            AutoStartStatusText.Text = message;
+            AutoStartStatusText.Foreground = ThemeManager.GetBrush("Brush.Warning")
+                ?? System.Windows.Media.Brushes.DarkOrange;
+            AutoStartStatusText.Visibility = Visibility.Visible;
         }
 
         // ---------- PLC 连接页：自动连接开关 ----------
