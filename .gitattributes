@@ -1,0 +1,53 @@
+# 行尾与文本属性（2026-11-08）
+#
+# 为什么需要这个文件：
+#   仓库里存的是 **LF**，但 core.autocrlf 未设置、也没有 .gitattributes。
+#   某些编辑工具/脚本写回文件时会把行尾规范化成 CRLF，于是 git 认为
+#   **整个文件都改了** —— 实际只改了 2 行，diff 却显示 1.9 万行。
+#   提交这种 diff 会让历史失真、reflog/blame 失效，也会干扰他人的工作副本。
+#
+# 规则：一律按文本处理，入库统一 LF。
+#   `text=auto`      让 git 自己识别文本文件（二进制如 .png/.xlsx 会被跳过，不受影响）
+#   `eol=lf`         检出到工作区也用 LF，避免 Windows 上的 CRLF 反复触发整文件重写
+#
+# ⚠️ 本仓库是 Windows 上的 WPF 工程，但 .NET 编译器对 LF 完全没意见，
+#    而 Visual Studio / VS Code / Rider 都能正常读写 LF 文件。
+
+* text=auto eol=lf
+
+# ---- 明确按文本处理（避免被当成二进制或漏掉规范化）----
+*.cs        text eol=lf
+*.xaml      text eol=lf
+*.csproj    text eol=lf
+*.sln       text eol=lf
+*.props     text eol=lf
+*.targets   text eol=lf
+*.md        text eol=lf
+*.json      text eol=lf
+*.xml       text eol=lf
+*.ps1       text eol=lf
+*.csv       text eol=lf
+*.svg       text eol=lf
+*.config    text eol=lf
+*.gitignore text eol=lf
+*.gitattributes text eol=lf
+
+# ---- 二进制：绝不参与行尾转换，也不做文本 diff ----
+# （.png 是用户截图、.xlsx 是 IO 表模板、.drawio 是状态机布局图）
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.xlsx      binary
+*.xls       binary
+*.docx      binary
+*.pdf       binary
+*.zip       binary
+*.7z        binary
+*.drawio    binary
+
+# ---- 内置的第三方无关目录：不参与语言统计 ----
+ModelingCheck/**     -linguist-vendored
+LoggingCheck/**      -linguist-vendored
+.tmp/**              -linguist-vendored
