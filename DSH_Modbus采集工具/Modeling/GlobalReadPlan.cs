@@ -58,8 +58,33 @@ public sealed class GlobalReadBlock
 /// </summary>
 public static class GlobalReadPlan
 {
-    /// <summary>单次报文最多读取的单元数（线圈/寄存器分别有 2000 上限，取小者统一约束）。</summary>
+    /// <summary>
+    /// 单次报文最多读取的单元数。
+    /// <para>
+    /// ⚠️ **线圈与寄存器上限不同**：FC01/FC02 的上限是 2000 个线圈，
+    /// 而 FC03/FC04 的上限只有 **125 个寄存器**。早先两者统一按 2000 分块，
+    /// 于是一块寄存器可能一次请求几百个 —— 从站回异常码 3、甚至直接断链。
+    /// 分块时按 <see cref="MaxUnitsPerRead"/> 判「这是线圈块还是寄存器块」。
+    /// </para>
+    /// </summary>
     public const int MaxUnitsPerRead = 2000;
+
+    /// <summary>
+    /// 寄存器块（FC03/FC04）的单次上限 —— **协议值 125**，不是线圈的 2000。
+    /// <para>
+    /// 刻意在这里写数值副本而不是引用 <c>ModbusTcpClient.MaxRegistersPerRead</c>：
+    /// 本层是纯逻辑（可链接进 <c>ModelingCheck</c> 离线断言），
+    /// 引驱动层会把 Socket 类型一起卷进来，工程就编不过了。
+    /// 两处数值必须一致，改协议上限时**同时改**（驱动层常量有注释指向这里）。
+    /// </para>
+    /// </summary>
+    public const int MaxRegistersPerRead = 125;
+
+    /// <summary>该存储区的单块单元数上限。</summary>
+    private static int LimitFor(ModbusArea area) =>
+        area is ModbusArea.Coil or ModbusArea.DiscreteInput
+            ? MaxUnitsPerRead
+            : MaxRegistersPerRead;
 
     /// <summary>
     /// 按存储区分组、按地址排序，把**紧邻或重叠**的变量并成一块。
@@ -92,6 +117,14 @@ public static class GlobalReadPlan
             List<GlobalVariable> ordered = areaGroup.OrderBy(v => v.ResolvedAddress).ToList();
             var current = new List<(GlobalVariable Variable, int Units)>();
 
+            // 单块上限按存储区取：线圈 2000、寄存器 125（协议不同，见 LimitFor）
+            int limit = LimitFor(areaGroup.Key);
+
+            // 增量维护块起点与块尾，避免每加一项都重扫 current 求 Min/EndOf（O(n²)）。
+            // 因为 ordered 已按地址升序，blockStart 恒为首项地址、curEnd 单调不减。
+            int blockStart = -1;
+            int curEnd = -1;
+
             foreach (GlobalVariable v in ordered)
             {
                 int start = v.ResolvedAddress;
@@ -99,24 +132,30 @@ public static class GlobalReadPlan
 
                 if (current.Count > 0)
                 {
-                    int curEnd = EndOf(current);
-                    int blockStart = current.Min(c => c.Variable.ResolvedAddress);
                     bool adjacent = start <= curEnd;
-                    bool withinLimit = (Math.Max(curEnd, start + units) - blockStart) <= MaxUnitsPerRead;
+                    bool withinLimit = (Math.Max(curEnd, start + units) - blockStart) <= limit;
 
                     if (!adjacent || !withinLimit)
                     {
                         plan.Add(MakeBlock(areaGroup.Key, blockStart, current));
                         current = new List<(GlobalVariable, int)>();
+                        blockStart = -1;
+                        curEnd = -1;
                     }
                 }
 
+                if (blockStart < 0)
+                {
+                    blockStart = start;
+                }
+
+                curEnd = Math.Max(curEnd, start + units);
                 current.Add((v, units));
             }
 
             if (current.Count > 0)
             {
-                plan.Add(MakeBlock(areaGroup.Key, current.Min(c => c.Variable.ResolvedAddress), current));
+                plan.Add(MakeBlock(areaGroup.Key, blockStart, current));
             }
         }
 

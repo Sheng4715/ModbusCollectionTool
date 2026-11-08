@@ -654,11 +654,16 @@ namespace DSH_Modbus采集工具
             return Encoding.UTF8.GetString(buffer, start, lastNewLine + 1 - start);
         }
 
+        /// <summary>
+        /// 把 CSV 文本切成记录。
+        /// <para>
+        /// ⚠️ **必须走 <see cref="AcquisitionCsv.SplitRecords"/>，不能用 <c>text.Split('\n')</c>**：
+        /// STRING 字段里若有换行，写侧按 RFC-4180 加引号但保留真实换行，
+        /// 朴素按 <c>'\n'</c> 切会把一条记录劈成两半、整列错位（见该方法的注释）。
+        /// </para>
+        /// </summary>
         private static List<string> SplitAcqHistoryLines(string text) =>
-            text.Split('\n')
-                .Select(line => line.TrimEnd('\r'))
-                .Where(line => line.Length > 0)
-                .ToList();
+            AcquisitionCsv.SplitRecords(text);
 
         private void SetAcqHistoryFileName(string path)
         {

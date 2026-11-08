@@ -611,13 +611,20 @@
             「元件名称」输入框：与「当前值」同款的**框线风格**（白底 + 细边框 + 小圆角）。
             表格里两个可编辑格用同一种外观，用户一眼就能看出"这两处能打字"，
             不必靠悬停或尝试去发现。
-            文字用 RowBrush —— 配置有误时整行标红，输入框自己也要跟着红。
+
+            ⚠️ **本样式刻意不设 Foreground**（继承控件默认 = 主题正文色）。
+            早先这里写的是 `Foreground="{Binding RowBrush}"` —— 那是**自由监控行**才有的属性，
+            而本样式被 5 处共用（自由监控 / 全局变量 / 扫码器 / 采集数据项 / 采集来源·目标）。
+            其余四处的行对象没有 `RowBrush`，绑定失败后 Foreground 回退成**黑色**：
+            浅色主题下碰巧看不出问题，深色主题下就是**黑底黑字、完全不可读**（实测截图确认）。
+            → 需要「有错标红」的行**自己**设 Foreground（见 MonitorItem 行的写法），
+              不要在共用样式里绑一个有行对象才有的属性。
         -->
         <Style x:Key="MonitorInlineTextBox" TargetType="TextBox">
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Height" Value="22"/>
             <Setter Property="Background" Value="{DynamicResource Brush.Input.Background}"/>
-            <Setter Property="Foreground" Value="{Binding RowBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <!-- 边框走 TemplateBinding（同 FormTextBox）：控件上设 BorderBrush 才有效 -->
             <Setter Property="BorderBrush" Value="{DynamicResource Brush.Input.Border}"/>
             <Setter Property="Padding" Value="4,0"/>
@@ -1279,7 +1286,7 @@
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                        <ColumnDefinition Width="100"/>  <!-- 元件名称（符号+编号，方案 2） -->
+                        <ColumnDefinition Width="200"/>  <!-- 元件名称（符号+编号，方案 2；2026-11-06 由 100 加宽到 200） -->
                         <!-- 106 = 下拉宽 96 + 左间距 6，留 4 余量放 STRING[128] 这类长文本 -->
                         <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
                         <ColumnDefinition Width="88"/>   <!-- 显示格式 ↓ -->
@@ -1293,10 +1300,15 @@
 
                     <!-- 元件名称：符号与编号合并输入（方案 2），如 HD100 / X17；
                           也可填已定义的全局变量名。**打字途中不校验**（需求）：
-                          失焦或回车时才检查，不合法直接弹窗「不是有效软元件或变量」 -->
+                          失焦或回车时才检查，不合法直接弹窗「不是有效软元件或变量」。
+
+                          ⚠️ Foreground 在这里**单独**绑 RowBrush（配置有误整行标红）：
+                          MonitorInlineTextBox 是 5 处共用的基础样式，不能在里面绑这个
+                          只有自由监控行才有的属性 —— 否则其余四处的绑定失败会退化成黑字。 -->
                     <TextBox x:Name="NameBox"
                              Grid.Column="1"
                              Style="{StaticResource MonitorInlineTextBox}"
+                             Foreground="{Binding RowBrush}"
                              KeyDown="MonitorName_KeyDown"
                              LostFocus="MonitorName_LostFocus"
                              Loaded="MonitorName_Loaded"/>
@@ -1408,9 +1420,9 @@
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>
-                        <ColumnDefinition Width="140"/>
+                        <ColumnDefinition Width="200"/>  <!-- 变量名称（2026-11-06 由 140 加宽到 200） -->
                         <ColumnDefinition Width="106"/>
-                        <ColumnDefinition Width="140"/>
+                        <ColumnDefinition Width="100"/>  <!-- 映射地址（2026-11-06 由 140 收窄到 100） -->
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="40"/>
                     </Grid.ColumnDefinitions>
@@ -1467,7 +1479,7 @@
                     <!-- 列定义必须与 SystemVarPanel 的表头完全一致 -->
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                        <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                        <ColumnDefinition Width="200"/>  <!-- 变量名称（2026-11-06 由 140 加宽到 200） -->
                         <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
                         <ColumnDefinition Width="*"/>    <!-- 注释 -->
                     </Grid.ColumnDefinitions>
@@ -1843,7 +1855,7 @@
                     <!-- 列定义必须与 SystemVarMonitorPanel 的表头完全一致 -->
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                        <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                        <ColumnDefinition Width="200"/>  <!-- 变量名称（2026-11-06 由 140 加宽到 200） -->
                         <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
                         <ColumnDefinition Width="110"/>  <!-- 当前值 -->
                         <ColumnDefinition Width="*"/>    <!-- 注释 -->
@@ -2628,14 +2640,14 @@
                                             <Grid x:Name="MonitorHeaderColumns">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                                                    <ColumnDefinition Width="100"/>  <!-- 元件 -->
+                                                    <ColumnDefinition Width="200"/>  <!-- 元件（与行模板同步：2026-11-06 100 → 200） -->
                                                     <ColumnDefinition Width="106"/>  <!-- 数据类型（+ STRING 长度），随模板同步 -->
                                                     <ColumnDefinition Width="88"/>   <!-- 显示格式 -->
                                                     <ColumnDefinition Width="*"/>    <!-- 当前值 -->
                                                     <ColumnDefinition Width="40"/>   <!-- 行内删除列（表头留空） -->
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="1" Text="元件名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="1" Text="元件或变量名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                 <!--
                                                     ⚠️ 第 2 列文字要带 Margin="6,0,0,0"，与该列下拉框的左边距一致 ——
                                                     否则文字贴列左边缘、下拉框右移 6，表头与内容看着错开。
@@ -2739,7 +2751,7 @@
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                                                    <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                                                    <ColumnDefinition Width="200"/>  <!-- 变量名称（与行模板同步：2026-11-06 140 → 200） -->
                                                     <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
                                                     <ColumnDefinition Width="110"/>  <!-- 当前值 -->
                                                     <ColumnDefinition Width="*"/>    <!-- 注释 -->
@@ -2980,9 +2992,9 @@
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                                                        <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                                                        <ColumnDefinition Width="200"/>  <!-- 变量名称（与行模板同步：2026-11-06 140 → 200） -->
                                                         <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
-                                                        <ColumnDefinition Width="140"/>  <!-- 映射地址 -->
+                                                        <ColumnDefinition Width="100"/>  <!-- 映射地址（与行模板同步：2026-11-06 140 → 100） -->
                                                         <ColumnDefinition Width="*"/>    <!-- 注释 -->
                                                         <ColumnDefinition Width="40"/>   <!-- 删除 -->
                                                     </Grid.ColumnDefinitions>
@@ -3076,7 +3088,7 @@
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                                                        <ColumnDefinition Width="140"/>  <!-- 变量名称 -->
+                                                        <ColumnDefinition Width="200"/>  <!-- 变量名称（与行模板同步：2026-11-06 140 → 200） -->
                                                         <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
                                                         <ColumnDefinition Width="*"/>    <!-- 注释 -->
                                                     </Grid.ColumnDefinitions>

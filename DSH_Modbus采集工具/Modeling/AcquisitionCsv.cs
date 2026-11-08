@@ -371,11 +371,90 @@ namespace DSH_Modbus采集工具.Modeling
         // ================= 读取（总览页「数据采集」视图的历史表格） =================
 
         /// <summary>
+        /// 把一个 CSV 文本块按**记录**切行（引号内的换行属于字段内容，不切）。
+        /// <para>
+        /// ⚠️ **不能用 <c>text.Split('\n')</c>**：<see cref="FormatField"/> 对含换行的值
+        /// 按 RFC-4180 加了引号但**保留真实换行**，于是 <c>STRING</c> 里恰好有 0x0A 时
+        /// 一条记录会跨物理多行。按 <c>'\n'</c> 朴素切分会把它切成两半，
+        /// 历史表格随即整列错位（Excel 打开仍正常，因为 Excel 认引号）。
+        /// </para>
+        /// <para>
+        /// 返回的每项**不含**行尾的 <c>\r\n</c> / <c>\n</c>；空行被丢弃
+        /// （与视图侧原有行为一致）。
+        /// </para>
+        /// </summary>
+        public static List<string> SplitRecords(string? text)
+        {
+            var records = new List<string>();
+            string s = text ?? string.Empty;
+            var sb = new StringBuilder();
+            bool inQuotes = false;
+
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+
+                if (c == '"')
+                {
+                    // 连续两个引号是转义的字面引号，原样保留两个字符，不影响引号状态
+                    if (inQuotes && i + 1 < s.Length && s[i + 1] == '"')
+                    {
+                        sb.Append(c).Append(s[i + 1]);
+                        i++;
+                        continue;
+                    }
+
+                    inQuotes = !inQuotes;
+                    sb.Append(c);
+                    continue;
+                }
+
+                if (!inQuotes && c == '\n')
+                {
+                    // 记录结束（行尾的 \r 一并去掉）
+                    if (sb.Length > 0 && sb[^1] == '\r')
+                    {
+                        sb.Length--;
+                    }
+
+                    string record = sb.ToString();
+                    if (record.Length > 0)
+                    {
+                        records.Add(record);
+                    }
+
+                    sb.Clear();
+                    continue;
+                }
+
+                sb.Append(c);
+            }
+
+            // 末行没有换行符收尾
+            string tail = sb.ToString();
+            if (tail.Length > 0 && tail[^1] == '\r')
+            {
+                tail = tail[..^1];
+            }
+
+            if (tail.Length > 0)
+            {
+                records.Add(tail);
+            }
+
+            return records;
+        }
+
+        /// <summary>
         /// 把一行 CSV 文本拆回字段，是 <see cref="FormatLine"/> 的逆运算。
         /// <para>
         /// ⚠️ 必须处理**引号内的逗号**：变量值里出现一个逗号（STRING 注释、带千分位的数）
         /// 就会把整行错位，而错得很隐蔽 —— Excel 打开只是列对不上、不报错。
         /// 所以这里不能用 <c>Split(',')</c>。
+        /// </para>
+        /// <para>
+        /// ⚠️ 输入必须是**一条完整记录**（含引号内的换行时也要整条传进来），
+        /// 用 <see cref="SplitRecords"/> 切分后才能调用。
         /// </para>
         /// </summary>
         public static List<string> ParseLine(string? line)

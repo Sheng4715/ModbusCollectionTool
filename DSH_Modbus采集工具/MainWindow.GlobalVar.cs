@@ -40,18 +40,29 @@ namespace DSH_Modbus采集工具
         /// 而变量表要在一个下拉框里同时给出两类，故在这里拼一次。
         /// </para>
         /// </summary>
-        private static IEnumerable<DataTypeSpec> AllTypeSpecs()
-        {
-            foreach (DataTypeSpec spec in DataTypes.CoilTypes)
-            {
-                yield return spec;
-            }
+        /// <summary>
+        /// 全部数据类型的规格（线圈区 + 寄存器区合并，顺序同规格表）。**已缓存**。
+        /// <para>
+        /// <c>DataTypes.AllSpecs</c> 是私有的（对外只暴露 <c>CoilTypes</c> / <c>RegisterTypes</c>），
+        /// 而变量表要在一个下拉框里同时给出两类，故在这里拼一次。
+        /// </para>
+        /// <para>
+        /// ⚠️ 拼的结果**只与静态规格表有关**，与任何运行时状态无关，故可安全缓存在
+        /// static readonly 里 —— 原实现是每次调用都 new 一个 List 再 ToList 一遍，
+        /// 而它被每行的 Loaded 事件调用（行一多就很可观）。
+        /// </para>
+        /// </summary>
+        private static readonly IReadOnlyList<DataTypeSpec> AllTypeSpecsCached = BuildAllTypeSpecs();
 
-            foreach (DataTypeSpec spec in DataTypes.RegisterTypes)
-            {
-                yield return spec;
-            }
+        private static IReadOnlyList<DataTypeSpec> BuildAllTypeSpecs()
+        {
+            var list = new List<DataTypeSpec>(DataTypes.CoilTypes.Count + DataTypes.RegisterTypes.Count);
+            list.AddRange(DataTypes.CoilTypes);
+            list.AddRange(DataTypes.RegisterTypes);
+            return list;
         }
+
+        private static IEnumerable<DataTypeSpec> AllTypeSpecs() => AllTypeSpecsCached;
 
         /// <summary>刷新全局变量的计数、空提示与按钮可用性。</summary>
         private void RefreshGlobalVarView()
@@ -546,7 +557,20 @@ namespace DSH_Modbus采集工具
 
             if (kind != AddressErrorKind.None)
             {
-                // 失败时保留用户原样输入，方便就地改
+                // 失败时保留用户原样输入，方便就地改。
+                //
+                // ⚠️ **但「类型不符」这一档要回填归一的地址**：TryResolve 在判定类型不符之前
+                // 就已经把 `v.Address` 归一成大写了（y27 → Y27，见 GlobalVariable.cs 的
+                // `element.ToUpperInvariant(); v.Address = element + index;`），
+                // 而 `Save()` 落的是那个归一值。若这里仍显示 y27，就会出现
+                // 「界面 y27 / json 里 Y27」的不一致 —— 且下次打开看到的是 Y27，
+                // 用户会以为自己没改成功。其它失败档（InvalidElement / Configuration）
+                // 不会走到归一那一步，故保持原样。
+                if (kind == AddressErrorKind.TypeMismatch)
+                {
+                    tb.Text = item.Address;
+                }
+
                 ShowGlobalVarAddressError(item, wanted, kind);
             }
             else

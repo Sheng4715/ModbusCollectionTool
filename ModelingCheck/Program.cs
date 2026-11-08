@@ -494,6 +494,102 @@ Check("长度不足时保留上次值（不清零）", keep.Value, "42");
 GlobalReadPlan.Apply(planKeep, null, null, xdOrders);
 Check("没有数据时保留上次值", keep.Value, "42");
 
+// ---- ⑩ Numeric 必须按声明类型做符号扩展（P1.4 实时卡片）----
+// 回归：DecodeNumber 曾直接返回 DecodeInteger 的**无符号位模式**，
+// 于是 INT -1 的卡片显示 65535、DINT -100 显示 4.29E+09 —— 静默显示错值。
+// Value 文本一直对（走 Interpret），只有 Numeric 这条十进制通道错，故必须单独断言。
+Check("DecodeNumber INT -1", ValueCodec.DecodeNumber(DataType.Int, new ushort[] { 0xFFFF }, xdOrders), -1d);
+Check("DecodeNumber INT -32768", ValueCodec.DecodeNumber(DataType.Int, new ushort[] { 0x8000 }, xdOrders), -32768d);
+Check("DecodeNumber UINT 65535", ValueCodec.DecodeNumber(DataType.UInt, new ushort[] { 0xFFFF }, xdOrders), 65535d);
+Check("DecodeNumber DINT -100（3412）",
+    ValueCodec.DecodeNumber(DataType.DInt, new ushort[] { 0xFF9C, 0xFFFF }, xdOrders), -100d);
+Check("DecodeNumber UDINT 4294967295（3412）",
+    ValueCodec.DecodeNumber(DataType.UDInt, new ushort[] { 0xFFFF, 0xFFFF }, xdOrders), 4294967295d);
+Check("DecodeNumber REAL 123.45", ValueCodec.DecodeNumber(DataType.Real, d802, xdOrders) is { } rn
+    && Math.Abs(rn - 123.45d) < 0.001d, true);
+Check("DecodeNumber STRING 无数值形态", ValueCodec.DecodeNumber(DataType.String, d810, xdOrders), (double?)null);
+
+// 回填路径同样要带符号（负温度是现场常态）
+GlobalVariable negInt = Var("negT", DataType.Int, "D40");
+GlobalReadBlock planNeg = GlobalReadPlan.Build(new[] { negInt })[0];
+GlobalReadPlan.Apply(planNeg, null, new ushort[] { 0xFFF6 }, xdOrders);
+Check("INT 回填 -10 的 Value", negInt.Value, "-10");
+Check("INT 回填 -10 的 Numeric", negInt.Numeric, -10d);
+
+GlobalVariable negDint = Var("negP", DataType.DInt, "D810");
+GlobalReadBlock planNeg32 = GlobalReadPlan.Build(new[] { negDint })[0];
+GlobalReadPlan.Apply(planNeg32, null, new ushort[] { 0xFF9C, 0xFFFF }, xdOrders);
+Check("DINT 回填 -100 的 Value", negDint.Value, "-100");
+Check("DINT 回填 -100 的 Numeric", negDint.Numeric, -100d);
+
+// ---- ⑪ CSV 跨行字段：切行必须识别引号 ----
+// 回归：历史表格曾用 text.Split('\n') 切行。写侧按 RFC-4180 给含换行的字段加引号
+// 但**保留真实换行**，于是 STRING 值里一旦有 0x0A，一条记录就被劈成两半、整列错位
+// （Excel 打开却正常，因为 Excel 认引号）。改用 AcquisitionCsv.SplitRecords 后不会。
+{
+    var rec = new List<string> { "11:04:22", "读取", "a\nb", "x" };
+    string text = AcquisitionCsv.FormatLine(rec) + "\n" +
+                  AcquisitionCsv.FormatLine(new List<string> { "11:04:23", "读取", "c", "y" }) + "\n";
+
+    List<string> records = AcquisitionCsv.SplitRecords(text);
+    Check("CSV跨行·两条记录（字段内换行不切行）", records.Count, 2);
+
+    List<string> first = AcquisitionCsv.ParseLine(records[0]);
+    Check("CSV跨行·首条四列", first.Count, 4);
+    Check("CSV跨行·字段内 \\n 原样保留", first.Count > 2 && first[2] == "a\nb", true);
+
+    List<string> second = AcquisitionCsv.ParseLine(records[1]);
+    Check("CSV跨行·次条正确切出", second.Count == 4 && second[0] == "11:04:23", true);
+
+    // 引号内的 CRLF 也要整条吞下
+    var crlf = new List<string> { "t", "读取", "a\r\nb", "z" };
+    List<string> crlfRecords = AcquisitionCsv.SplitRecords(AcquisitionCsv.FormatLine(crlf) + "\n");
+    Check("CSV跨行·CRLF 字段不切行", crlfRecords.Count, 1);
+    List<string> crlfBack = AcquisitionCsv.ParseLine(crlfRecords[0]);
+    Check("CSV跨行·CRLF 内容保留", crlfBack.Count == 4 && crlfBack[2] == "a\r\nb", true);
+
+    // 转义引号（""）不能让引号状态错乱，否则会误吞后续换行
+    var quoted = new List<string> { "t", "读取", "he said \"\"hi\"\"", "k" };
+    List<string> qRecords = AcquisitionCsv.SplitRecords(
+        AcquisitionCsv.FormatLine(quoted) + "\n" +
+        AcquisitionCsv.FormatLine(new List<string> { "t2", "读取", "v", "k2" }) + "\n");
+    Check("CSV跨行·转义引号不影响切行", qRecords.Count, 2);
+
+    // 普通多行文本仍然逐行切开（没有引号时行为不变）
+    Check("CSV跨行·普通多行照常切", AcquisitionCsv.SplitRecords("a,b\nc,d\n").Count, 2);
+    // 末尾空行被丢弃
+    Check("CSV跨行·末尾空行丢弃", AcquisitionCsv.SplitRecords("a\n\n\n").Count, 1);
+}
+
+// ---- ⑫ 寄存器块上限必须是协议值 125，不能沿用线圈的 2000 ----
+// 回归：GlobalReadPlan / MonitorItem 早先统一按 2000 分块，于是寄存器一次可能
+// 请求几百个 —— 从站回异常码 3、甚至断链。
+{
+    // 300 个连续 INT（占 300 个寄存器）→ 必须切成 3 块（125 + 125 + 50）
+    var manyVars = new List<GlobalVariable>();
+    for (int i = 0; i < 300; i++)
+    {
+        manyVars.Add(Var("g" + i, DataType.Int, "D" + i));
+    }
+
+    List<GlobalReadBlock> bigPlan = GlobalReadPlan.Build(manyVars);
+    Check("寄存器块按 125 切分（300 个 INT → 3 块）", bigPlan.Count, 3);
+    Check("寄存器块长都不超过 125", bigPlan.All(b => b.Count <= 125), true);
+    Check("首块正好 125", bigPlan[0].Count, 125);
+    Check("三块合计覆盖 300 项", bigPlan.Sum(b => b.Entries.Count), 300);
+
+    // 线圈仍按 2000（不能被寄存器上限误伤）
+    var coils = new List<GlobalVariable>();
+    for (int i = 0; i < 300; i++)
+    {
+        coils.Add(Var("c" + i, DataType.Bool, "M" + i, DisplayFormat.Bin));
+    }
+
+    List<GlobalReadBlock> coilPlan = GlobalReadPlan.Build(coils);
+    Check("线圈块仍按 2000（300 个 BOOL → 1 块）", coilPlan.Count, 1);
+    Check("线圈块长 300", coilPlan[0].Count, 300);
+}
+
 Console.WriteLine();
 Console.WriteLine("============================================================");
 Console.WriteLine($"结果：{pass} 通过 / {fail} 失败");

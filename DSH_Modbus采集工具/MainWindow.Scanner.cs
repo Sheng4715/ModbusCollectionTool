@@ -935,9 +935,17 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 触发表达式可能引用系统变量（脉冲 / 时钟 / 运行时长），先刷一次快照
-            bool needsSystemValues = _scannerSet.Items.Any(
-                i => i.EffectiveEnabled && !string.IsNullOrWhiteSpace(i.Model.TriggerExpression));
+            // 触发表达式可能引用系统变量（脉冲 / 时钟 / 运行时长），先刷一次快照。
+            // ⚠️ 用带 break 的早退扫描（原来 Items.Any 会走完整表）：该判断每 50ms 跑一次。
+            bool needsSystemValues = false;
+            foreach (ScannerItem probe in _scannerSet.Items)
+            {
+                if (probe.EffectiveEnabled && !string.IsNullOrWhiteSpace(probe.Model.TriggerExpression))
+                {
+                    needsSystemValues = true;
+                    break;
+                }
+            }
 
             if (needsSystemValues)
             {
@@ -1052,18 +1060,34 @@ namespace DSH_Modbus采集工具
                 // 「The operation is not allowed on non-connected sockets」并误判成通讯中断。
                 if (client == null || !client.IsConnected)
                 {
+                if (client == null || !client.IsConnected)
+                {
                     // 曾连上后失效 → 清引用并走退避重连；从未连上 → 起首次连接
                     if (client != null)
                     {
+                        // 这条分支的「连接层面后果」由 NotifyScannerLost 记「通讯中断」，
+                        // **不要再补一条「读取失败」** —— 同一次故障记两条只是噪音
+                        // （实测：连接失败 ERROR 紧跟一条 读取失败 WARN，用户以为出了两个问题）。
                         NotifyScannerLost(item, client);
                     }
                     else
                     {
                         EnsureScannerConnecting(item);
+
+                        // 「从未连上」这一档没有人记过连接层日志（连接还在异步建立中，
+                        // 失败由重连循环在退避到期后记「连接失败」），故这里补一条读取失败。
+                        // 否则「触发条件成立了、但设备压根没连上」在日志里完全看不出来。
+                        if (!_windowClosed)
+                        {
+                            AppendDeviceLog(
+                                $"扫码器（{def.Name}）读取失败：{ScannerRules.NotConnectedReason}",
+                                DeviceLogLevel.Warning);
+                        }
                     }
 
                     await ApplyScannerTimeoutAsync(item).ConfigureAwait(true);
                     return;
+                }
                 }
                 byte[] trigger = Encoding.ASCII.GetBytes(def.TriggerText ?? string.Empty);
                 byte[] terminator = ScannerRules.TerminatorBytes(def.Terminator);
@@ -1078,11 +1102,29 @@ namespace DSH_Modbus采集工具
 
                     byte[] frame = await client.ReadFrameAsync(terminator, timeout).ConfigureAwait(true);
 
-                    await ApplyScannerSuccessAsync(item, Encoding.ASCII.GetString(frame)).ConfigureAwait(true);
+                    string received = Encoding.ASCII.GetString(frame);
+
+                    // 正常读到一帧：记一条中性日志（与「连接 / 断开」同级的运行记录）。
+                    // 用户定稿格式：「扫码器（名称）读取完成：<收到内容>」
+                    // ⚠️ 内容必须经 FormatLogContent 清洗：扫码结果常带 \r\n 结束符，
+                    // 原样拼进去会把一条日志劈成多行、落盘文件的行格式也跟着坏掉。
+                    AppendDeviceLog(
+                        $"扫码器（{def.Name}）读取完成：{ScannerRules.FormatLogContent(received)}",
+                        DeviceLogLevel.Neutral);
+
+                    await ApplyScannerSuccessAsync(item, received).ConfigureAwait(true);
                 }
                 catch (OperationCanceledException)
                 {
-                    // 超时窗口内没收到完整帧 = 本轮超时（含关窗时的取消）
+                    // 超时窗口内没收到完整帧 = 本轮超时（含关窗时的取消）。
+                    // 关窗引起的取消不记日志 —— 那不是「设备没响应」，只是程序在退出。
+                    if (!_windowClosed)
+                    {
+                        AppendDeviceLog(
+                            $"扫码器（{def.Name}）读取失败：服务端响应超时",
+                            DeviceLogLevel.Warning);
+                    }
+
                     await ApplyScannerTimeoutAsync(item).ConfigureAwait(true);
 
                     // 超时那一刻 ReadFrameAsync 已 Dispose 掉连接（防半帧失步）。
@@ -1100,9 +1142,15 @@ namespace DSH_Modbus采集工具
                     // ReferenceEquals 挡住「已经被更替的旧 client」重复上报。
                     if (!_windowClosed && ReferenceEquals(session.Client, client))
                     {
+                        // 链路异常对「这次读取」而言就是失败，按用户定稿的格式记一条。
+                        // ⚠️ **只记这一条**：NotifyScannerLost 本身不写日志（只做断引 + 起重连），
+                        // 所以这里不要额外再记「通讯中断」—— 同一次故障两条日志属于噪音，
+                        // 用户会以为设备同时出了两个问题。
+                        // 原因复用 ClassifyDisconnectReason，与底栏/PLC 侧同一套中文归一。
                         AppendDeviceLog(
-                            $"扫码器「{def.Name}」通讯中断：{ClassifyDisconnectReason(ex.Message)}",
-                            DeviceLogLevel.Disconnected);
+                            $"扫码器（{def.Name}）读取失败：{ClassifyDisconnectReason(ex.Message)}",
+                            DeviceLogLevel.Warning);
+
                         NotifyScannerLost(item, client);
                     }
 

@@ -173,15 +173,38 @@ namespace DSH_Modbus采集工具.Io
                     continue;
                 }
 
-                // 富文本 <r><t>…</t></r> 可能多段，拼接全部 <t>
+                // 富文本 <r><t>…</t></r> 可能多段，拼接全部 <t>。
+                //
+                // ⚠️ **必须跳过 <rPh>（注音 / ruby）里的 <t>**：中日韩表里常用注音标注，
+                // 形如 <si><t>漢字</t><rPh sb="0" eb="2"><t>かんじ</t></rPh></si>。
+                // 不排除的话注音会被拼进注释，变成「漢字かんじ」这种半截日文假名。
                 var sb = new StringBuilder();
+                int phoneticDepth = 0;   // > 0 = 正处在 <rPh> 子树内
                 using (var siReader = reader.ReadSubtree())
                 {
                     while (siReader.Read())
                     {
-                        if (siReader.NodeType == XmlNodeType.Element && siReader.LocalName == "t")
+                        if (siReader.NodeType == XmlNodeType.Element)
                         {
-                            sb.Append(siReader.ReadElementContentAsString());
+                            if (siReader.LocalName == "rPh")
+                            {
+                                phoneticDepth++;
+                                continue;
+                            }
+
+                            if (siReader.LocalName == "t" && phoneticDepth == 0)
+                            {
+                                sb.Append(siReader.ReadElementContentAsString());
+                            }
+
+                            continue;
+                        }
+
+                        // 注音子树结束：<rPh> 的空元素/自闭合由 EndElement 收尾
+                        if (siReader.NodeType == XmlNodeType.EndElement && siReader.LocalName == "rPh"
+                            && phoneticDepth > 0)
+                        {
+                            phoneticDepth--;
                         }
                     }
                 }

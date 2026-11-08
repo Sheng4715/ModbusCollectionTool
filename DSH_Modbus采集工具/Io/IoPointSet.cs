@@ -145,7 +145,18 @@ namespace DSH_Modbus采集工具.Io
                     .Deserialize<Dictionary<string, string>>(File.ReadAllText(CommentsFilePath));
                 if (loaded != null)
                 {
-                    _comments = new Dictionary<string, string>(loaded, StringComparer.OrdinalIgnoreCase);
+                    // ⚠️ **逐条重建，不要 new Dictionary(loaded, OrdinalIgnoreCase)**：
+                    // 那个构造函数在遇到「仅大小写不同」的两个键时抛 ArgumentException ——
+                    // 而 json 是人手可改的，写成 {"x17":"a","X17":"b"} 就会命中。
+                    // 被外层 catch 吞掉后整表回退为空，用户看到的是「导入的 IO 表全没了」。
+                    // 这里后者覆盖前者（与 json 里后出现的键生效一致），并按忽略大小写比较。
+                    var rebuilt = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (KeyValuePair<string, string> pair in loaded)
+                    {
+                        rebuilt[pair.Key] = pair.Value;
+                    }
+
+                    _comments = rebuilt;
                 }
             }
             catch

@@ -118,6 +118,24 @@ namespace DSH_Modbus采集工具.Scanners
     /// </summary>
     public static class ScannerRules
     {
+        // ---- 结束符字节序列（缓存，避免每帧都 new 一个数组）----
+        //
+        // ⚠️ ReadFrameAsync **每收一帧**都要取一次结束符；原实现每次都 `new byte[]`
+        // 在 100ms 收一帧的场合是纯垃圾。这四个数组内容恒定，且调用方只读不改，
+        // 故做成 static readonly 共享 —— **不要**在任何地方改写它们。
+        private static readonly byte[] CrLfBytes = { 0x0D, 0x0A };
+        private static readonly byte[] CrBytes = { 0x0D };
+        private static readonly byte[] LfBytes = { 0x0A };
+        private static readonly byte[] NoneBytes = Array.Empty<byte>();
+
+        /// <summary>按结束符配置取对应字节序列（返回的数组只读共享，调用方不得改写）。</summary>
+        public static byte[] TerminatorBytes(ScannerFrameTerminator terminator) => terminator switch
+        {
+            ScannerFrameTerminator.CrLf => CrLfBytes,
+            ScannerFrameTerminator.Cr => CrBytes,
+            ScannerFrameTerminator.Lf => LfBytes,
+            _ => NoneBytes,
+        };
         /// <summary>触发文本的最大 ASCII 字符数。</summary>
         public const int MaxTriggerTextLength = 20;
 
@@ -135,6 +153,58 @@ namespace DSH_Modbus采集工具.Scanners
 
         /// <summary>执行结果输出变量框下的说明文字（界面上那一行小字）。</summary>
         public const string ResultValueHint = "正常执行完成：1   异常执行完成：2";
+
+        /// <summary>
+        /// 触发时**连接未建立**的日志原因（「读取失败：<c>连接未建立</c>」）。
+        /// <para>与超时的「服务端响应超时」区分开：这两种失败用户要做的事不同 ——
+        /// 超时是设备/网络慢或没接，未连上是 IP/端口/启用开关的事。</para>
+        /// </summary>
+        public const string NotConnectedReason = "连接未建立";
+
+        /// <summary>一条扫码结果写进日志时最多显示多少字符（超出截断并加省略号）。</summary>
+        /// <remarks>
+        /// 日志卡是概览用的，一条几十 KB 的条码内容会把整页刷满、把真正的连接事件挤出可视区。
+        /// 80 足够看清一个产品码/治具码，又不至于挤占版面。
+        /// </remarks>
+        public const int LogMaxContentChars = 80;
+
+        /// <summary>
+        /// 把收到的原始内容整理成**适合写进一行日志**的文本。
+        /// <para>
+        /// ⚠️ 三件事必须做，否则日志会变形：
+        /// </para>
+        /// <list type="number">
+        /// <item>**换行 / 回车 → 可见转义**：扫码结果里含 <c>\r\n</c> 时（很多扫码器默认加结束符），
+        /// 直接拼进日志会把一条记录劈成多行，落盘文件的行格式也跟着坏掉；</item>
+        /// <item>**控制字符 → <c>?</c>**：NUL 等不可见字符会让日志看起来是空的；</item>
+        /// <item>**超长截断**：见 <see cref="LogMaxContentChars"/>。</item>
+        /// </list>
+        /// <para>空内容显示为 <c>（空）</c> —— 否则「读取完成：」后面什么都没有，像日志被截断了。</para>
+        /// </summary>
+        public static string FormatLogContent(string? content)
+        {
+            string text = content ?? string.Empty;
+
+            // 先转义换行，再处理其它控制字符（顺序不能反，否则 \r\n 会先被吞成两个 ?）
+            text = text.Replace("\r", "\\r").Replace("\n", "\\n");
+
+            var sb = new System.Text.StringBuilder(text.Length);
+            foreach (char c in text)
+            {
+                sb.Append(char.IsControl(c) ? '?' : c);
+            }
+
+            string cleaned = sb.ToString();
+
+            if (cleaned.Length == 0)
+            {
+                return "（空）";
+            }
+
+            return cleaned.Length <= LogMaxContentChars
+                ? cleaned
+                : cleaned.Substring(0, LogMaxContentChars) + "…";
+        }
 
         /// <summary>超时判定时间下限（秒）。</summary>
         public const double MinTimeoutSeconds = 0.5;
@@ -202,15 +272,6 @@ namespace DSH_Modbus采集工具.Scanners
             error = string.Empty;
             return true;
         }
-
-        /// <summary>结束符对应的字节序列；<see cref="ScannerFrameTerminator.None"/> 返回空数组（走静默间隔）。</summary>
-        public static byte[] TerminatorBytes(ScannerFrameTerminator terminator) => terminator switch
-        {
-            ScannerFrameTerminator.CrLf => new byte[] { 0x0D, 0x0A },
-            ScannerFrameTerminator.Cr => new byte[] { 0x0D },
-            ScannerFrameTerminator.Lf => new byte[] { 0x0A },
-            _ => Array.Empty<byte>(),
-        };
 
         /// <summary>结束符的下拉显示文本（UI 用，含字面转义）。</summary>
         public static string TerminatorDisplay(ScannerFrameTerminator terminator) => terminator switch

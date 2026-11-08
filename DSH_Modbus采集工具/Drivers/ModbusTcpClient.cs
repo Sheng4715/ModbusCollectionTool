@@ -28,8 +28,28 @@ namespace DSH_Modbus采集工具.Drivers
         /// <summary>单次 FC16 最多写的寄存器数（协议上限 123）。</summary>
         public const int MaxRegistersPerWrite = 123;
 
+        /// <summary>
+        /// 单次 FC03 / FC04 最多读的寄存器数（协议上限 125）。
+        /// <para>
+        /// ⚠️ **寄存器区的分块上限必须用它，不能用线圈那些 2000**：2000 是 FC01/FC02
+        /// 的线圈上限，寄存器侧超 125 从站会回异常码 3 甚至直接断链。
+        /// 分块在 <c>GlobalReadPlan</c> / <c>MonitorItem.BuildReadPlan</c> 里做，
+        /// 本类只把常量集中在这里供它们引用。
+        /// </para>
+        /// </summary>
+        public const int MaxRegistersPerRead = 125;
+
         private readonly SemaphoreSlim _gate = new(1, 1);
-        private TcpClient? _tcp;
+
+        /// <summary>
+        /// 当前 TCP 连接。<b>跨线程读写</b>：UI 线程在 <see cref="ConnectAsync"/> / <see cref="Dispose"/>
+        /// 里赋值，轮询线程在 <see cref="RequestAsync"/> 里读、<see cref="IsConnected"/> 也可能被任意线程读。
+        /// 故必须 <c>volatile</c> —— 与同类的 <see cref="_lastResponseTimestamp"/> 用
+        /// <see cref="Interlocked"/> 保持一致的可见性口径。漏了不会立刻出错（引用读写本身原子），
+        /// 但后台可能长时间读到 null（停在「连接未建立」）或读到已 Dispose 的实例。
+        /// </summary>
+        private volatile TcpClient? _tcp;
+
         private ushort _tid;
         private long _lastResponseTimestamp = Stopwatch.GetTimestamp();
 
@@ -56,7 +76,14 @@ namespace DSH_Modbus采集工具.Drivers
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(timeout);
                 await tcp.ConnectAsync(ip, port, cts.Token).ConfigureAwait(false);
+
+                // ⚠️ 覆盖 `_tcp` 前先释放旧连接：本类不强制「只连一次」，
+                // 若调用方复用同一实例重连（或上一轮 ConnectAsync 已成功但上层没 Dispose），
+                // 直接赋值会把旧 TcpClient 的 socket 句柄**静默泄漏**，且旧流可能仍在后台读。
+                TcpClient? previous = _tcp;
                 _tcp = tcp;
+                previous?.Dispose();
+
                 Interlocked.Exchange(ref _lastResponseTimestamp, Stopwatch.GetTimestamp());
             }
             catch

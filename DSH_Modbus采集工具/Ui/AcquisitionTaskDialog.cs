@@ -41,11 +41,19 @@ namespace DSH_Modbus采集工具.Ui
         /// </summary>
         private const double FormRowHeight = 40;
 
-        /// <summary>固定行高的行数（七项表单）。</summary>
-        private const int FormRowCount = 7;
+        /// <summary>
+        /// 固定行高的表单行数：名称 / 类型 / 日志记录 / 数据记录 / 保存路径 / 执行方式 / 表达式 / 实时背景图。
+        /// <para>
+        /// ⚠️ **加一个表单行就要把它 +1**：这个常量决定前几行用固定 <see cref="FormRowHeight"/>，
+        /// 其余行（错误提示、按钮行）用 Auto。漏改的后果是新增那行被建成 Auto 高
+        /// （内容多高就多高）、比其它行矮一截，且按钮行落到网格定义之外
+        /// （实测「实时背景图」加进来时漏改过：那一行高 32 而非 40，按钮行越界）。
+        /// </para>
+        /// </summary>
+        private const int FormRowCount = 8;
 
         /// <summary>
-        /// 总行数：七个表单行 + 错误提示行 + 按钮行。
+        /// 总行数：八个表单行 + 错误提示行 + 按钮行。
         /// <para>后两行仍是自动高度 —— 错误行大多数时候是折叠的，按钮行不该被撑到 40。</para>
         /// </summary>
         private const int RowCount = FormRowCount + 2;

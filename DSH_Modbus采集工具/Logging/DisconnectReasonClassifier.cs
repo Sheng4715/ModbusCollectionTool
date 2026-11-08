@@ -19,7 +19,14 @@ namespace DSH_Modbus采集工具.Logging
         /// </summary>
         public static string Classify(string raw)
         {
-            string text = raw.Trim();
+            // `raw` 声明为非空，但异常消息确实可能是 null（自定义异常 / Message 被置空）。
+            // 直接 .Trim() 会抛 NRE —— 这个类在断线路径上被调用，
+            // 在最需要它出文案的时候崩掉，代价远比多判一次空大。
+            string text = (raw ?? string.Empty).Trim();
+            if (text.Length == 0)
+            {
+                return "未知原因";
+            }
 
             const string heartbeatPrefix = "心跳检查失败：";
             if (text.StartsWith(heartbeatPrefix, StringComparison.Ordinal))

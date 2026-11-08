@@ -340,8 +340,22 @@ namespace DSH_Modbus采集工具
             // 平时只由状态机定时器刷新 —— 那个定时器在别的页面是停的。不在这里补一次，
             // 切走页面后表达式就会拿**过期的值**求值，触发沿永远等不到（或乱触发）。
             // 只在确实有触发式任务时才付这份开销。
-            if (_acqTaskSet.Items.Any(x => x.Model.Enabled
-                                           && x.Model.Trigger == AcquisitionTriggerMode.Edge))
+            //
+            // ⚠️ 用带 **break 的早退扫描**，而不是原来的 `Items.Any(...)`：
+            // Any 会把整表走完；这里一旦命中第一个触发式任务就停，绝大多数情况只走一两项。
+            // 判据用 EffectiveEnabled（= 启用 且 无配置错误）而不是 Model.Enabled ——
+            // 配置错误的组下面根本不会执行，为它算系统变量纯属浪费，也与下面的循环同口径。
+            bool needsSystemValues = false;
+            foreach (AcquisitionTaskItem probe in _acqTaskSet.Items)
+            {
+                if (probe.EffectiveEnabled && probe.Model.Trigger == AcquisitionTriggerMode.Edge)
+                {
+                    needsSystemValues = true;
+                    break;
+                }
+            }
+
+            if (needsSystemValues)
             {
                 _machineVariables.UpdateSystemValues(
                     SystemVariableValues.Capture(now, _runClock.Elapsed));

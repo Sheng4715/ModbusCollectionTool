@@ -588,7 +588,20 @@ namespace DSH_Modbus采集工具.Modeling
             return (states, edges);
         }
 
-        /// <summary>读全部：状态、连线标签、指示灯。</summary>
+        /// <summary>
+        /// 读全部：状态、连线标签、指示灯。
+        /// <para>
+        /// ⚠️ **容错分两级**（2026-11-06）：先尝试整体反序列化；整体失败时**不立刻退回出厂值**，
+        /// 而是改用 <see cref="ReadElementByElement"/> 逐条解析，把坏的条目跳过、好的照收。
+        /// </para>
+        /// <para>
+        /// 为什么必须这样：这份文件是**约定人手可改**的（故开了 <c>PropertyNameCaseInsensitive</c>），
+        /// 而枚举 / 数字字段很容易改错（<c>"FontStyle":"Underline"</c>、
+        /// <c>"FontSize":"abc"</c>）。早先的实现是一个外层 <c>catch</c> 兜底整体回退 ——
+        /// **一个字段写错就让 9 个状态的文字/颜色/表达式、14 条连线标签、2 个指示灯全部退回出厂值**，
+        /// 而且下次 <c>Save</c> 会用出厂值把原文件覆盖掉，改错的那份配置就永久丢了。
+        /// </para>
+        /// </summary>
         public static (
             List<MachineStateItem> States,
             List<MachineEdgeLabel> Edges,
@@ -664,12 +677,152 @@ namespace DSH_Modbus采集工具.Modeling
             }
             catch
             {
-                // 与 DataPointStore / GlobalVariableStore 一致：读失败不阻断启动，退回出厂值
-                return (MachineStateLayout.CreateDefault(), MachineStateLayout.CreateDefaultEdgeLabels(),
-                    MachineStateLayout.CreateDefaultLamps());
+                // 整体反序列化失败（某个字段类型不对 —— 例如人手把 FontStyle 改成
+                // "Underline"、把 FontSize 写成 "abc"）。**不要整体退回出厂值**：
+                // 逐条再试一次，坏的条目跳过、好的照收。全都读不出来时才真的用出厂值。
+                return ReadElementByElement() ?? (items, edges, lamps);
             }
 
             return (items, edges, lamps);
+        }
+
+        /// <summary>
+        /// 兜底读法：整体反序列化失败时，改用 <see cref="JsonDocument"/> 逐个数组元素解析，
+        /// 每个元素单独 <c>try/catch</c> —— 一个元素写坏不影响同段的其它元素，
+        /// 也绝不因此把**整份**配置退回出厂值（那会连带覆盖掉用户改好的文字/颜色/表达式）。
+        /// </summary>
+        /// <returns>完全读不出来（文件读不了 / 不是合法 JSON）时返回 <c>null</c>。</returns>
+        private static (
+            List<MachineStateItem> States,
+            List<MachineEdgeLabel> Edges,
+            List<MachineStateLamp> Lamps)? ReadElementByElement()
+        {
+            JsonDocument doc;
+            try
+            {
+                doc = JsonDocument.Parse(File.ReadAllText(FilePath));
+            }
+            catch
+            {
+                return null;
+            }
+
+            using (doc)
+            {
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return null;
+                }
+
+                List<MachineStateItem> items = MachineStateLayout.CreateDefault();
+                List<MachineEdgeLabel> edges = MachineStateLayout.CreateDefaultEdgeLabels();
+                List<MachineStateLamp> lamps = MachineStateLayout.CreateDefaultLamps();
+
+                var byId = items.ToDictionary(x => x.Id, StringComparer.Ordinal);
+                var edgeById = edges.ToDictionary(x => x.Id, StringComparer.Ordinal);
+                var lampById = lamps.ToDictionary(x => x.Id, StringComparer.Ordinal);
+
+                foreach (JsonElement el in ReadArray(doc.RootElement, "states"))
+                {
+                    // 逐条 try：某条写坏只跳过这一条
+                    MachineStateEntry? entry;
+                    try
+                    {
+                        entry = el.Deserialize<MachineStateEntry>(Options);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (entry == null || string.IsNullOrEmpty(entry.Id)
+                        || !byId.TryGetValue(entry.Id, out MachineStateItem? item))
+                    {
+                        continue;
+                    }
+
+                    item.Text = string.IsNullOrWhiteSpace(entry.Text) ? item.Text : entry.Text;
+                    item.FontStyle = entry.FontStyle;
+                    item.FontSize = entry.FontSize > 0 ? entry.FontSize : item.FontSize;
+                    item.Color = MachineStateItem.NormalizeColor(entry.Color);
+                    item.Expression = entry.Expression ?? string.Empty;
+                }
+
+                // 连线标签同理：坏条目跳过，好的照收
+                foreach (JsonElement el in ReadArray(doc.RootElement, "edges"))
+                {
+                    EdgeEntry? entry;
+                    try
+                    {
+                        entry = el.Deserialize<EdgeEntry>(Options);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (entry == null || string.IsNullOrEmpty(entry.Id)
+                        || !edgeById.TryGetValue(entry.Id, out MachineEdgeLabel? label))
+                    {
+                        continue;
+                    }
+
+                    label.Text = entry.Text ?? label.Text;
+                }
+
+                // 指示灯同理
+                foreach (JsonElement el in ReadArray(doc.RootElement, "lamps"))
+                {
+                    LampEntry? entry;
+                    try
+                    {
+                        entry = el.Deserialize<LampEntry>(Options);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (entry == null || string.IsNullOrEmpty(entry.Id)
+                        || !lampById.TryGetValue(entry.Id, out MachineStateLamp? lamp))
+                    {
+                        continue;
+                    }
+
+                    lamp.Text = string.IsNullOrWhiteSpace(entry.Text) ? lamp.Text : entry.Text;
+                    lamp.Expression = entry.Expression ?? string.Empty;
+                    lamp.Color = MachineStateLamp.NormalizeColor(entry.Color);
+                    if (entry.DotSize > 0)
+                    {
+                        lamp.DotSize = entry.DotSize;
+                    }
+
+                    if (entry.FontSize > 0)
+                    {
+                        lamp.FontSize = entry.FontSize;
+                    }
+                }
+
+                return (items, edges, lamps);
+            }
+        }
+
+        /// <summary>
+        /// 从根对象里按**忽略大小写**取一个数组元素序列（手改文件里 "states"/"States" 都可能）。
+        /// 找不到或不是数组时返回空序列。
+        /// </summary>
+        private static IEnumerable<JsonElement> ReadArray(JsonElement root, string name)
+        {
+            foreach (JsonProperty prop in root.EnumerateObject())
+            {
+                if (string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase)
+                    && prop.Value.ValueKind == JsonValueKind.Array)
+                {
+                    return prop.Value.EnumerateArray().ToArray();
+                }
+            }
+
+            return Array.Empty<JsonElement>();
         }
 
         /// <summary>

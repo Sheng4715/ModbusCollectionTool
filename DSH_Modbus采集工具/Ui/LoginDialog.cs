@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using DSH_Modbus采集工具.Modeling;
 
 namespace DSH_Modbus采集工具.Ui
@@ -149,7 +150,10 @@ namespace DSH_Modbus采集工具.Ui
             // 而窄窗口下这一列只有 173.33 —— 撑出去 2.7 DIP（实测物理 2px，右缘对不齐）。
             // 按钮宽度这里**只由列宽决定**，不再有自己的下限。
             logout.MinWidth = 0;
-            logout.IsCancel = true;
+            // ⚠️ **不能设 IsCancel**：IsCancel 会让 Esc 直接触发这个按钮的 Click，
+            // 于是「按 Esc 想关掉对话框」会变成「注销账户」（当场退回技术员、清掉工程师权限）。
+            // 注销是一个**改变状态**的破坏性动作，只能靠显式点击触发。
+            // Esc = 关窗且什么都不改（DialogResult 保持 null/false，调用方按「取消」处理）。
             logout.Click += (_, _) =>
             {
                 LogoutRequested = true;
@@ -173,6 +177,18 @@ namespace DSH_Modbus采集工具.Ui
             root.Children.Add(buttons);
 
             Content = root;
+
+            // Esc = 关窗且**什么都不改**（DialogResult 保持 false/null，调用方按「取消」处理）。
+            // 显式处理而不用 IsCancel 按钮：那个机制只能把 Esc 绑到某个已有按钮上，
+            // 而这里既没有「取消」按钮、也不能让它绑到「注销」上（改状态的动作不该由 Esc 触发）。
+            PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Escape)
+                {
+                    e.Handled = true;
+                    DialogResult = false;
+                }
+            };
 
             SyncPasswordEnabled();
         }

@@ -15,6 +15,55 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Themes/DialogControls.xaml" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!--
+                ⚠️ **ToolTip 必须有隐式样式**（无 x:Key）：WPF 的默认 ToolTip 模板
+                把背景硬编码成浅色，**完全忽略 Background / Foreground**，
+                深色主题下会弹出一块浅色白板压在深底窗口上（实测截图可见）。
+                这类控件只能整份重绘，改属性没用 —— 与 DialogControls.xaml 里
+                重绘 ComboBox / ScrollBar 是同一个原因。
+
+                放在 Application 级（而不是 MainWindow 的 Window.Resources）：
+                ToolTip 是独立的弹出窗口，它取资源时**不在主窗口的可视树里**，
+                Window.Resources 里的键它找不到。
+            -->
+            <Style TargetType="ToolTip">
+                <Setter Property="Background" Value="{DynamicResource Brush.ToolTip.Background}" />
+                <Setter Property="Foreground" Value="{DynamicResource Brush.ToolTip.Foreground}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource Brush.ToolTip.Border}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="Padding" Value="8,5" />
+                <Setter Property="HasDropShadow" Value="False" />
+                <Setter Property="FontFamily"
+                        Value="Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI" />
+                <Setter Property="FontSize" Value="12" />
+                <!-- 长文本（字节顺序那几条说明）要能折行，否则会拉成一条超长的单行 -->
+                <Setter Property="ContentTemplate">
+                    <Setter.Value>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding}"
+                                       TextWrapping="Wrap"
+                                       MaxWidth="380" />
+                        </DataTemplate>
+                    </Setter.Value>
+                </Setter>
+                <!-- 圆角外壳：系统模板是直角，与全应用圆角语言不一致 -->
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToolTip">
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6"
+                                    Padding="{TemplateBinding Padding}"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter />
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

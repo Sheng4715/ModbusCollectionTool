@@ -77,6 +77,11 @@
     <SolidColorBrush x:Key="Brush.Popup.Background" Color="#2B2B2B"/>
     <SolidColorBrush x:Key="Brush.Popup.Border" Color="#4A4A4A"/>
 
+    <!-- 悬停提示：深色下压暗，不能沿用系统默认的浅色白板 -->
+    <SolidColorBrush x:Key="Brush.ToolTip.Background" Color="#3A3A3A"/>
+    <SolidColorBrush x:Key="Brush.ToolTip.Border" Color="#5E5E5E"/>
+    <SolidColorBrush x:Key="Brush.ToolTip.Foreground" Color="#F0F0F0"/>
+
     <SolidColorBrush x:Key="Brush.ScrollBar.Thumb" Color="#555555"/>
 
     <!-- ================= 半透明叠加（深色压白） ================= -->

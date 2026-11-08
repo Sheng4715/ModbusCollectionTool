@@ -246,15 +246,10 @@ namespace DSH_Modbus采集工具.Ui
 
         private void ApplyTheme()
         {
-            if (_box.TryFindResource("Brush.Popup.Background") is Brush background)
-            {
-                _border.Background = background;
-            }
-
-            if (_box.TryFindResource("Brush.Popup.Border") is Brush border)
-            {
-                _border.BorderBrush = border;
-            }
+            // 用 SetResourceReference 而不是取值赋死：候选窗虽然短命（每次弹出新建），
+            // 但用户完全可能「列表开着的时候切主题」，那时一次性取到的画刷就成了旧色。
+            _border.SetResourceReference(Border.BackgroundProperty, "Brush.Popup.Background");
+            _border.SetResourceReference(Border.BorderBrushProperty, "Brush.Popup.Border");
         }
 
         private FrameworkElement BuildRow(CompletionCandidate candidate)
@@ -275,10 +270,7 @@ namespace DSH_Modbus采集工具.Ui
                 FontSize = 12,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            if (_box.TryFindResource("Brush.Text.Primary") is Brush primary)
-            {
-                name.Foreground = primary;
-            }
+            name.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Primary");
 
             left.Children.Add(name);
 
@@ -291,10 +283,7 @@ namespace DSH_Modbus采集工具.Ui
                     Margin = new Thickness(10, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
-                if (_box.TryFindResource("Brush.Text.Muted") is Brush muted)
-                {
-                    detail.Foreground = muted;
-                }
+                detail.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
 
                 left.Children.Add(detail);
             }
@@ -309,10 +298,7 @@ namespace DSH_Modbus采集工具.Ui
                 Margin = new Thickness(12, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            if (_box.TryFindResource("Brush.Text.Tertiary") is Brush tertiary)
-            {
-                kind.Foreground = tertiary;
-            }
+            kind.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Tertiary");
 
             Grid.SetColumn(kind, 1);
             grid.Children.Add(kind);

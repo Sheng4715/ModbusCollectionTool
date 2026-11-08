@@ -402,13 +402,13 @@ namespace DSH_Modbus采集工具
         /// </summary>
         public string? NameToolTip => null;
 
-        /// <summary>行文字颜色：配置出错标红，正常近黑。</summary>
+        /// <summary>行文字颜色：配置出错标红，正常用正文色。</summary>
         public System.Windows.Media.Brush RowBrush => HasError
             ? ErrorBrush
             : NormalBrush;
 
         /// <summary>
-        /// 「当前值」格的颜色：读或写失败标琥珀，否则近黑。
+        /// 「当前值」格的颜色：读或写失败标琥珀，否则正文色。
         /// <para>
         /// 刻意与配置错误（<see cref="RowBrush"/> 的红色）区分开：
         /// 红＝配置要改，琥珀＝这一拍没读到/没写进去、配置没问题。
@@ -423,9 +423,42 @@ namespace DSH_Modbus采集工具
             ? ReadErrorBrush
             : NormalBrush;
 
-        private static readonly System.Windows.Media.Brush ErrorBrush = MakeFrozen(0xC4, 0x2B, 0x1C);
-        private static readonly System.Windows.Media.Brush ReadErrorBrush = MakeFrozen(0xB2, 0x6A, 0x00);
-        private static readonly System.Windows.Media.Brush NormalBrush = MakeFrozen(0x1A, 0x1A, 0x1A);
+        // ==== 三个语义色：**必须按当前主题取**，不能写死字面值 ====
+        //
+        // ⚠️ 原实现是三个 `static readonly` 的 frozen 画刷，值取的是**浅色主题**的字面量。
+        // 浅色下无感，但深色主题里 `#1A1A1A`（近黑）落在 `#2B2B2B` 的深底卡片上
+        // **几乎看不见** —— 整张自由监控表的名字与数值全部不可读。
+        // 这与「深色适配由主题键保证」的前提直接冲突：那三个键恰好在主题字典里就有，
+        // 绕开它们只是当初没接。
+        //
+        // 取值时机：每次读属性时按**当时**的主题取（字典本身有缓存，按键取不产生新对象），
+        // 换主题后由 `MainWindow.OnThemeChanged` 调 `RaiseThemeBrushesChanged()` 通知重算。
+        // 取不到主题资源时（如独立断言工程里没有 Application）回退到浅色字面值。
+        private static readonly System.Windows.Media.Brush ErrorFallback = MakeFrozen(0xC4, 0x2B, 0x1C);
+        private static readonly System.Windows.Media.Brush ReadErrorFallback = MakeFrozen(0xB2, 0x6A, 0x00);
+        private static readonly System.Windows.Media.Brush NormalFallback = MakeFrozen(0x1A, 0x1A, 0x1A);
+
+        private static System.Windows.Media.Brush ErrorBrush =>
+            Themes.ThemeManager.GetBrush("Brush.Danger") ?? ErrorFallback;
+
+        private static System.Windows.Media.Brush ReadErrorBrush =>
+            Themes.ThemeManager.GetBrush("Brush.Warning") ?? ReadErrorFallback;
+
+        private static System.Windows.Media.Brush NormalBrush =>
+            Themes.ThemeManager.GetBrush("Brush.Text.Primary") ?? NormalFallback;
+
+        /// <summary>
+        /// 换主题后通知绑定重取 <see cref="RowBrush"/> / <see cref="ValueBrush"/>。
+        /// <para>
+        /// 这两个是只读派生属性、没有 setter，只能靠 PropertyChanged 让绑定重新求值 ——
+        /// 与 <c>IoPoint.RaiseStateBrushChanged()</c> 同一套做法。
+        /// </para>
+        /// </summary>
+        public void RaiseThemeBrushesChanged()
+        {
+            OnPropertyChanged(nameof(RowBrush));
+            OnPropertyChanged(nameof(ValueBrush));
+        }
 
         private static System.Windows.Media.Brush MakeFrozen(byte r, byte g, byte b)
         {
@@ -835,6 +868,18 @@ namespace DSH_Modbus采集工具
                 var ordered = areaGroup.OrderBy(x => x.Item.Address).ToList();
                 var current = new List<(MonitorItem Item, int Units)>();
 
+                // 单块上限按存储区取：FC01/FC02 线圈 2000，FC03/FC04 寄存器只有 125。
+                // 早先统一用 2000 分寄存器块 —— 一次请求几百个寄存器会被从站回异常码 3
+                // 甚至断链（协议上限不同，见 ModbusTcpClient.MaxRegistersPerRead）。
+                int limit = areaGroup.Key is ModbusArea.Coil or ModbusArea.DiscreteInput
+                    ? MaxUnitsPerRead
+                    : GlobalReadPlan.MaxRegistersPerRead;
+
+                // 增量维护块起点与块尾，避免每加一项都重扫 current（O(n²)）。
+                // ordered 已按地址升序，故 blockStart 恒为首项地址、curEnd 单调不减。
+                int blockStart = -1;
+                int curEnd = -1;
+
                 foreach (var entry in ordered)
                 {
                     int start = entry.Item.Address;
@@ -843,33 +888,30 @@ namespace DSH_Modbus采集工具
                     if (current.Count > 0)
                     {
                         // 与本块已有范围的末地址相比，紧邻或重叠则并入；有空洞则断开
-                        int curEnd = 0;
-                        foreach (var c in current)
-                        {
-                            int end = c.Item.Address + c.Units;
-                            if (end > curEnd)
-                            {
-                                curEnd = end;
-                            }
-                        }
-
-                        int blockStart = current.Min(c => c.Item.Address);
                         bool adjacent = start <= curEnd;
-                        bool withinLimit = (Math.Max(curEnd, start + units) - blockStart) <= MaxUnitsPerRead;
+                        bool withinLimit = (Math.Max(curEnd, start + units) - blockStart) <= limit;
 
                         if (!adjacent || !withinLimit)
                         {
                             plan.Add(MakeBlock(areaGroup.Key, blockStart, current));
                             current = new List<(MonitorItem, int)>();
+                            blockStart = -1;
+                            curEnd = -1;
                         }
                     }
 
+                    if (blockStart < 0)
+                    {
+                        blockStart = start;
+                    }
+
+                    curEnd = Math.Max(curEnd, start + units);
                     current.Add((entry.Item, units));
                 }
 
                 if (current.Count > 0)
                 {
-                    plan.Add(MakeBlock(areaGroup.Key, current.Min(c => c.Item.Address), current));
+                    plan.Add(MakeBlock(areaGroup.Key, blockStart, current));
                 }
             }
 
@@ -920,7 +962,7 @@ namespace DSH_Modbus采集工具
             };
         }
 
-        /// <summary>单次报文最多读取的单元数（线圈/寄存器分别有 2000 上限，取小者统一约束）。</summary>
+        /// <summary>线圈区的单次上限（FC01/FC02 协议允许 2000 个线圈）。</summary>
         private const int MaxUnitsPerRead = 2000;
 
         /// <summary>

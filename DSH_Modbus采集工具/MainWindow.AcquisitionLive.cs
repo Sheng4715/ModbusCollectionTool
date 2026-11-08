@@ -395,7 +395,6 @@ namespace DSH_Modbus采集工具
             {
                 Text = AcquisitionLiveText.Title(item),
                 FontSize = item.LiveNameFontSize,
-                Foreground = Res("Brush.Text.Muted", Colors.Gray),
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
@@ -405,7 +404,6 @@ namespace DSH_Modbus采集工具
                 Text = AcquisitionLiveText.Placeholder,
                 FontSize = item.LiveValueFontSize,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = Res("Brush.Text.Primary", Colors.Black),
                 // 数值**靠左**对齐（2026-11-03 用户要求）：
                 // 卡片可以拖到图片外的留白区、宽度会被内容撑开，居中的话
                 // 数值在框里相对位置随卡片宽度浮动，看着不稳
@@ -417,16 +415,14 @@ namespace DSH_Modbus采集工具
             // 让「值」和「项名称」在视觉上分开，读数时眼睛有落点 ——
             // 光靠字号差在小窗口下不够（数值缩到 24 号时和名称的差别不明显）。
             // 视觉上是「输入框」的语感（框线 + 白底），但卡片本身是只读的。
+            //
+            // ⚠️ 框线颜色与父卡片**对调**（2026-11-03 用户要求）：
+            // 内框用 Card.Border（浅 #E8E8E8），外框用 Input.Border（深 #C8C8C8）。
+            // 层次因此是「外面的卡片框更实、里面的数值框更轻」——
+            // 反过来（内深外浅）会让数值框比卡片本体还抢眼，喧宾夺主。
             var valueFrame = new Border
             {
                 Child = valueText,
-                Background = Res("Brush.Input.Background", Colors.White),
-
-                // ⚠️ 框线颜色与父卡片**对调**（2026-11-03 用户要求）：
-                // 内框用 Card.Border（浅 #E8E8E8），外框用 Input.Border（深 #C8C8C8）。
-                // 层次因此是「外面的卡片框更实、里面的数值框更轻」——
-                // 反过来（内深外浅）会让数值框比卡片本体还抢眼，喧宾夺主。
-                BorderBrush = Res("Brush.Card.Border", Colors.Gainsboro),
                 BorderThickness = new Thickness(1),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 // 卡片整体要能拖，框不能把鼠标事件吃掉
@@ -448,15 +444,23 @@ namespace DSH_Modbus采集工具
             var root = new Border
             {
                 Child = stack,
-                Background = Res("Brush.Card.Background", Colors.White),
-
-                // 与数值框的框线**对调**（见 valueFrame 里的说明）：
-                // 外层卡片用 Input.Border（深），内层数值用 Card.Border（浅）
-                BorderBrush = Res("Brush.Input.Border", Colors.Silver),
                 BorderThickness = new Thickness(1),
                 Cursor = Cursors.SizeAll,
                 Tag = item,
             };
+
+            // ⚠️ **用 SetResourceReference 绑主题键，不要一次性取画刷赋死**：
+            // 卡片是在「进入实时画布时」建的，若用 `Res(key, fallback)` 取当时的画刷，
+            // 换主题后卡片仍是建立那一刻的颜色 —— 实测：深色主题下进来、再切回浅色，
+            // 卡片整块仍是深底（用户 2026-11-06 报「切回浅色，卡片还是深色」）。
+            // SetResourceReference 让控件自己跟着 DynamicResource 走，换字典即变，
+            // 不需要在 OnThemeChanged 里重建卡片（重建会打断拖动、丢当前位置）。
+            BindThemeBrush(nameText, TextBlock.ForegroundProperty, "Brush.Text.Muted");
+            BindThemeBrush(valueText, TextBlock.ForegroundProperty, "Brush.Text.Primary");
+            BindThemeBrush(valueFrame, Border.BackgroundProperty, "Brush.Input.Background");
+            BindThemeBrush(valueFrame, Border.BorderBrushProperty, "Brush.Card.Border");
+            BindThemeBrush(root, Border.BackgroundProperty, "Brush.Card.Background");
+            BindThemeBrush(root, Border.BorderBrushProperty, "Brush.Input.Border");
 
             var card = new LiveCard
             {
@@ -484,16 +488,20 @@ namespace DSH_Modbus采集工具
             return card;
         }
 
-        /// <summary>从主题取画刷；取不到用兜底色（这套代码可能被单测跑到，没有 Application）。</summary>
-        private static Brush Res(string key, Color fallback)
-        {
-            if (Application.Current?.TryFindResource(key) is Brush brush)
-            {
-                return brush;
-            }
+        /// <summary>
+        /// 把控件的某个画刷属性绑到主题键上（等价于 XAML 里的 <c>DynamicResource</c>）。
+        /// <para>
+        /// 这是 C# 里建控件时**唯一正确**的做法：<c>SetResourceReference</c> 注册的是
+        /// 「资源引用」而非一个具体画刷对象，换主题字典时会自动重新求值。
+        /// 直接 <c>TryFindResource</c> 取值赋给属性则只反映赋值那一刻的主题。
+        /// </para>
+        /// </summary>
+        private static void BindThemeBrush(
+            System.Windows.FrameworkElement target,
+            System.Windows.DependencyProperty property,
+            string key) =>
+            target.SetResourceReference(property, key);
 
-            return new SolidColorBrush(fallback);
-        }
 
         /// <summary>
         /// 把卡片的字号、内距、圆角按当前缩放比写到控件上（2026-11-03）。
@@ -608,7 +616,19 @@ namespace DSH_Modbus采集工具
 
             // ⚠️ 必须捕获鼠标：不捕获的话鼠标一快就滑出卡片，
             // 后续 MouseMove 收不到，卡片会「粘」在原地不动
-            card.Root.CaptureMouse();
+            //
+            // ⚠️ **必须判返回值**：`CaptureMouse` 在别的元素已捕获鼠标（或鼠标不在本窗口）时
+            // 会返回 false 且**什么也不做**；此时若仍把 `_liveDragging` / `Dragging` 置真，
+            // 后续既收不到 MouseMove（没收捕），也不会触发 LostMouseCapture（从未捕获），
+            // 卡片就此「粘住」，直到用户再点一次才复位。故失败时立刻把状态退回去。
+            if (!card.Root.CaptureMouse())
+            {
+                card.Dragging = false;
+                card.DragStarted = false;
+                _liveDragging = null;
+                e.Handled = true;
+                return;
+            }
 
             e.Handled = true;
         }

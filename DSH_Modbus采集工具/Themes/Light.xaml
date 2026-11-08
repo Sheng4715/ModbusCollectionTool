@@ -96,6 +96,13 @@
     <SolidColorBrush x:Key="Brush.Popup.Background" Color="#FFFFFF"/>
     <SolidColorBrush x:Key="Brush.Popup.Border" Color="#D6D6D6"/>
 
+    <!-- 悬停提示（ToolTip）。
+         ⚠️ WPF 的 ToolTip 默认模板**完全不吃主题**：深色主题下会是一块浅色白板，
+         与整窗深色底对比刺眼（实测截图可见）。故必须有隐式 Style 覆盖它。 -->
+    <SolidColorBrush x:Key="Brush.ToolTip.Background" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Brush.ToolTip.Border" Color="#C8C8C8"/>
+    <SolidColorBrush x:Key="Brush.ToolTip.Foreground" Color="#1A1A1A"/>
+
     <SolidColorBrush x:Key="Brush.ScrollBar.Thumb" Color="#C4C4C4"/>
 
     <!-- ================= 半透明叠加 =================

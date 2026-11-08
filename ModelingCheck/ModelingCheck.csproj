@@ -36,6 +36,20 @@
     <Compile Include="..\DSH_Modbus采集工具\Modeling\CompletionSource.cs" Link="CompletionSource.cs" />
     <!-- P1.2 状态机采集全局变量：读计划与回填的纯逻辑（不链接 Ui/ 下的显示部分）。 -->
     <Compile Include="..\DSH_Modbus采集工具\Modeling\GlobalReadPlan.cs" Link="GlobalReadPlan.cs" />
+    <!-- CSV 读写的纯逻辑：SplitRecords / ParseLine / FormatLine / FormatField。
+         2026-11-06 加：跨行字段（STRING 里含 0x0A）的切行回归断言需要它。 -->
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\AcquisitionCsv.cs" Link="AcquisitionCsv.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\AcquisitionTask.cs" Link="AcquisitionTask.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\AcquisitionConstant.cs" Link="AcquisitionConstant.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\AcquisitionTaskCheck.cs" Link="AcquisitionTaskCheck.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\AcquisitionSource.cs" Link="AcquisitionSource.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\WritePlan.cs" Link="WritePlan.cs" />
+    <!-- 表达式引擎：AcquisitionCsv / AcquisitionTaskCheck 引用 CompiledExpression。 -->
+    <Compile Include="..\DSH_Modbus采集工具\Expressions\ExpressionValue.cs" Link="ExpressionValue.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Expressions\ExpressionLexer.cs" Link="ExpressionLexer.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Expressions\ExpressionNode.cs" Link="ExpressionNode.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Expressions\ExpressionParser.cs" Link="ExpressionParser.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Expressions\CompiledExpression.cs" Link="CompiledExpression.cs" />
   </ItemGroup>
 
 </Project>

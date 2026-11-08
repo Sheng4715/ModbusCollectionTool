@@ -543,10 +543,18 @@ namespace DSH_Modbus采集工具.Modeling
             }
         }
 
-        /// <summary>新增一条变量；名称非法或重名时返回 null。</summary>
+        /// <summary>新增一条变量；名称为空 / 非法 / 重名时返回 null。</summary>
         public GlobalVariable? Add(GlobalVariable v, out string error)
         {
             error = string.Empty;
+
+            // 与 TryResolve 同一口径：外部传入的对象可能为 null（调用方漏判时，
+            // 这里一句人话远比 NullReferenceException 好查）。
+            if (v == null)
+            {
+                error = "变量为空";
+                return null;
+            }
 
             if (!GlobalVariableRules.TryValidateName(v.Name, out error))
             {

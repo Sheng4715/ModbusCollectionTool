@@ -10,8 +10,24 @@ namespace DSH_Modbus采集工具.Expressions
     /// </summary>
     internal sealed class ExpressionParser
     {
+        /// <summary>
+        /// 递归深度上限。超过就报「表达式嵌套过深」而不是继续递归。
+        /// <para>
+        /// ⚠️ 递归下降分析器对 <c>((((((…))))))</c> 或 <c>!!!!…</c> 是**真递归**，
+        /// 深度随输入线性增长。用户（或手改的 json）塞进去几千个左括号时，
+        /// 栈会直接溢出 —— 而 **StackOverflowException 在 .NET 里不可捕获**，
+        /// 整个进程当场消失，连日志都留不下。故必须在递归前主动设闸门。
+        /// </para>
+        /// <para>
+        /// 取 64：正常表达式（状态机里最长的那条 <c>(sys_DataTime_Second == 0) || sys_Pulse2s</c>）
+        /// 嵌套深度不到 5，64 已是它的十几倍，不可能误伤真实配置。
+        /// </para>
+        /// </summary>
+        private const int MaxDepth = 64;
+
         private readonly List<ExpressionToken> _tokens;
         private int _index;
+        private int _depth;
         private string _error = string.Empty;
 
         public ExpressionParser(List<ExpressionToken> tokens)
@@ -100,15 +116,30 @@ namespace DSH_Modbus采集工具.Expressions
 
         private ExpressionNode ParseUnary()
         {
-            if (Current.Kind == ExpressionTokenKind.Not)
+            // 深度闸门：`!!!!…` 与嵌套括号都走这里/ParsePrimary，两边各计一次
+            if (++_depth > MaxDepth)
             {
-                ExpressionToken op = Current;
-                Advance();
-                ExpressionNode operand = ParseUnary();
-                return new NotNode(operand, op.Position);
+                _error = $"第 {Current.Position} 个字符：表达式嵌套过深（超过 {MaxDepth} 层）";
+                _depth = 0;
+                return new LiteralNode(ExpressionValue.FromBool(false), Current.Position);
             }
 
-            return ParsePrimary();
+            try
+            {
+                if (Current.Kind == ExpressionTokenKind.Not)
+                {
+                    ExpressionToken op = Current;
+                    Advance();
+                    ExpressionNode operand = ParseUnary();
+                    return new NotNode(operand, op.Position);
+                }
+
+                return ParsePrimary();
+            }
+            finally
+            {
+                _depth--;
+            }
         }
 
         private ExpressionNode ParsePrimary()
@@ -142,7 +173,26 @@ namespace DSH_Modbus采集工具.Expressions
                 case ExpressionTokenKind.LeftParen:
                 {
                     Advance();
-                    ExpressionNode inner = ParseOr();
+
+                    // 括号是另一条递归路径（ParsePrimary → ParseOr → … → ParsePrimary），
+                    // 必须与 ParseUnary 共用同一个深度计数器，否则 `((((…))))` 仍会爆栈。
+                    if (++_depth > MaxDepth)
+                    {
+                        _error = $"第 {token.Position} 个字符：表达式嵌套过深（超过 {MaxDepth} 层）";
+                        _depth = 0;
+                        return new LiteralNode(ExpressionValue.FromBool(false), token.Position);
+                    }
+
+                    ExpressionNode inner;
+                    try
+                    {
+                        inner = ParseOr();
+                    }
+                    finally
+                    {
+                        _depth--;
+                    }
+
                     if (Failed)
                     {
                         return inner;

@@ -136,7 +136,17 @@ namespace DSH_Modbus采集工具
         // 连接身份/生命周期（_modbus / _isConnected / _connectCts 等）已收进 _session；
         // _pollCts 留在窗口 —— 它属于采集任务的启停（ICollectorHost 那一侧）。
         private CancellationTokenSource? _pollCts;
-        private bool _windowClosed;
+
+        /// <summary>
+        /// 窗口是否已关闭。UI 线程写、后台线程经 <see cref="IsCurrentConnection"/> 读。
+        /// <para>
+        /// ⚠️ <c>volatile</c>：它是「UI 写、后台读」的跨线程标志，与其余几个可见性字段同口径。
+        /// 真正的兜底其实是 token 取消 + <c>IsConnected</c>，故漏标也只是延迟一拍；
+        /// 但既然是跨线程共享状态，就应显式标出来 —— 否则下一个读代码的人无从判断。
+        /// </para>
+        /// </summary>
+        private volatile bool _windowClosed;
+
         private volatile int _pollIntervalMs = 100;
         private CommDriver? _currentDriver;
 
@@ -236,8 +246,10 @@ namespace DSH_Modbus采集工具
         /// <summary>
         /// 是否停在总览页的「PLC状态机」分段 —— 采集侧据此决定要不要采状态机引用的全局变量。
         /// <para>由 <see cref="SyncMachineTimer"/> 统一维护（页面切换与分段切换都会走到那里）。</para>
+        /// <para>⚠️ <c>volatile</c>：UI 线程写、采集线程在 <see cref="CaptureSnapshot"/> 里每拍读，
+        /// 与 <c>_ioPageActive</c> / <c>_freeViewActive</c> 同一口径。漏标最多晚采一拍，但属约定遗漏。</para>
         /// </summary>
-        private bool _machineViewActive;
+        private volatile bool _machineViewActive;
 
         /// <summary>
         /// 状态机表达式**实际引用到**的全局变量（去重后）。采集线程按这份清单拼报文。
@@ -780,6 +792,15 @@ namespace DSH_Modbus采集工具
             foreach (var point in _ioSet.XPoints.Concat(_ioSet.YPoints))
             {
                 point.RaiseStateBrushChanged();
+            }
+
+            // 自由监控行：RowBrush / ValueBrush 同样是只读派生属性，
+            // 取的是 Brush.Danger / Brush.Warning / Brush.Text.Primary 三个主题键。
+            // ⚠️ 漏掉这里的话，深色主题下整张表的名称与数值仍是浅色的近黑 `#1A1A1A`，
+            // 落在 `#2B2B2B` 深底上几乎不可读（实测踩到过）。
+            foreach (MonitorItem row in _monitorSet.Items)
+            {
+                row.RaiseThemeBrushesChanged();
             }
 
             // 日志：LogEntry.LevelBrush 构造时定色，只能按新主题重建整表
@@ -2064,7 +2085,16 @@ namespace DSH_Modbus采集工具
         protected override void OnClosed(EventArgs e)
         {
             _windowClosed = true;
+
+            // 三处 DispatcherTimer 一律显式停。默认 ShutdownMode=OnMainWindowClose 下
+            // 关窗会连带关 Dispatcher、定时器自然停，**当前不崩**；但一旦将来改成多窗口
+            // 或 OnExplicitShutdown，`RunAcquisitionTick` / 状态机刷新会在窗口已关之后
+            // 继续每 50ms 访问控件（跨线程 ObjectDisposedException / 空白绑定）。
+            // 三个定时器的启停口径统一在这里收口，不要只停其中一个。
+            _acqTimer.Stop();
+            _machineTimer.Stop();
             _sysVarTimer.Stop();
+
             Themes.ThemeManager.ThemeChanged -= OnThemeChanged;
             CancelReconnect();
             Disconnect();

@@ -49,8 +49,7 @@ namespace DSH_Modbus采集工具.Ui
         {
             _text.Text = text;
 
-            var brush = ThemeManager.GetBrush(BrushKey(colorHex))
-                        ?? new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
+            Brush brush = ThemeManager.GetBrush(BrushKey(colorHex)) ?? FallbackBrush(colorHex);
             _text.Foreground = brush;
             _dot.Fill = brush;
 
@@ -58,6 +57,53 @@ namespace DSH_Modbus采集工具.Ui
             _lastColorHex = colorHex;
 
             RefreshDetail();
+        }
+
+        /// <summary>
+        /// 主题键取不到时的兜底色。
+        /// <para>
+        /// ⚠️ 原实现每次都 <c>new SolidColorBrush(…)</c> 且不 <c>Freeze()</c>：
+        /// 底栏状态在连接/重连期间会频繁 <see cref="Set"/>，每次都新建一个可变化刷是纯垃圾。
+        /// 这里按色值缓存并冻结 —— 同一色值只建一次。
+        /// </para>
+        /// </summary>
+        private static Brush FallbackBrush(string colorHex)
+        {
+            lock (FallbackCache)
+            {
+                if (FallbackCache.TryGetValue(colorHex, out Brush? cached))
+                {
+                    return cached;
+                }
+
+                Brush created;
+                try
+                {
+                    var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colorHex)!);
+                    brush.Freeze();
+                    created = brush;
+                }
+                catch
+                {
+                    // 色值本身非法（不该发生）：退回「未连接」灰，保证永远有个能用的画刷
+                    created = _neutral;
+                }
+
+                FallbackCache[colorHex] = created;
+                return created;
+            }
+        }
+
+        private static readonly Dictionary<string, Brush> FallbackCache =
+            new(StringComparer.Ordinal);
+
+        private static readonly Brush _neutral = MakeNeutral();
+
+        private static Brush MakeNeutral()
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A));
+            brush.Freeze();
+            return brush;
         }
 
         /// <summary>换主题后按记住的状态重设颜色（文字不变）。</summary>

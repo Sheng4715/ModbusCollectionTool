@@ -82,14 +82,20 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
+            MonitorItem? previous = _selectedMonitorItem;
             _selectedMonitorItem = item;
 
-            if (_monitorSet?.Items != null)
+            // 只动「旧选中」与「新选中」两个对象，不再遍历全表：
+            // 行数多时每次点击都 O(n) 重设是白费，而且 IsSelected 的 setter 自身有同值短路，
+            // 遍历只会产生大量无意义的属性读。
+            if (previous != null)
             {
-                foreach (MonitorItem row in _monitorSet.Items)
-                {
-                    row.IsSelected = ReferenceEquals(row, item);
-                }
+                previous.IsSelected = false;
+            }
+
+            if (item != null)
+            {
+                item.IsSelected = true;
             }
 
             UpdateMonitorMoveButtons();
@@ -711,8 +717,16 @@ namespace DSH_Modbus采集工具
         /// <summary>
         /// 每个「当前值」输入框最近一次**已提交**的文本（键为控件本身）。
         /// 用途：回车与失焦都会触发提交，靠它识别「同一次编辑」避免重复写。
+        /// <para>
+        /// ⚠️ **必须用弱表，不能用普通 Dictionary**：键是 <c>DataTemplate</c> 里每行各自的
+        /// TextBox，删行 / 清空后该 TextBox 会离开可视树，但普通字典仍**强引用**它 ——
+        /// 而 <c>TextBox.DataContext → MonitorItem → DataPoint</c> 是一条完整的引用链，
+        /// 整条链都会因此无法回收，直到关窗。同文件的 <c>_nameCompletions</c> 正是
+        /// 为规避同一类问题才用弱表，这里当初漏了。
+        /// </para>
         /// </summary>
-        private readonly Dictionary<TextBox, string?> _lastCommittedValue = new();
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBox, string>
+            _lastCommittedValue = new();
 
         /// <summary>
         /// 「当前值」格获得焦点：标记为编辑中，轮询回填会跳过该行，
@@ -781,7 +795,6 @@ namespace DSH_Modbus采集工具
             {
                 return;
             }
-
             // 内存变量：没有映射地址，没有寄存器可写，**也不需要连接** ——
             // 值直接存进变量本身，一个报文都不发。
             // 放在连接检查之前，否则没连 PLC 时连内存变量都改不了。
@@ -791,11 +804,11 @@ namespace DSH_Modbus采集工具
                 {
                     item.WriteError = memoryError;
                     item.IsEditing = true;
-                    _lastCommittedValue[box] = text; // 同一份非法内容不重复报告
+                    _lastCommittedValue.AddOrUpdate(box, text); // 同一份非法内容不重复报告
                     return;
                 }
 
-                _lastCommittedValue[box] = text;
+                _lastCommittedValue.AddOrUpdate(box, text);
                 item.WriteError = null;
                 item.ReadError = null;
                 item.IsEditing = false;
@@ -818,14 +831,14 @@ namespace DSH_Modbus采集工具
                 // 保持编辑态 = 值留在界面上、错误提示留在 ToolTip 里，用户可继续改。
                 item.WriteError = error;
                 item.IsEditing = true;
-                _lastCommittedValue[box] = text; // 同一份非法内容不重复报告
+                _lastCommittedValue.AddOrUpdate(box, text); // 同一份非法内容不重复报告
                 return;
             }
 
             // 记下本次提交的文本：回车与失焦会先后各触发一次，靠它去重。
             // ⚠️ 必须在**发报文之前**记下（而不是成功之后）——
             // 否则第一次成功后清掉记录，紧接着的失焦路径会当作新提交又写一次。
-            _lastCommittedValue[box] = text;
+            _lastCommittedValue.AddOrUpdate(box, text);
 
             try
             {
@@ -848,7 +861,7 @@ namespace DSH_Modbus采集工具
                 // 同样保持编辑态，让用户看到自己输的内容与失败原因。
                 item.WriteError = ClassifyWriteError(ex);
                 item.IsEditing = true;
-                _lastCommittedValue[box] = text; // 同一份内容不重复发失败请求
+                _lastCommittedValue.AddOrUpdate(box, text); // 同一份内容不重复发失败请求
             }
         }
 

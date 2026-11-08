@@ -189,6 +189,15 @@ namespace DSH_Modbus采集工具.Modeling
         /// 与 <see cref="FormatRegisters"/> 分开：那个出的是给人看的文本（可能是 Hex / Bin），
         /// 实时卡片一律十进制显示，从文本反解会遇到「STRING 内容恰好是 2A」这种歧义。
         /// </para>
+        /// <para>
+        /// ⚠️ **必须经 <see cref="Interpret"/> 做符号扩展**：<see cref="DecodeInteger"/> 返回的是
+        /// <b>无符号位模式</b>（<c>INT</c> 的 <c>−1</c> 是 <c>0xFFFF</c>、<c>DINT</c> 的 <c>−100</c>
+        /// 是 <c>0xFFFFFF9C</c>）。直接把位模式转成 <see cref="double"/> 会让实时卡片把
+        /// <c>−1</c> 显示成 <c>65535</c>、<c>−100</c> 显示成 <c>4.29E+09</c> ——
+        /// 负温度 / 负位置是现场常态，属**静默显示错值**，不报错因而极难发现。
+        /// 文本路径（<see cref="FormatRegisters"/> → <see cref="FormatInteger"/>）一直是对的，
+        /// 只有本方法的数值通道漏了这一步。
+        /// </para>
         /// </summary>
         /// <returns>数值；<c>STRING</c> 没有数值形态，返回 <c>null</c>。</returns>
         public static double? DecodeNumber(DataType type, ReadOnlySpan<ushort> regs, ByteOrderSettings orders)
@@ -203,7 +212,8 @@ namespace DSH_Modbus采集工具.Modeling
                 return DecodeReal(regs, orders.Float);
             }
 
-            return DecodeInteger(type, regs, orders.Int32);
+            // 32 位值在 double 的精确范围内（< 2^53），long → double 无精度损失
+            return Interpret(type, DecodeInteger(type, regs, orders.Int32));
         }
 
         /// <summary>把 <see cref="DecodeInteger"/> 的位模式按声明类型解释并格式化。</summary>

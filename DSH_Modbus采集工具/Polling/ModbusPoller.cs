@@ -266,9 +266,16 @@ internal sealed class ModbusPoller
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (ModbusResponseException ex)
             {
-                // 单块失败只标该块内的项，继续读下一块（其它地址可能正常）
+                // **只有合法异常码**才按「单块失败」处理：链路是通的，从站只是拒绝了这一条请求
+                // （例如地址配错、跨地址区）。跳过本块、继续读下一块，连接保持。
+                //
+                // ⚠️ **不能在这里 catch (Exception)**：那会把 IOException（"连接被对方关闭"、
+                // 事务标识不匹配 …）也吞成行内错误。而 RequestAsync 遇到这类异常时**已经
+                // Dispose 了客户端**，连接已死 —— 吞掉它只会让界面一直停在「已连接」，
+                // 后续每块都撞「连接未建立」，真正的断线只能等心跳循环来兜底。
+                // 让它上抛到 PollLoopAsync 的统一断线分支，才能正确记日志 + 自动重连。
                 results.Add((block, null, null, _host.ClassifyDisconnectReason(ex.Message)));
             }
         }
@@ -447,8 +454,12 @@ internal sealed class ModbusPoller
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (ModbusResponseException ex)
             {
+                // 合法异常码 = 链路仍在、从站拒绝这一条请求。跳过本块、继续读下一块。
+                // ⚠️ 这里**只捕 ModbusResponseException**，理由同 PollFreeMonitorAsync：
+                // catch (Exception) 会把 IOException（客户端已被 Dispose 的断线）吞成行内错误，
+                // 让连接已死却不断线。断线必须上抛到 PollLoopAsync 的统一分支。
                 results.Add((block, null, null, _host.ClassifyDisconnectReason(ex.Message)));
             }
         }
