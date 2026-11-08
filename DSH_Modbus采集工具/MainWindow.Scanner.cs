@@ -895,6 +895,142 @@ namespace DSH_Modbus采集工具
             item.ProblemField = field;
         }
 
+        // ---------- 触发测试（P4.5，2026-11-08） ----------
+
+        /// <summary>
+        /// 「测试触发」：按当前配置当场发一次触发，把收到的内容弹框显示。
+        ///
+        /// <para>
+        /// ⚠️ **刻意不影响任何变量**（2026-11-08 用户定案）：不写「接收内容输出变量」、
+        /// 也不写「执行结果输出变量」。理由：这是**调试动作**，不是业务数据 ——
+        /// 点一下就把执行结果写成 1，等于让「测一下」冒充「真的跑完了一轮扫描」，
+        /// 采集任务与状态机会据此做出错误判断。要真跑一轮，用触发条件表达式触发它。
+        /// </para>
+        /// <para>
+        /// ⚠️ **也不写运行日志**：与登录 / 注销同一取向 —— 那是界面调试动作，不是设备状态；
+        /// 每一次测试都往日志卡里塞一行，很快就把真正的连接事件挤掉了。
+        /// 结果只在这个弹框里，看完即走。
+        /// </para>
+        /// <para>
+        /// 复用的是**同一条通讯路径**（丢弃残留 → 原样发触发文本 → 按结束符收一帧），
+        /// 所以「测试通过」足以说明生产路径也是通的；差别只在结果去处。
+        /// </para>
+        /// </summary>
+        private async void ScannerTestTrigger_Click(object sender, RoutedEventArgs e)
+        {
+            if (ScannerRowOf(sender) is not ScannerItem item)
+            {
+                return;
+            }
+
+            ScannerDefinition def = item.Model;
+
+            // 先把正在编辑的框提交掉：用户很可能刚敲完触发文本就来点测试，
+            // 此时框里还是新内容、模型里是旧的（失焦才提交）。
+            if (sender is FrameworkElement fe)
+            {
+                var row = new List<TextBox>();
+                CollectScannerTextBoxes(fe, row);
+                foreach (TextBox box in row)
+                {
+                    // 让 WPF 走一次正常的失焦提交，与用户点别处等效
+                    box.RaiseEvent(new RoutedEventArgs(LostFocusEvent));
+                }
+            }
+
+            // 触发文本还没填 = 没什么可发；这不是「失败」，直接提示配置问题
+            if (string.IsNullOrEmpty(def.TriggerText))
+            {
+                ThemeMessageDialog.Info(this, "触发测试", "尚未填写「触发请求内容」，无法测试。");
+                return;
+            }
+
+            if (!HasUsableScannerEndpoint(def))
+            {
+                ThemeMessageDialog.Info(
+                    this, "触发测试", "IP 地址或端口号无效，请先改正后再测试。");
+                return;
+            }
+
+            ScannerSession session = GetOrCreateScannerSession(def);
+            ScannerTcpClient? client = session.Client;
+
+            // 没连上就当场连一次（测试的语义就是「现在试一下」，不该受退避节流）——
+            // 用独立的短连接，不占用/不改变自动重连那套状态。
+            bool borrowed = false;
+            try
+            {
+                if (client == null || !client.IsConnected)
+                {
+                    client = new ScannerTcpClient();
+                    await client.ConnectAsync(
+                        def.Ip.Trim(), def.Port,
+                        TimeSpan.FromSeconds(ScannerRules.DefaultTimeoutSeconds),
+                        null).ConfigureAwait(true);
+                    borrowed = true;
+                }
+
+                byte[] trigger = Encoding.ASCII.GetBytes(def.TriggerText);
+                byte[] terminator = ScannerRules.TerminatorBytes(def.Terminator);
+                TimeSpan timeout = TimeSpan.FromSeconds(
+                    def.TimeoutSeconds > 0 ? def.TimeoutSeconds : ScannerRules.DefaultTimeoutSeconds);
+
+                await client.DiscardPendingAsync().ConfigureAwait(true);
+                await client.SendAsync(trigger).ConfigureAwait(true);
+
+                byte[] frame = await client.ReadFrameAsync(terminator, timeout).ConfigureAwait(true);
+                string received = Encoding.ASCII.GetString(frame);
+
+                string body = ScannerTestResult.BuildSuccessBody(received, frame.Length);
+
+                ThemeMessageDialog.Info(this, $"触发测试 · {def.Name}", body);
+            }
+            catch (OperationCanceledException)
+            {
+                double seconds = def.TimeoutSeconds > 0
+                    ? def.TimeoutSeconds
+                    : ScannerRules.DefaultTimeoutSeconds;
+
+                ThemeMessageDialog.Info(
+                    this,
+                    $"触发测试 · {def.Name}",
+                    ScannerTestResult.BuildFailureBody("服务端响应超时", seconds));
+            }
+            catch (Exception ex)
+            {
+                // 原因经 ClassifyDisconnectReason 归一，与日志 / 底栏同一套中文
+                ThemeMessageDialog.Info(
+                    this,
+                    $"触发测试 · {def.Name}",
+                    ScannerTestResult.BuildFailureBody(ClassifyDisconnectReason(ex.Message), 0));
+            }
+            finally
+            {
+                // 只为这次测试建立的连接用完即弃 —— 不留它参与轮询，
+                // 否则它会在下一轮被当作「正式连接」继续用，与 session 状态脱节。
+                if (borrowed)
+                {
+                    client?.Dispose();
+                }
+            }
+        }
+
+        /// <summary>收集模板里的所有 TextBox（用于测试前把编辑中的内容提交掉）。</summary>
+        private static void CollectScannerTextBoxes(DependencyObject root, List<TextBox> into)
+        {
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                DependencyObject child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+                if (child is TextBox box)
+                {
+                    into.Add(box);
+                }
+
+                CollectScannerTextBoxes(child, into);
+            }
+        }
+
         // ---------- P3.5：变量被别处引用的黄字提示 ----------
 
         /// <summary>
@@ -1060,8 +1196,6 @@ namespace DSH_Modbus采集工具
                 // 「The operation is not allowed on non-connected sockets」并误判成通讯中断。
                 if (client == null || !client.IsConnected)
                 {
-                if (client == null || !client.IsConnected)
-                {
                     // 曾连上后失效 → 清引用并走退避重连；从未连上 → 起首次连接
                     if (client != null)
                     {
@@ -1088,7 +1222,7 @@ namespace DSH_Modbus采集工具
                     await ApplyScannerTimeoutAsync(item).ConfigureAwait(true);
                     return;
                 }
-                }
+
                 byte[] trigger = Encoding.ASCII.GetBytes(def.TriggerText ?? string.Empty);
                 byte[] terminator = ScannerRules.TerminatorBytes(def.Terminator);
                 TimeSpan timeout = TimeSpan.FromSeconds(
