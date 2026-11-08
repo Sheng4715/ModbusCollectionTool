@@ -9,10 +9,10 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **63677 B / 余量约 1.5 KB**；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **63932 B / 余量约 1.2 KB**；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
-> ⚠️ **余量只剩 1.5 KB**：再要往这里加内容，先看能不能挪进 `AGENTS-细节.md`（它不受此预算约束）。
+> ⚠️ **余量只剩 1.2 KB**：再要往这里加内容，先看能不能挪进 `AGENTS-细节.md`（它不受此预算约束）。
 
 ---
 
@@ -77,7 +77,7 @@ DSH_Modbus采集工具/
 │   ├── IoPager.cs              # 分页纯计算（页数 / 夹取 / 切片 / 翻页 / 页号文本）
 │   ├── IoTableImporter.cs      # xlsx → 注释表 + 失败明细
 │   └── XlsxIoTableReader.cs    # xlsx 解析（零依赖 zip + XML）
-├── Modeling/                   # 数据模型与纯逻辑（23 个，均无 WPF）
+├── Modeling/                   # 数据模型与纯逻辑（24 个，均无 WPF）
 │   ├── AtomicFile.cs           # 配置文件原子写（.tmp→Replace+`.bak`）+ 容错读（逐元素抢救）
 │   ├── DataTypes.cs            # 类型枚举 + 规格表
 │   ├── ValueCodec.cs           # 寄存器 ↔ 类型值编解码 + 显示格式化
@@ -99,6 +99,7 @@ DSH_Modbus采集工具/
 │   ├── LiveImageStore.cs       # 背景图拷贝规则（同名加序号 / 同内容复用）
 │   ├── LiveCoordinateText.cs   # 卡片坐标框文本规则（只接受整数）
 │   ├── DriverSwitchImpact.cs   # 切换设备类型的影响统计 + 确认文案（P4.3）
+│   ├── OverviewViewSetting.cs  # 总览「当前视图」：枚举 ↔ 下标 ↔ 落盘名（§5.5）
 │   └── AppTitle.cs             # 应用标题：默认值 / 清洗 / 默认识别（P5.6）
 ├── Logging/                    # 日志（无 WPF）
 │   ├── DeviceLogFileWriter.cs  # 按天追加 .log + 跨天换文件 + 失败自愈
@@ -161,7 +162,7 @@ Window
 
 | 导航项 | 面板 | 说明 |
 |---|---|---|
-| `OverviewNav` 总览 | `OverviewPanel` | 页头右侧下拉框「当前视图」（`FormComboBox`）**三项**：`PLC状态机`（P1.2）/ `生产数据`（占位）/ `数据采集`（P1.4，见 §5.5、§5.8）；卡片内是当前视图 + 底部运行日志卡 |
+| `OverviewNav` 总览 | `OverviewPanel` | 页头右侧下拉框「当前视图」（`FormComboBox`）**三项**：`PLC状态机`（P1.2）/ `生产数据`（占位）/ `数据采集`（P1.4，见 §5.5、§5.8）；卡片内是当前视图 + 底部运行日志卡。⚠️ 选择会记住（`app-settings.json` → `OverviewView`，存**枚举名**，`Modeling/OverviewViewSetting.cs`，见细节 §5.5） |
 | `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
 | `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **两档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接 / 右交互，见 §5.9） |
 | `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，见 §5.7）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5 只读清单，见 §5.3）。⚠️ 第四档「扫码器」已于 2026-11-04 删除，并入设备连接页 |

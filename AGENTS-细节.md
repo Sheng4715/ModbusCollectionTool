@@ -398,6 +398,25 @@
 - ⚠️ 初始化顺序：XAML 里的 `SelectedIndex="0"` 会在 `InitializeComponent` 期间就触发一次
   `SelectionChanged`，那时 `MachineStateViewControl` 还没造出来，处理器必须**先判空返回**；
   初始可见性由 XAML 默认值保证（画布可见、「规划中」折叠），与第 0 项一致。
+
+**「当前视图」会记住上次选择**（2026-11-09 用户要求：下次打开回到上次那个视图）：
+
+- 落 `app-settings.json` → `OverviewView`，值取 **枚举名**（`MachineState` / `ProductionData` / `Acquisition`）。
+  枚举与换算在 `Modeling/OverviewViewSetting.cs`（**纯逻辑**，`ToIndex` / `FromIndex` / `TryParse` / `Format`）
+- 回填在 `Window_Loaded` 的 `RestoreOverviewView()`，**必须排在状态机/采集定时器那次 `Sync` 之前** ——
+  回填会触发 `SelectionChanged`，而那里末尾要把两个定时器按新视图重新同步
+- 落盘在 `OverviewView_SelectionChanged` **末尾**，且罩在 `_restoringOverviewView` 闸门里
+  （与 `_restoringNicSelection` / `_syncingByteOrderCombos` 同一手法）：程序化回填不该被当成「用户刚改」再写一次盘
+- 存的是第 0 项时 WPF **不会** raise `SelectionChanged`（值没变），此时界面可见性由 XAML 默认值保证
+- ⚠️ **`TryParse` 只认枚举名，不能只写 `Enum.TryParse`**：它会把纯数字串也解析成功
+  （`"2"` → `Acquisition`），而 `Enum.IsDefined` 拦不住（2 本来就等于有名字的成员）。
+  端到端实测抓到的：喂 `"2"` 时界面跳到了数据采集。现在按 `Enum.GetNames` 逐个比名字，
+  认不出的值一律退回 `MachineState`，**且不改写 json**（用户手改的痕迹留着，便于排查）
+- ⚠️ **`Count` 常量与 XAML 的项数必须同步**：`OverviewViewSetting.Count = 3` 是下标边界的唯一来源
+- 端到端验证：`.tmp/OverviewViewCheck/run.ps1`（UIA，六条：旧 json 无字段 / 切换落盘 / 重启恢复 ×2 /
+  非法值回退 / 数字串回退）。⚠️ 定位控件用 `AutomationId="OverviewViewCombo"`（= `x:Name`）——
+  **折叠态下 WPF 不生成 ListItem**，靠「找含『PLC状态机』的 ComboBox」是找不到的；
+  读选中项必须先 `Expand()` 再枚举 `IsSelected`
 - 卡片下方 1/4 固定给「运行日志」卡片（`Grid.Row="1"`），
   日志卡片带 `Margin="0,4,0,0"` —— 不留缝的话两张卡片各自的 1 DIP 边框会叠成一条 2.67 DIP 的粗线。
 

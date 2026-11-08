@@ -679,6 +679,10 @@ namespace DSH_Modbus采集工具
             ScanNetworkAdapters();
             UpdateOverviewStatus();
 
+            // 总览页「当前视图」：回填上次的选择（2026-11-09）。必须排在下面那两个
+            // Sync 之前 —— 回填会触发 SelectionChanged，那里要把定时器按新视图同步一次。
+            RestoreOverviewView();
+
             // 状态机定时器：InitializeComponent 期间 Nav_Checked 就跑了，
             // 那会儿分段按钮还没造出来，条件必然为假 —— 窗口显示完必须补一次，
             // 否则停在总览页也不刷新（整张图一直是灰的）。

@@ -187,6 +187,49 @@ namespace DSH_Modbus采集工具
         private bool IsAcquisitionViewSelected => OverviewViewCombo?.SelectedIndex == 2;
 
         /// <summary>
+        /// 程序化回填「当前视图」时的闸门。
+        /// <para>
+        /// 与 <c>_restoringNicSelection</c> / <c>_syncingByteOrderCombos</c> 同一手法：
+        /// 恢复上次选择时 <c>SelectedIndex</c> 的赋值会再触发一次
+        /// <see cref="OverviewView_SelectionChanged"/>，把「恢复」当成「用户刚改」又写一遍盘。
+        /// </para>
+        /// </summary>
+        private bool _restoringOverviewView;
+
+        /// <summary>
+        /// 启动时把「当前视图」回填成上次的选择（2026-11-09 用户要求记住）。
+        /// <para>
+        /// ⚠️ 必须在 <c>Window_Loaded</c> 里、**状态机/采集定时器那次 Sync 之前**调用：
+        /// 回填会触发 <see cref="OverviewView_SelectionChanged"/>，而它末尾要把两个定时器
+        /// 按新视图重新同步一次。
+        /// </para>
+        /// <para>
+        /// ⚠️ 存的下标与当前选中相同（出厂默认就是第 0 项）时，WPF **不会**raise
+        /// <c>SelectionChanged</c> —— 那时界面可见性由 XAML 默认值（画布可见、另两个折叠）
+        /// 保证，与第 0 项一致，不需要额外处理。
+        /// </para>
+        /// </summary>
+        private void RestoreOverviewView()
+        {
+            if (OverviewViewCombo == null)
+            {
+                return;
+            }
+
+            int index = OverviewViewSetting.ToIndex(ThemeManager.OverviewView);
+
+            _restoringOverviewView = true;
+            try
+            {
+                OverviewViewCombo.SelectedIndex = index;
+            }
+            finally
+            {
+                _restoringOverviewView = false;
+            }
+        }
+
+        /// <summary>
         /// 状态机定时器启停：**总览页可见 且 停在「PLC状态机」视图** 才跑。
         /// </summary>
         private void SyncMachineTimer()
@@ -359,6 +402,13 @@ namespace DSH_Modbus采集工具
             }
 
             SyncAcquisitionViewTimer();
+
+            // 记住这次选择，下次启动直接回到这个视图（2026-11-09 用户要求）。
+            // 程序化回填（RestoreOverviewView）不落盘 —— 否则启动时会为一模一样的值重写一次 json。
+            if (!_restoringOverviewView)
+            {
+                ThemeManager.SetOverviewView(OverviewViewSetting.FromIndex(index));
+            }
         }
 
         /// <summary>

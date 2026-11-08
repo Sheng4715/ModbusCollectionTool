@@ -188,6 +188,36 @@ namespace DSH_Modbus采集工具.Themes
             Save(_settings);
         }
 
+        // ==== 总览页「当前视图」 ====
+
+        /// <summary>
+        /// 上次停在哪个总览视图；没保存过 / 值不认识时退回
+        /// <see cref="Modeling.OverviewViewSetting.Default"/>（= PLC状态机，与出厂外观一致）。
+        /// </summary>
+        public static Modeling.OverviewViewMode OverviewView =>
+            Modeling.OverviewViewSetting.TryParse(_settings.OverviewView, out var mode)
+                ? mode
+                : Modeling.OverviewViewSetting.Default;
+
+        /// <summary>
+        /// 记住总览视图并落盘。
+        /// <para>
+        /// ⚠️ 值没变时**直接返回、不写盘**：界面切换视图会连同可见性与定时器一起刷新，
+        /// 恢复上一次选择时也会走到这个入口，没必要为此重写整份 app-settings.json。
+        /// </para>
+        /// </summary>
+        public static void SetOverviewView(Modeling.OverviewViewMode mode)
+        {
+            string text = Modeling.OverviewViewSetting.Format(mode);
+            if (string.Equals(_settings.OverviewView, text, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _settings.OverviewView = text;
+            Save(_settings);
+        }
+
         /// <summary>
         /// 显式选了默认目录时，存空串而非绝对路径（见 <see cref="SetMode"/>）。
         /// 由 <see cref="Save"/> 统一调用，**不放在各个 Setter 里**。
@@ -368,6 +398,21 @@ namespace DSH_Modbus采集工具.Themes
             /// </para>
             /// </summary>
             public string AppTitleText { get; set; } = string.Empty;
+
+            /// <summary>
+            /// 总览页「当前视图」的选择（P：2026-11-09 用户要求记住）。
+            /// <para>
+            /// 存**枚举名**（<c>MachineState</c> / <c>ProductionData</c> / <c>Acquisition</c>），
+            /// 不存数字下标 —— 与 <see cref="Theme"/> 同一取舍：以后往下拉框中间插一项，
+            /// 数字会被静默解释成别的视图，而枚举名对不上时能安全退回默认值。
+            /// </para>
+            /// <para>
+            /// 旧 json 没有这个字段 → 反序列化后保持默认（<c>MachineState</c>），
+            /// 与升级前「每次启动都停在第 0 项」的行为完全一致，无需迁移。
+            /// </para>
+            /// </summary>
+            public string OverviewView { get; set; } =
+                Modeling.OverviewViewSetting.Format(Modeling.OverviewViewSetting.Default);
         }
 
         private static AppSettings Load()
