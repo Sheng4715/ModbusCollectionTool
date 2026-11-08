@@ -11,11 +11,12 @@
 
 ## 12. 发布与交付（2026-11-03 定案）
 
-**形态：框架依赖（framework-dependent）**。产物只有 **4 个文件 / 约 513 KB**，目标机必须预装
+**形态：框架依赖（framework-dependent）**。产物只有 **4 个文件 / 约 593 KB**，目标机必须预装
 **\.NET 8 Desktop Runtime**。发布到 `Release\<程序集名>_<版本号>\`，`Release/` 已进 `.gitignore`。
 
 > 全部结论均为 2026-11-03 实测（发布 → 启动 → 改配置 → 覆盖更新 → 拷到"第二台机器" → 只读目录），
 > 不是推断。**唯独"目标机没装运行时"这条没实测**（本机 8/9/10 全装，且 apphost 会查注册表兜底）。
+> 体积于 2026-11-09 重新实测（dll 随功能增长 373 → 452.5 KB），**以本文数字为准**。
 
 ### 12.1 发布命令
 
@@ -34,26 +35,26 @@ dotnet publish "DSH_Modbus采集工具\DSH_Modbus采集工具.csproj" `
 
 | 参数 | 作用 | 漏掉的后果 |
 |---|---|---|
-| `-c Release` | Release 配置 | 版本变 `0.6.0-debug`（`VersionSuffix` 由配置决定） |
+| `-c Release` | Release 配置 | 版本变 `1.0.0-debug`（`VersionSuffix` 由配置决定） |
 | `--self-contained false` | 显式声明框架依赖 | 目前是默认值，写上防将来 csproj 加了 `SelfContained` 被改 |
 | `-p:DebugType=None` | 不产出 `.pdb` | 多一个 163 KB 的 `.pdb`（内部排查可留，对外交付必去） |
 | `-o Release\<名>_<版本>` | 版本号目录 | 落到 `bin\Release\...\publish\`，与调试产物混在一起容易拷错 |
 
-⚠️ **首次发布没有旧目录可取版本号** —— 此时直接写死（`DSH_Modbus采集工具_0.6.0`），
+⚠️ **首次发布没有旧目录可取版本号** —— 此时直接写死（`DSH_Modbus采集工具_1.0.0`），
 或从 `csproj` 的 `<VersionPrefix>` 取。**不要**自己拼一个和程序集不一致的号：
 界面显示的是**程序集里的**版本（`AppInfo.Version`），两边不一致就永远对不上。
 
 ### 12.2 产物
 
 ```
-Release\DSH_Modbus采集工具_0.6.0\
-├── DSH_Modbus采集工具.exe                 140 KB   apphost，只负责找运行时、加载 dll
-├── DSH_Modbus采集工具.dll                 373 KB   全部业务代码（含 XAML 编译出的 BAML）
+Release\DSH_Modbus采集工具_1.0.0\                       合计 4 个文件 / 593 KB
+├── DSH_Modbus采集工具.exe                  140 KB   apphost，只负责找运行时、加载 dll
+├── DSH_Modbus采集工具.dll                452.5 KB   全部业务代码（含 XAML 编译出的 BAML）
 ├── DSH_Modbus采集工具.deps.json           0.4 KB   依赖清单（本项目只有自己一个库）
 └── DSH_Modbus采集工具.runtimeconfig.json  0.4 KB   声明要 .NET 8 桌面运行时
 ```
 
-- 实测 exe 属性：`FileVersion 0.6.0.0` / `ProductVersion 0.6.0+<sha>` / `ProductName DSH Modbus 采集工具`
+- 实测 exe 属性：`FileVersion 1.0.0.0` / `ProductVersion 1.0.0+<sha>` / `ProductName DSH Modbus 采集工具`
 - `runtimeconfig.json` 里是**两条** `frameworks`：`Microsoft.NETCore.App` + `Microsoft.WindowsDesktop.App`。
   后者是 WPF 独有 —— 目标机装错成体积更小的 **Console Runtime** 会起不来
 - `.deps.json` 只有一个条目，正是「零第三方 NuGet」的直接证据
@@ -111,10 +112,10 @@ Get-Process -Name "DSH_Modbus采集工具" -ErrorAction SilentlyContinue | Stop-
 # ① 备份配置（原因见下）
 Copy-Item "$app\*.json" "_backup_$(Get-Date -f yyyyMMdd_HHmmss)"
 # ② 只覆盖程序本体
-Copy-Item "Release\DSH_Modbus采集工具_0.7.0\*.exe",
-          "Release\DSH_Modbus采集工具_0.7.0\*.dll",
-          "Release\DSH_Modbus采集工具_0.7.0\*.deps.json",
-          "Release\DSH_Modbus采集工具_0.7.0\*.runtimeconfig.json" $app -Force
+Copy-Item "Release\DSH_Modbus采集工具_1.0.0\*.exe",
+          "Release\DSH_Modbus采集工具_1.0.0\*.dll",
+          "Release\DSH_Modbus采集工具_1.0.0\*.deps.json",
+          "Release\DSH_Modbus采集工具_1.0.0\*.runtimeconfig.json" $app -Force
 ```
 
 **怎么确认更新生效**：看设置页「项目信息」的**构建日期**（由 `WriteBuildDate` 每次编译现取）。
@@ -155,18 +156,42 @@ catch { return new List<AcquisitionTask>(); }
 
 ### 12.7 目标机前置条件
 
-```powershell
-dotnet --list-runtimes | Select-String "WindowsDesktop"        # 有安装 SDK 时
-Test-Path "C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App\8*"   # 没有 dotnet 命令时
-```
+**要装的东西只有一样：.NET 8 桌面运行时（Windows Desktop Runtime）x64。**
 
-安装包装的是 **Desktop Runtime**（约 55 MB），不是 Console Runtime，也不需要 SDK。
-需要管理员权限（写 `C:\Program Files\dotnet`）。
+| 项 | 值 |
+|---|---|
+| 下载页 | `https://dotnet.microsoft.com/download/dotnet/8.0` → 选「**.NET Desktop Runtime 8.0.x**」→ Windows → **x64** |
+| 安装包文件名 | `windowsdesktop-runtime-8.0.<补丁号>-win-x64.exe`（约 55 MB） |
+| 静默安装（无网批量部署） | `windowsdesktop-runtime-8.0.x-win-x64.exe /install /quiet /norestart` |
+| 权限 | 需要管理员（装到 `C:\Program Files\dotnet`） |
+| 支持的 OS | Windows 10 1607 及以上（含 LTSC）/ Windows 11，x64 |
+
+```powershell
+dotnet --list-runtimes | Select-String "WindowsDesktop"        # 有 dotnet 命令时（装了别的 .NET 也会有）
+Test-Path "C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App\8*"   # 没有任何 .NET 时也能判
+```
+两条都返回空 → 运行时没装，程序双击无反应（WinExe 无控制台，**看不到任何报错**）。
+
+- **必须是 Desktop Runtime，不是 Console Runtime**：WPF 要的是 `Microsoft.WindowsDesktop.App`，
+  体积更小的 Console Runtime（`Microsoft.NETCore.App` 单独一份）**起不来**。`runtimeconfig.json`
+  里那两条 `frameworks` 就是这件事的直接证据
+- **不需要**：SDK、NuGet 包、VC++ 运行库、IIS、.NET Framework 3.5
+- **不需要预先装 .NET 8 的其它补丁**：安装包自己带
 
 ⚠️ `runtimeconfig.json` 请求的是 `8.0.0`，按 roll-forward 策略只会在 **8.x** 内往上取补丁；
 **默认不跨大版本** —— 目标机只装了 .NET 9/10 时会报缺 8.0。
 （此条为 .NET 既定行为，**本机未能实测**，上现场前在一台干净机器验一次。）
 不建议加 `<RollForward>LatestMajor</RollForward>`：那会让程序跑在没测过的运行时上。
+
+**如果现场机器实在不允许装运行时** → 改用自包含发布（免装任何运行时，约 150–180 MB）：
+
+```powershell
+dotnet publish "DSH_Modbus采集工具\DSH_Modbus采集工具.csproj" `
+  -c Release --self-contained true -r win-x64 -p:DebugType=None `
+  -o "Release\DSH_Modbus采集工具_1.0.0_sc" -v q -nologo
+```
+⚠️ **不要加 `-p:PublishTrimmed=true`**：WPF 不支持裁剪，XAML 里靠反射/字符串的路径会被裁掉，
+症状是「某几个页面一点就崩」，且**只在发布版出现**（见 §12.6）。
 
 ### 12.8 复制到另一台机器（实测可行，但要改 4 处）
 
@@ -199,9 +224,9 @@ Test-Path "C:\Program Files\dotnet\shared\Microsoft.WindowsDesktop.App\8*"   # �
 ### 12.10 交付前验证清单
 
 ```powershell
-$dir = "Release\DSH_Modbus采集工具_0.6.0"
+$dir = "Release\DSH_Modbus采集工具_1.0.0"
 Get-ChildItem $dir -Recurse -File            # ① 应为 4 个文件，无 pdb、无 Log
-(Get-Item "$dir\DSH_Modbus采集工具.exe").VersionInfo.ProductVersion   # ② 应为干净的 0.6.0+<sha>
+(Get-Item "$dir\DSH_Modbus采集工具.exe").VersionInfo.ProductVersion   # ② 应为干净的 1.0.0+<sha>
 Get-Content "$dir\DSH_Modbus采集工具.runtimeconfig.json" | Select-String "Microsoft\."  # ③ 必须含 WindowsDesktop
 Start-Process "$dir\DSH_Modbus采集工具.exe"; Start-Sleep 6
 Get-Process "DSH_Modbus采集工具" | Select-Object MainWindowTitle      # ④ 窗口应出现

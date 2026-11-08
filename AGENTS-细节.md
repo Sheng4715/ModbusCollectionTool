@@ -1475,11 +1475,11 @@ ScrollViewer                        ← 画布放不下就滚
 **几条容易踩的**：
 
 - ⚠️ **版本号手写在 csproj，不自动递增**：自动递增会把「版本号」变成构建次数的函数，而现场排障要的是「这个 exe 是哪一版」，不是「编译过几次」。提版本由人决定（改 `<VersionPrefix>` 一处）
-- ⚠️ **`-debug` 后缀由构建配置推导，不要硬编码**：`VersionSuffix` 只在 `Configuration == Debug` 时设 `debug`，SDK 自动合成 `0.6.0-debug`。硬编码意味着每次切 Release 都得记得删掉，忘一次就会把调试版当正式版发出去（与「构建日期不手写」是同一条道理：能推导的就别手写）。实测 Debug 下 `ProductVersion = 0.6.0-debug+<sha>`，Release 下为干净的 `0.6.0`
-- ⚠️ **`AssemblyVersion` / `FileVersion` 固定不带后缀**（仍是 `0.6.0.0`）：程序集身份必须稳定，否则换一次配置就让引用方全部重编 —— 与「日期用独立目标而不覆盖 `<Version>`」同一个考虑
+- ⚠️ **`-debug` 后缀由构建配置推导，不要硬编码**：`VersionSuffix` 只在 `Configuration == Debug` 时设 `debug`，SDK 自动合成 `<VersionPrefix>-debug`。硬编码意味着每次切 Release 都得记得删掉，忘一次就会把调试版当正式版发出去（与「构建日期不手写」是同一条道理：能推导的就别手写）。实测（1.0.0）：Debug 下 `ProductVersion = 1.0.0-debug+<sha>`，Release 下为干净的 `1.0.0`
+- ⚠️ **`AssemblyVersion` / `FileVersion` 固定不带后缀**（两配置都是 `1.0.0.0`）：程序集身份必须稳定，否则换一次配置就让引用方全部重编 —— 与「日期用独立目标而不覆盖 `<Version>`」同一个考虑
 - ⚠️ **构建日期必须编译期生成**：手写必然忘记更新；用**文件时间**也不行 —— 复制/解压/杀软扫描都会改动它，与"代码什么时候编的"无关
 - ⚠️ **日期用独立目标 + 独立常量，不要覆盖 `<Version>`**：把日期塞进 `Version` 会让程序集版本每次编译都变，进而让增量构建失效（引用方全部重编）
-- ⚠️ **`InformationalVersion` 会被 SDK 自动追加 `+<git sha>`**（实测 `0.6.0-debug+945b5d9...`），显示前必须砍掉 `+` 之后的部分，否则用户看到一长串哈希
+- ⚠️ **`InformationalVersion` 会被 SDK 自动追加 `+<git sha>`**（实测形如 `1.0.0-debug+11d444a…`），显示前必须砍掉 `+` 之后的部分，否则用户看到一长串哈希
 - 生成的 `BuildInfo.g.cs` 落在 `obj/` 下，**不要手改、也不要提交**（已在 `.gitignore` 覆盖范围内）
 - 四行标签用 `SharedSizeGroup="InfoLabel"` 对齐；**末行不留底边距**（否则卡片底部多出一段空白）
 
