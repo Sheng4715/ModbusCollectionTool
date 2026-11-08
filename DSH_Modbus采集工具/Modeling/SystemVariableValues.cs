@@ -74,6 +74,11 @@ namespace DSH_Modbus采集工具.Modeling
                 SystemVariableKind.Pulse1s => OnOff((ms / 500) % 2 == 0),
                 SystemVariableKind.Pulse2s => OnOff((ms / 1000) % 2 == 0),
 
+                // 1min：30s ON / 30s OFF。用 30000ms 而不是「秒 × 30」——
+                // 脉冲一律走毫秒口径，与上面三个保持同一种写法（少一处换算就少一处出错机会）。
+                // 1000ms 窗口半周期 = 30000ms；启动瞬间 (0/30000)%2==0 → ON，与其余脉冲一致
+                SystemVariableKind.Pulse1min => OnOff((ms / 30000) % 2 == 0),
+
                 SystemVariableKind.DateTimeSecond => Int(now.Second),
                 SystemVariableKind.DateTimeMinute => Int(now.Minute),
                 SystemVariableKind.DateTimeHour => Int(now.Hour),
