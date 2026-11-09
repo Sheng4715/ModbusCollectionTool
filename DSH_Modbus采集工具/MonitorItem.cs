@@ -186,6 +186,24 @@ namespace DSH_Modbus采集工具
         public bool IsVariable => Model.IsVariable;
 
         /// <summary>
+        /// 全局变量改名后，界面上的名称框要跟着换。
+        /// <para>
+        /// ⚠️ 名称框是**普通 TextBox**（<c>NameBox</c>），文本由
+        /// <c>MonitorRow_Loaded</c> 一次性写入、不绑 <see cref="Name"/>，
+        /// 故光改模型不够 —— 窗口侧另有一步同步已生成的容器（见
+        /// <c>MainWindow.GlobalVar.cs</c> 的 <c>SyncMonitorNameBoxes</c>）。
+        /// 这里只负责把绑定相关的属性通知出去。
+        /// </para>
+        /// </summary>
+        internal void RenamedByVariable()
+        {
+            OnPropertyChanged(nameof(Name));
+            OnPropertyChanged(nameof(DisplayName));
+            OnPropertyChanged(nameof(IsVariable));
+            OnPropertyChanged(nameof(IsTypeEditable));
+        }
+
+        /// <summary>
         /// 本项是**内存变量**（变量存在但没有映射地址）：不轮询、不写报文，
         /// 「当前值」格可直接编辑，值写进变量本身。
         /// </summary>
@@ -863,6 +881,46 @@ namespace DSH_Modbus采集工具
         {
             item.Resolve(Driver, out _);
             Save();
+        }
+
+        /// <summary>
+        /// 全局变量改名后，把所有引用它的**变量行**改成新名字（2026-11-09 用户要求）。
+        /// <para>
+        /// 只动 <see cref="DataPoint.VariableName"/>，元件行（<c>HD100</c> 这种）一概不碰。
+        /// 改完必须逐行重解析：变量行的类型与地址都是从变量表现取的，
+        /// 不改就是「名字对了、类型还停在旧变量的类型上」。
+        /// </para>
+        /// </summary>
+        /// <returns>实际改了几行（0 = 没有引用，不必落盘）。</returns>
+        public int RenameVariableReferences(string oldName, string newName)
+        {
+            int changed = 0;
+
+            foreach (MonitorItem item in _items)
+            {
+                if (!item.Model.IsVariable)
+                {
+                    continue;
+                }
+
+                string renamed = VariableRenamer.RenameReference(item.Model.VariableName, oldName, newName);
+                if (string.Equals(renamed, item.Model.VariableName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                item.Model.VariableName = renamed;
+                item.RenamedByVariable();
+                item.Resolve(Driver, out _);
+                changed++;
+            }
+
+            if (changed > 0)
+            {
+                Save();
+            }
+
+            return changed;
         }
 
         /// <summary>

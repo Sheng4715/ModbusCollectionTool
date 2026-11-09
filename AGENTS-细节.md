@@ -309,6 +309,70 @@
   - 同步之后「变量只有一份值」才成立，不再依赖哪个页面可见
   - 编辑中（`IsEditing`）仍然整个跳过：用户手上的输入优先，两处都不动
 
+### 5.2.2 改名连带改引用（2026-11-09）
+
+**需求**：「全局变量名称变更后，相关引用也自动变更名称」（用户原话）。
+
+**为什么必须做**：变量名是**按名字**被引用的，散在四份 json 里。只改变量表的话，改名那一刻
+所有引用就**同时失效** —— 表达式里的标识符查不到变量 → 采集组 / 扫码器整组被判「配置错误」停摆，
+而用户只是改了个名字。这不是「少改一处」的程度问题，是**改名即让配置全线崩掉**。
+
+| 引用位置 | 文件 | 字段 |
+|---|---|---|
+| 自由监控变量行 | `data-points.json` | `VariableName` |
+| 采集的读取 / 写入变量 | `acquisition-tasks.json` | `Items[].VariableName` |
+| 采集的来源变量（写入任务） | `acquisition-tasks.json` | `Items[].SourceVariableName` |
+| 采集触发表达式 | `acquisition-tasks.json` | `Expression` |
+| 状态机 9 个状态框表达式 | `machine-state.json` | `States[].Expression` |
+| 状态机 2 个指示灯表达式 | `machine-state.json` | `Lamps[].Expression` |
+| 扫码器缓冲区 / 结果变量 | `scanner.json` | `BufferVariableName` / `NotifyVariableName` |
+| 扫码器触发表达式 | `scanner.json` | `TriggerExpression` |
+
+**规则本体**：`Modeling/VariableRenamer.cs`（纯逻辑、不引 WPF，可离线断言）。
+两个方法，**都不做子串替换**：
+
+- `RenameReference(reference, oldName, newName)` —— 纯名字字段，**全等**才换（`Ordinal`）
+- `TryRenameExpression(expression, oldName, newName, out result)` —— 表达式，**按标识符**换
+
+⚠️ **表达式必须按标识符替换**：`speed` → `rate` 时，`speed2` / `my_speed` 里的 `speed` 一个字符
+都不许动。故复用表达式引擎自己的 `ExpressionLexer.TryTokenize` —— 它认得标识符 / 关键字 / 数字。
+⚠️ 表达式**本身有语法错误时返回 `false` 且原文不动**：那种表达式当前根本跑不起来，
+硬改只会把「用户的笔误」和「我们的替换」混成一处。
+⚠️ 替换**从后往前**做：前面改长度会挪动后面 token 的位置，倒序才不用记偏移补偿。
+
+**四个集合各有一个 `RenameVariableReferences(oldName, newName)`**，各自负责自己的文件与落盘：
+
+| 集合 | 位置 | 返回 |
+|---|---|---|
+| `MonitorItemSet` | `MonitorItem.cs` | 改了几行；0 不落盘 |
+| `AcquisitionTaskItemSet` | `AcquisitionTaskItem.cs` | 改了几处（含表达式） |
+| `MachineStateSet` | `Modeling/MachineState.cs` | 改了几条表达式 |
+| `ScannerItemSet` | `MainWindow.Scanner.cs` | 改了几处 |
+
+**接线在窗口 `MainWindow.GlobalVar.cs`**：`CommitGlobalVarName` 改名成功后、**在
+`RefreshAfterVariableChange()` 之前**调 `RenameVariableReferencesEverywhere(旧名, 新名)`
+（四集合 + `SyncMonitorNameBoxes`）。顺序不能反 —— 那一步会按新名字重解析监控行、
+重编译表达式，引用还停在旧名字的话重算结果就是「变量不存在」。
+
+⚠️ **状态机改写表达式后必须 `_machineSet.RecompileAll(ExpressionNameExists)`**：
+`MachineStateItem.Compiled` 是**运行期缓存**，光改 `Expression` 文本不会让它跟着变 ——
+不重编译就是「文本看着对、求值仍报变量不存在」。
+⚠️ **自由监控的名称框是普通 `TextBox`**（`NameBox`，文本由 `MonitorRow_Loaded` 一次性写入、
+刻意不绑 `Name`：绑了会边打字边推半截名字给模型）。故改完模型还要 `SyncMonitorNameBoxes()`
+遍历已生成的行补文本；不可见分段没有容器，重新可见时由 `MonitorRow_Loaded` 填对。
+
+**静默执行、不弹框**（用户 2026-11-09 定案）：改名是「失焦即提交」的高频操作，
+每次都弹「同步了 N 处」只会打断连续编辑。
+
+**验证**（`curl` 不适用，UIA + json 实测）：
+- 离线断言 `.tmp/ExpressionCheck` **§23（14 项）**：全等替换 / 大小写不同不换 / `speed2` 与
+  `my_speed` 不受影响 / 多处引用全换 / 短名换长名不串位 / 关键字不被当变量名 / 语法错误不硬改
+- UIA 真机：改 `Scanner1_ExecuteResult` → 自由监控、采集三字段、采集表达式、
+  扫码器结果变量**四处同时改名**；`Scanner2_*` 与状态机表达式**一字未动**
+- 改 `SysState` → 9 条状态表达式全部同步，2 个指示灯（引用 `SysError` / `SySFault`）**未被动**
+- 子串安全：`Scanner1` 改名时表达式里的 `Scanner1_Done` **完好**（只精确命中才换）
+- 改名后采集页「配置错误」出现次数 **0**（没有被误判）
+
 ### 5.3 系统变量（P3.5，数据管理页第三分段）
 
 摆出一份**写死、只读**的预定义变量清单（17 项）。
@@ -2139,6 +2203,7 @@ DSH_Modbus采集工具/
 │   ├── DataPoint.cs            # 监控项模型 + data-points.json + 驱动校验解析
 │   ├── WritePlan.cs            # 一次写入的报文参数（FC05/06/16），两条写入路径共用
 │   ├── GlobalVariable.cs       # 全局变量模型 + 变量名规则 + GlobalVar.json（值不落盘）
+│   ├── VariableRenamer.cs      # 全局变量改名后同步各处引用（按标识符，禁子串替换，§5.2.2）
 │   ├── GlobalReadPlan.cs       # 读计划 + 回填（按可见页面采集）
 │   ├── CompletionSource.cs     # 变量名补全纯逻辑（取词 / 筛选 / 候选表）
 │   ├── SystemVariable.cs / SystemVariableValues.cs   # 17 项清单 / 取值（脉冲·时钟·运行时长）
@@ -2163,6 +2228,7 @@ DSH_Modbus采集工具/
 │   ├── MaximizedInset.cs       # 最大化溢出补偿：物理像素 + 按 DPI 内缩（§3.6）
 │   ├── WindowCorners.cs        # 圆角 + 边缘线（DWM 绘制，§3.8）
 │   ├── StatusBarPresenter.cs   # 底栏：状态文字 / 状态点颜色 / 右侧连接参数
+│   ├── SourceForegroundConverter.cs  # 采集「来源变量」框字色（MultiBinding + 换主题重算，§13.9）
 │   ├── DeviceLogPresenter.cs   # 日志：内存集合 + 上限裁剪 + 落盘旁路 + 级别映射
 │   ├── CompletionPopup.cs      # 补全下拉：Popup + 键鼠 + 输入法抑制（§5.6）
 │   ├── DialogWindow.cs         # 对话框基类：外壳 / 按钮行 / 内联错误 / 回车与 ESC（§9.3）

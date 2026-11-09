@@ -425,6 +425,76 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
+        /// 全局变量改名后，把**所有引用它的地方**改成新名字（2026-11-09 用户要求）。
+        /// <para>
+        /// 五处引用，覆盖六份持久化文件里的四份（另两份按名字存的是变量表本身与系统变量清单）：
+        /// 自由监控变量行（<c>data-points.json</c>）、采集的读取 / 写入 / 来源变量与触发表达式
+        /// （<c>acquisition-tasks.json</c>）、状态机 9 框 2 灯的表达式（<c>machine-state.json</c>）、
+        /// 扫码器的缓冲区 / 结果变量与触发表达式（<c>scanner.json</c>）。
+        /// </para>
+        /// <para>
+        /// ⚠️ **表达式按标识符替换，纯名字字段按全等替换** —— 都不做子串替换，
+        /// 否则 <c>speed</c> → <c>rate</c> 会把 <c>speed2</c>、<c>my_speed</c> 一起带走。
+        /// 规则本体在 <see cref="VariableRenamer"/>（纯逻辑，可离线断言）。
+        /// </para>
+        /// <para>
+        /// **静默执行、不弹框**（用户 2026-11-09 定案）：改名是「失焦即提交」的高频操作，
+        /// 每次都弹一个「同步了 N 处」只会打断连续编辑。
+        /// </para>
+        /// </summary>
+        private void RenameVariableReferencesEverywhere(string oldName, string newName)
+        {
+            // 自由监控：变量行存的是变量名（元件行不参与，见 MonitorItemSet 里的过滤）
+            _monitorSet.RenameVariableReferences(oldName, newName);
+
+            // 采集：三个变量字段 + 触发表达式；改完它自己落盘
+            _acqTaskSet.RenameVariableReferences(oldName, newName);
+
+            // 状态机：表达式文本被改写，**必须重编译** —— _machineSet 缓存的是
+            // Compiled（按旧名字编译的），光改 Expression 文本不会让缓存跟着变，
+            // 不重编译就是「文本看着对、求值仍报变量不存在」。
+            _machineSet.RenameVariableReferences(oldName, newName);
+            _machineSet.RecompileAll(ExpressionNameExists);
+
+            // 扫码器：两个变量框 + 触发表达式
+            _scannerSet.RenameVariableReferences(oldName, newName);
+
+            // 监控行的名称框是普通 TextBox（不走绑定），已生成的容器要手工同步
+            SyncMonitorNameBoxes();
+        }
+
+        /// <summary>
+        /// 把自由监控各行 <c>NameBox</c> 的文本同步成模型里的名称。
+        /// <para>
+        /// 名称框是模板里的 <c>TextBox</c>、文本由 <c>MonitorRow_Loaded</c> **一次性**写入
+        /// （刻意不绑 <see cref="MonitorItem.Name"/>：那样打字途中就会把半截名字推给模型）。
+        /// 变量改名后模型变了、容器还在，故这里遍历一遍已生成的行补上。
+        /// </para>
+        /// <para>不可见的分段没有容器，它们重新可见时由 <c>MonitorRow_Loaded</c> 填对，不需要这里管。</para>
+        /// </summary>
+        private void SyncMonitorNameBoxes()
+        {
+            if (MonitorItemsControl == null)
+            {
+                return;
+            }
+
+            foreach (FrameworkElement row in EnumerateRows(MonitorItemsControl))
+            {
+                if (row.Tag is not MonitorItem item)
+                {
+                    continue;
+                }
+
+                if (row.FindName("NameBox") is TextBox nameBox
+                    && !string.Equals(nameBox.Text, item.Name, StringComparison.Ordinal))
+                {
+                    nameBox.Text = item.Name;
+                }
+            }
+        }
+
+        /// <summary>
         /// 变量定义变了（改名 / 改类型 / 改地址 / 删除）之后要做的两件事：
         /// 让自由监控里引用变量的行重新解析，并重算状态机的采集清单。
         /// <para>
@@ -494,11 +564,21 @@ namespace DSH_Modbus采集工具
             }
 
             string wanted = tb.Text.Trim();
+            string previousName = item.Name;
 
             if (_globalVarSet.Rename(item, wanted, out string error))
             {
                 tb.Text = item.Name;
                 _globalVarSet.Save();
+
+                // 改名成功：所有引用旧名字的地方一起改名（2026-11-09 用户要求）。
+                // ⚠️ 必须在 RefreshAfterVariableChange **之前**做 —— 那一步按新名字
+                // 重解析监控行 / 重编译表达式，引用还停在旧名字的话，重算结果就是
+                // 「变量不存在」，整组被判成配置错误。
+                if (!string.Equals(previousName, item.Name, StringComparison.Ordinal))
+                {
+                    RenameVariableReferencesEverywhere(previousName, item.Name);
+                }
 
                 // 改名会让引用旧名字的监控行失效，必须重解析一遍
                 RefreshAfterVariableChange();

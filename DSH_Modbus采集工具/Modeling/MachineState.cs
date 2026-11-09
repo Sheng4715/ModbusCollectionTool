@@ -1029,6 +1029,50 @@ namespace DSH_Modbus采集工具.Modeling
             }
         }
 
+        /// <summary>
+        /// 全局变量改名后，把 9 个状态框与 2 个指示灯表达式里对它的引用改成新名字
+        /// （2026-11-09 用户要求）。
+        /// <para>
+        /// ⚠️ 必须**按标识符**替换而非子串替换（见 <see cref="VariableRenamer"/>）：
+        /// <c>speed</c> → <c>rate</c> 时 <c>speed2</c> 里的 <c>speed</c> 不许动。
+        /// </para>
+        /// <para>
+        /// 改完的表达式**不在这里编译**：编译要一份「变量名是否存在」的谓词，
+        /// 那是窗口侧的事；调用方随后统一走 <see cref="RecompileAll"/>（窗口的
+        /// <c>RefreshAfterVariableChange</c> 已经在做）。
+        /// </para>
+        /// </summary>
+        /// <returns>改动了几条表达式（0 = 没有任何状态机引用它，不必落盘）。</returns>
+        public int RenameVariableReferences(string oldName, string newName)
+        {
+            int changed = 0;
+
+            foreach (MachineStateItem item in _items)
+            {
+                if (VariableRenamer.TryRenameExpression(item.Expression, oldName, newName, out string text))
+                {
+                    item.Expression = text;
+                    changed++;
+                }
+            }
+
+            foreach (MachineStateLamp lamp in _lamps)
+            {
+                if (VariableRenamer.TryRenameExpression(lamp.Expression, oldName, newName, out string text))
+                {
+                    lamp.Expression = text;
+                    changed++;
+                }
+            }
+
+            if (changed > 0)
+            {
+                Save();
+            }
+
+            return changed;
+        }
+
         /// <summary>按当前变量值刷新 9 个状态的真假与 2 个指示灯。</summary>
         public void EvaluateAll(IExpressionVariables variables)
         {

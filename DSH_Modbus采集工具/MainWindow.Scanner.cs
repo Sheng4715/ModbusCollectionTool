@@ -2077,6 +2077,54 @@ namespace DSH_Modbus采集工具
 
         public bool Save() => ScannerStore.Save(_items.Select(x => x.Model));
 
+        /// <summary>
+        /// 全局变量改名后，把各台扫码器对它的引用（缓冲区 / 结果变量 / 触发表达式）改成新名字，
+        /// 改完落盘（2026-11-09 用户要求）。
+        /// <para>
+        /// 扫码器的两个变量框只是**名字**、没有地址，改起来很直接；但表达式同样
+        /// 必须按标识符替换，否则 <c>speed</c> → <c>rate</c> 会把 <c>speed2</c> 一起改掉。
+        /// </para>
+        /// </summary>
+        /// <returns>改了几处。</returns>
+        public int RenameVariableReferences(string oldName, string newName)
+        {
+            int changed = 0;
+
+            foreach (ScannerItem item in _items)
+            {
+                ScannerDefinition def = item.Model;
+
+                string buffer = VariableRenamer.RenameReference(def.BufferVariableName, oldName, newName);
+                if (!string.Equals(buffer, def.BufferVariableName, StringComparison.Ordinal))
+                {
+                    def.BufferVariableName = buffer;
+                    changed++;
+                }
+
+                string notify = VariableRenamer.RenameReference(def.NotifyVariableName, oldName, newName);
+                if (!string.Equals(notify, def.NotifyVariableName, StringComparison.Ordinal))
+                {
+                    def.NotifyVariableName = notify;
+                    changed++;
+                }
+
+                if (VariableRenamer.TryRenameExpression(
+                        def.TriggerExpression, oldName, newName, out string expression))
+                {
+                    def.TriggerExpression = expression;
+                    changed++;
+                }
+            }
+
+            if (changed > 0)
+            {
+                Save();
+            }
+
+            return changed;
+        }
+
+
         private void Reindex()
         {
             for (int i = 0; i < _items.Count; i++)

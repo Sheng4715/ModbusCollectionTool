@@ -290,6 +290,48 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
+        /// 全局变量改名后，把本行对它的引用改成新名字（读取 / 写入 / 来源变量三处）。
+        /// <para>
+        /// 与 <see cref="RefreshVariable"/> 的区别：那个只重算显示（引用断了就标红），
+        /// 这个**真的改写引用**。改名若不同步，下一拍就会按旧名字查变量而报
+        /// 「变量不存在」，整组被拦成配置错误。
+        /// </para>
+        /// <para>⚠️ 来源变量可能是常量（<c>#</c> 开头）或系统变量，不匹配就不会被碰。</para>
+        /// </summary>
+        /// <returns>改了几处（0 / 1 / 2）。</returns>
+        public int RenameVariableReferences(string oldName, string newName)
+        {
+            int changed = 0;
+
+            if (RenameField(Model.VariableName, oldName, newName, out string variable))
+            {
+                Model.VariableName = variable;
+                Raise(nameof(VariableName));
+                changed++;
+            }
+
+            if (RenameField(Model.SourceVariableName, oldName, newName, out string source))
+            {
+                Model.SourceVariableName = source;
+                Raise(nameof(SourceVariableName));
+                changed++;
+            }
+
+            if (changed > 0)
+            {
+                RefreshVariable();
+            }
+
+            return changed;
+
+            static bool RenameField(string current, string oldName, string newName, out string renamed)
+            {
+                renamed = VariableRenamer.RenameReference(current, oldName, newName);
+                return !string.Equals(renamed, current, StringComparison.Ordinal);
+            }
+        }
+
+        /// <summary>
         /// 换主题后让「来源变量」框的前景绑定重算。
         /// <para>
         /// <c>AcquisitionSourceBox</c> 的 <c>SourceForegroundConverter</c> 取的是
@@ -773,6 +815,46 @@ namespace DSH_Modbus采集工具
             {
                 item.RefreshVariables();
             }
+        }
+
+        /// <summary>
+        /// 全局变量改名后，把所有任务组 / 数据项对它的引用（含触发表达式）改成新名字，
+        /// 改完落盘（2026-11-09 用户要求）。
+        /// <para>
+        /// 表达式必须**按标识符**替换：<c>string.Replace</c> 会把 <c>speed2</c>、
+        /// 甚至字符串里的同名字段一起改掉（见 <see cref="VariableRenamer"/>）。
+        /// </para>
+        /// </summary>
+        /// <returns>改了几处（变量名字段 + 成功改写的表达式各算一处）。</returns>
+        public int RenameVariableReferences(string oldName, string newName)
+        {
+            int changed = 0;
+
+            foreach (AcquisitionTaskItem task in _items)
+            {
+                // 触发表达式（仅触发式任务有意义；周期式那边本来就不看这个字段）
+                if (VariableRenamer.TryRenameExpression(
+                        task.Model.Expression, oldName, newName, out string expression))
+                {
+                    task.Model.Expression = expression;
+                    changed++;
+                }
+
+                foreach (AcquisitionItemRow row in task.Items)
+                {
+                    changed += row.RenameVariableReferences(oldName, newName);
+                }
+
+                // 名字换了，组上的配置错误判据与列显示都要重算
+                task.RefreshFromModel();
+            }
+
+            if (changed > 0)
+            {
+                Save();
+            }
+
+            return changed;
         }
 
         /// <summary>换主题后刷新所有组的「来源变量」前景色。</summary>
