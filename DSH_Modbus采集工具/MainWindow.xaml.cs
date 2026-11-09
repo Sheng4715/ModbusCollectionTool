@@ -438,7 +438,24 @@ namespace DSH_Modbus采集工具
 
             // 设备类型下拉绑定驱动注册表（品牌地址表）
             DeviceTypeComboBox.ItemsSource = DriverRegistry.All.Select(d => d.DisplayName).ToList();
-            DeviceTypeComboBox.SelectedIndex = 0;
+
+            // 回填上次选择的设备类型（2026-11-09 用户要求持久化；此前是写死 SelectedIndex = 0）。
+            //
+            // ⚠️ **必须先设 _currentDriver、再设下拉框，且把这次赋值罩在 _revertingDeviceType 里**。
+            // SelectionChanged 把「换了个对象」当成用户切换品牌，会走 ConfirmDriverSwitch +
+            // ApplyDriverSwitchCleanup —— 那是**破坏性**的（清映射地址 / 删元件监控项 / 清 IO 表）。
+            // 构造期集合还是空的、BuildPrompt 会算出「没东西要删」而不弹框，但那是巧合：
+            // 以后谁把 LoadComments / _globalVarSet.Load 提到这行之前，启动就会真删数据。
+            _currentDriver = ResolveStartupDriver();
+            _revertingDeviceType = true;
+            try
+            {
+                DeviceTypeComboBox.SelectedIndex = DriverRegistry.IndexOf(_currentDriver);
+            }
+            finally
+            {
+                _revertingDeviceType = false;
+            }
 
             // 点位集来自 exe 旁的 io-comments.json（导入 IO 表后写回）；文件不存在则为空列表
             LoadComments();
@@ -2128,10 +2145,29 @@ namespace DSH_Modbus采集工具
             RefreshGlobalVarView();
 
             UpdateOverviewStatus();
+
+            // 记住这次选择（2026-11-09），下次启动回到这个品牌。
+            // 存 Key 不存显示名；两条「程序化回填」路径（启动回填 / 取消切换回填）都被
+            // 上面 _revertingDeviceType 的早退挡住，到不了这里，所以不会误写。
+            ThemeManager.SetDeviceType(_currentDriver?.Key);
         }
 
         /// <summary>取消切换时回填下拉框用的闸门（与 <c>_restoringNicSelection</c> 同一手法）。</summary>
         private bool _revertingDeviceType;
+
+        /// <summary>
+        /// 启动时该用哪个驱动：优先上次记住的（<see cref="ThemeManager.DeviceTypeKey"/>），
+        /// 取不到（旧配置没这个字段 / 该品牌已被移除 / json 被手改坏）就退回注册表第 0 个。
+        /// <para>
+        /// 与网卡还原同一取舍：**静默回退，不弹框、不报错**。启动时弹一个「你说的品牌找不到」
+        /// 只会让用户困惑于一个他并没有做过的操作。
+        /// </para>
+        /// </summary>
+        private CommDriver ResolveStartupDriver()
+        {
+            CommDriver? saved = DriverRegistry.GetByKey(ThemeManager.DeviceTypeKey);
+            return saved ?? DriverRegistry.All[0];
+        }
 
         /// <summary>确认切换的结果：取消 / 没东西要删 / 用户确认要删。</summary>
         private enum DriverSwitchImpactKind

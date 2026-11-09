@@ -218,6 +218,34 @@ namespace DSH_Modbus采集工具.Themes
             Save(_settings);
         }
 
+        // ==== 设备类型（通讯驱动品牌） ====
+
+        /// <summary>
+        /// 上次选用的通讯驱动 **Key**（如 <c>xinje_xd</c>）；空串表示没保存过 → 界面用注册表第 0 个。
+        /// <para>
+        /// ⚠️ 存 **Key 而不是 DisplayName**：显示名是给人看的文案（「信捷XD/XL系列」），
+        /// 以后改文案或调整品牌顺序都会对不上；Key 是稳定标识 ——
+        /// 与 <see cref="TargetNic"/> 存网卡名而不是下拉框文本是同一个取舍。
+        /// </para>
+        /// </summary>
+        public static string DeviceTypeKey => _settings.DeviceTypeKey;
+
+        /// <summary>
+        /// 记住设备类型并落盘（传空串 = 清除，回落到注册表第 0 个）。
+        /// <para>⚠️ 值没变时直接返回、不写盘（与 <see cref="SetOverviewView"/> 同一手法）。</para>
+        /// </summary>
+        public static void SetDeviceType(string? key)
+        {
+            string text = key ?? string.Empty;
+            if (string.Equals(_settings.DeviceTypeKey, text, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _settings.DeviceTypeKey = text;
+            Save(_settings);
+        }
+
         /// <summary>
         /// 显式选了默认目录时，存空串而非绝对路径（见 <see cref="SetMode"/>）。
         /// 由 <see cref="Save"/> 统一调用，**不放在各个 Setter 里**。
@@ -413,6 +441,20 @@ namespace DSH_Modbus采集工具.Themes
             /// </summary>
             public string OverviewView { get; set; } =
                 Modeling.OverviewViewSetting.Format(Modeling.OverviewViewSetting.Default);
+
+            /// <summary>
+            /// 上次选用的通讯驱动 Key（2026-11-09 用户要求持久化）。
+            /// <para>
+            /// 空串 = 没保存过 → 界面用注册表第 0 个（信捷 XD/XL）；旧 json 没有这个字段
+            /// 就是这个状态，与升级前「每次启动都回第 0 项」的行为一致，无需迁移。
+            /// </para>
+            /// <para>
+            /// ⚠️ **字节顺序刻意不跟着存**：它由驱动默认值决定，切换设备类型时整份重置
+            /// （用户 2026-10 定案，见 AGENTS-细节.md §8.1）。存下来会让「换了品牌、字序还是
+            /// 旧品牌」变成静默错值 —— 两品牌唯一差异就在字符串序（信捷 12 / 汇川 21）。
+            /// </para>
+            /// </summary>
+            public string DeviceTypeKey { get; set; } = string.Empty;
         }
 
         private static AppSettings Load()

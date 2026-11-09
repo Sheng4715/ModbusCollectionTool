@@ -23,6 +23,16 @@ namespace DSH_Modbus采集工具.Drivers
             Drivers.FirstOrDefault(d => d.DisplayName == displayName);
 
         /// <summary>
+        /// 某个驱动在注册表里的下标；传 <c>null</c> 或该驱动不在表里时返回 <c>-1</c>。
+        /// <para>
+        /// 给「设备类型」下拉框回填用（2026-11-09 持久化）：下拉项是 DisplayName 字符串，
+        /// 按**对象**定位比按显示名匹配稳 —— 以后改文案/加品牌都不会错行。
+        /// </para>
+        /// </summary>
+        public static int IndexOf(CommDriver? driver) =>
+            driver == null ? -1 : Drivers.IndexOf(driver);
+
+        /// <summary>
         /// 新增品牌示例：
         /// Drivers.Add(new CommDriver
         /// {

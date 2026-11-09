@@ -1595,10 +1595,36 @@ ScrollViewer                        ← 画布放不下就滚
 - **确认后记一条运行日志**（WARNING 级）：`已切换设备类型：清空 N 个映射地址、删除 N 个元件监控项、清除 IO 表 N 个点位`。
   这三个数字事后要能查 —— 重启后用户只会看到「地址都没了」。
 - **只在真的换了品牌时才问**：`ReferenceEquals(next, _currentDriver)` 为真（同一个对象）直接跳过，
-  避免构造期 `SelectedIndex = 0` 也弹框。
+  避免构造期回填下拉框也弹框。
+
+**设备类型会持久化**（2026-11-09 用户要求；此前构造函数里写死 `SelectedIndex = 0`）：
+
+- `app-settings.json` → `DeviceTypeKey`，存驱动的 **`Key`**（`xinje_xd` / `inovance_easy`）。
+  ⚠️ **不存 `DisplayName`** —— 那是给人看的文案，改文案或调整品牌顺序就对不上，
+  与 `TargetNic` 存网卡名而不是下拉框文本同一取舍
+- 回填在**构造函数**里（`ResolveStartupDriver()` → `DriverRegistry.GetByKey`），
+  取不到（旧 json 无字段 / 品牌被移除 / Key 手改坏）就退回 `DriverRegistry.All[0]`，
+  **静默回退不弹框**：启动时弹「你说的品牌找不到」只会让用户困惑于一个他没做过的操作
+- ⚠️⚠️ **回填必须先把 `_currentDriver` 设好，再把下拉框赋值罩在 `_revertingDeviceType` 里**。
+  `SelectionChanged` 把「换了个对象」当成用户切品牌，会走 `ConfirmDriverSwitch` +
+  `ApplyDriverSwitchCleanup` —— 那是**破坏性**的（清映射地址 / 删元件监控项 / 清 IO 表）。
+  构造期集合恰好是空的、`BuildPrompt` 算出「没东西要删」所以不弹框，**但那只是巧合**：
+  以后谁把 `LoadComments` / `_globalVarSet.Load` 提到这行之前，启动就会真删数据。
+  闸门用 `try/finally` 括住，别只写一行赋值
+- 落盘在 `SelectionChanged` **末尾**（`ThemeManager.SetDeviceType(_currentDriver?.Key)`）。
+  两条程序化回填路径（启动回填 / 取消切换回填）都被 `_revertingDeviceType` 早退挡住，到不了那里，
+  所以不会误写 —— **取消切换后 json 仍是原品牌**
+- ⚠️ **字节顺序仍不持久化**：它由驱动默认值决定、切品牌时整份重置（§8.1）。这是刻意的 ——
+  存下来会出现「换了品牌、字序还是旧品牌」的静默错值
 
 **验证**：`.tmp/DriverSwitchCheck` 31 项纯逻辑断言；UIA 端到端两条路径 ——
 取消（下拉框回退到信捷、三类数据一个没动）、确认（汇川 + 地址全空 + 只剩变量行 + IO 表 0 点位 + 日志一条）。
+持久化的端到端另见 `.tmp/drivertype-check/`：
+`run.ps1`（满配置启动不弹框不清数据 / 空配置切换落盘重启 / 非法 Key 回退）与
+`cancel.ps1`（取消路径：11 地址 + 10 监控项 + 156 IO 点，哈希全不变）。
+⚠️ **写这类"会弹模态框"的 UIA 用例必须用 Win32**（`PostMessage` 发按键 + 按标题找对话框窗口 +
+只对对话框做 UIA）：模态消息循环下对主窗口子树的 UIA 调用会超时并返回 null，会把
+「弹了框」误判成「没弹框」、把强杀进程误判成「数据被清了」—— 踩过一次假阳性。
 弹框实测文案：
 
 ```
