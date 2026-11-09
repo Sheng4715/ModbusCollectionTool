@@ -2078,3 +2078,164 @@ bool acquired = mutex.WaitOne(0);
 验证见 `.tmp/AtomicFileCheck`（**22 项**）：基本往返 / `.bak` 只留上一版 /
 **并发写同一文件后内容必为某一次写入的完整原文（200 KB payload）** /
 坏文件逐元素抢救 + `.bad-*` 备份 / 不存在与纯空白 / 深层目录自动创建 / 无 BOM。
+
+## 15. 完整目录树（原 AGENTS.md §2）
+
+> **为什么搬到这里**：AGENTS.md 有 65536 B 硬预算（超了整份被丢弃），
+> 这份树约 9.4 KB 且属于**查阅型参考**（找文件在哪），不是每次改动都要照着做的规则。
+> AGENTS.md §2 只留「9 个无 WPF 目录 + 反 WPF 判断原则 + 断言工程清单」这些必须每次记住的部分。
+> **新增/删除源文件时两处都要改**：这里是全量树，AGENTS.md §2 只列目录级说明。
+
+```
+DSH_Modbus采集工具/
+├── App.xaml(.cs)               # 入口（OnStartup 先 ThemeManager.Initialize）
+├── AssemblyInfo.cs             # ThemeInfo 等程序集级声明
+├── AppInfo.cs                  # 版本号 / 构建日期 / 运行环境（只读程序集元数据）
+├── MainWindow.xaml             # 全部 UI（唯一 UserControl 是状态机画布）
+├── MainWindow.xaml.cs          # 交互主体：连接 / 心跳 / 导航 / 底栏 / IO 分页·导入 / 日志
+├── MainWindow.MachineState.cs  # partial：状态机画布接线
+├── MainWindow.Acquisition.cs   # partial：采集任务组 / 数据项 / 执行
+├── MainWindow.GlobalVar.cs     # partial：全局变量
+├── MainWindow.Monitor.cs       # partial：自由监控
+├── MainWindow.IoImport.cs      # partial：IO 表导入
+├── MainWindow.AcquisitionView.cs  # partial：总览「数据采集」骨架
+├── MainWindow.AcquisitionLive.cs  # partial：实时画布（拖动 / 缩放 / 背景图）
+├── MainWindow.Scanner.cs       # partial：扫码器（连接 + 交互已合并一页）
+├── MainWindow.Account.cs       # partial：账户与权限（登录 / 注销 / 自由监控写入置灰）
+├── Scanners/                   # 扫码器（无 WPF）
+│   ├── ScannerDefinition.cs    # 定义 + 规则 + scanner.json
+│   ├── ScannerTcpClient.cs     # 裸 TCP：原样发 + 按结束符收帧
+│   ├── ScannerSession.cs       # 每台的连接身份与重连计数
+│   ├── ScannerExchange.cs      # 上升沿判定 + 运行时态
+│   └── ScannerTestResult.cs    # 触发测试的结果文案：控制字符转义 / 截断（§5.9.9）
+├── MonitorItem.cs              # 自由监控项包装 + 集合（增删改 / 落盘 / 解析）
+├── GlobalVarItem.cs            # 全局变量包装 + 集合
+├── AcquisitionTaskItem.cs      # 采集任务组 / 项包装（含配置错误态）
+├── SystemVarRow.cs             # 系统变量监控行
+├── Expressions/                # 表达式引擎（无 WPF）：词法 → 语法 → 编译 → 取值
+│   ├── ExpressionLexer.cs / ExpressionParser.cs / ExpressionNode.cs
+│   ├── ExpressionValue.cs      # 求值结果（数值 / 布尔）
+│   └── CompiledExpression.cs   # 入口 TryParse / 名字收集 TryValidateNames
+├── Themes/                     # 主题（P5.1）
+│   ├── Light.xaml / Dark.xaml  # 两套字典，必须同键（Light 值 = 主题化前的字面值）
+│   ├── DialogControls.xaml     # 对话框样式（Dialog.* 前缀，App.xaml 合并）
+│   └── ThemeManager.cs         # 换字典 / 跟随系统 / 键一致性校验 / app-settings.json
+├── Polling/                    # 采集引擎与连接状态（无 WPF）
+│   ├── ICollectorHost.cs       # 宿主契约：周期 / 监控集 / 快照 / 连接身份 / 回 UI / 断线
+│   ├── ModbusPoller.cs         # 轮询编排（IO 分块读 + 自由监控读 + 断线通知）
+│   ├── ConnectionSession.cs    # 连接身份与生命周期（客户端 / 目标 / 取消源 / 重连计数）
+│   ├── ReconnectPolicy.cs      # 退避 1→2→4→5 封顶 5s（纯函数）
+│   └── PollSnapshot.cs         # 可见性快照（页面 / 自由监控 / 当前页 / 周期）
+├── Io/                         # IO 点位集（无 WPF，分页只做数值运算）
+│   ├── IoPointSet.cs           # 注释表读写 + 名称归一化 / 地址换算 / 分组排序 / 导入校验
+│   ├── IoPager.cs              # 分页纯计算（页数 / 夹取 / 切片 / 翻页 / 页号文本）
+│   ├── IoTableImporter.cs      # xlsx → 注释表 + 失败明细
+│   └── XlsxIoTableReader.cs    # xlsx 解析（零依赖 zip + XML）
+├── Modeling/                   # 数据模型与纯逻辑（24 个，均无 WPF）
+│   ├── AtomicFile.cs           # 配置文件原子写（.tmp→Replace+`.bak`）+ 容错读（逐元素抢救）
+│   ├── DataTypes.cs            # 类型枚举 + 规格表
+│   ├── ValueCodec.cs           # 寄存器 ↔ 类型值编解码 + 显示格式化
+│   ├── ByteOrderSettings.cs    # 三套字节顺序（整数 / 浮点 / 字符串）
+│   ├── DataPoint.cs            # 监控项模型 + data-points.json + 驱动校验解析
+│   ├── WritePlan.cs            # 一次写入的报文参数（FC05/06/16），两条写入路径共用
+│   ├── GlobalVariable.cs       # 全局变量模型 + 变量名规则 + GlobalVar.json（值不落盘）
+│   ├── GlobalReadPlan.cs       # 读计划 + 回填（按可见页面采集）
+│   ├── CompletionSource.cs     # 变量名补全纯逻辑（取词 / 筛选 / 候选表）
+│   ├── SystemVariable.cs / SystemVariableValues.cs   # 17 项清单 / 取值（脉冲·时钟·运行时长）
+│   ├── UserSession.cs          # 账户角色 + 密码常量 + 写入权限（纯逻辑）
+│   ├── MachineState.cs         # 状态机模型 + 布局常量 + Lamps + machine-state.json
+│   ├── AcquisitionTask.cs      # 任务组 / 项模型 + 规则 + acquisition-tasks.json
+│   ├── AcquisitionTaskCheck.cs # 配置错误判据
+│   ├── AcquisitionWrite.cs     # 写入编码 + TryBuild
+│   ├── AcquisitionCsv.cs       # CSV 建文件 / 表头 / 追加 / 列变换文件
+│   ├── AcquisitionSource.cs    # 来源解析（常量 → 系统变量 → 全局变量）
+│   ├── AcquisitionConstant.cs  # # 开头的常量字面量（语法 / 进制自标定），方案 B
+│   ├── LiveImageStore.cs       # 背景图拷贝规则（同名加序号 / 同内容复用）
+│   ├── LiveCoordinateText.cs   # 卡片坐标框文本规则（只接受整数）
+│   ├── DriverSwitchImpact.cs   # 切换设备类型的影响统计 + 确认文案（P4.3）
+│   ├── OverviewViewSetting.cs  # 总览「当前视图」：枚举 ↔ 下标 ↔ 落盘名（§5.5）
+│   └── AppTitle.cs             # 应用标题：默认值 / 清洗 / 默认识别（P5.6）
+├── Logging/                    # 日志（无 WPF）
+│   ├── DeviceLogFileWriter.cs  # 按天追加 .log + 跨天换文件 + 失败自愈
+│   └── DisconnectReasonClassifier.cs  # 异常原文 → 简短中文（底栏与日志共用）
+├── Net/NicScanner.cs           # 网络接口 → NicInfo + 「上次选择」还原优先级
+├── Ui/                         # 窗口呈现辅助与对话框（引 WPF，不碰业务）
+│   ├── MaximizedInset.cs       # 最大化溢出补偿：物理像素 + 按 DPI 内缩（§3.6）
+│   ├── WindowCorners.cs        # 圆角 + 边缘线（DWM 绘制，§3.8）
+│   ├── StatusBarPresenter.cs   # 底栏：状态文字 / 状态点颜色 / 右侧连接参数
+│   ├── DeviceLogPresenter.cs   # 日志：内存集合 + 上限裁剪 + 落盘旁路 + 级别映射
+│   ├── CompletionPopup.cs      # 补全下拉：Popup + 键鼠 + 输入法抑制（§5.6）
+│   ├── DialogWindow.cs         # 对话框基类：外壳 / 按钮行 / 内联错误 / 回车与 ESC（§9.3）
+│   ├── DialogChrome.cs         # 对话框字体 / 底色 / 深色标题栏
+│   ├── ColorPalette.cs         # 30 色 drawio 色盘（两个编辑窗共用）
+│   ├── MachineStateView.xaml(.cs)  # 状态机画布（本工程唯一 UserControl）
+│   ├── MachineStateEditDialog.cs / MachineLampEditDialog.cs  # 状态框 / 指示灯编辑窗（§5.5）
+│   ├── AcquisitionTaskDialog.cs   # 任务选项对话框
+│   ├── AcquireLiveCardOptionDialog.cs  # 实时卡片：两个字号 + 小数位数(仅浮点) + X/Y + 重置
+│   ├── LiveImagePicker.cs      # 背景图选择弹框（两个入口共用）
+│   ├── ScannerErrorMark.cs     # 扫码器输入框标红用的 bool 附加属性
+│   ├── NumberInputDialog.cs    # STRING 长度等单值输入弹窗
+│   ├── LoginDialog.cs          # 账户登录框（用户名下拉 + 密码掩码 + 注销/登录）
+│   └── ThemeMessageDialog.cs   # 全应用唯一的提示 / 确认弹框（Info / Confirm，§9.3）
+├── Startup/                    # 开机自启动 + 单实例（无 WPF）
+│   ├── AutoStartCommand.cs     # 纯逻辑：命令串 / 同 exe 判定 / 禁用记录判据
+│   ├── AutoStartRegistry.cs    # 只做注册表 IO（HKCU Run + StartupApproved）
+│   ├── SingleInstanceName.cs   # 纯逻辑：互斥量命名（Global\ + 产品名，§14）
+│   ├── SingleInstanceGuard.cs  # 抢 Global\ 互斥量 + Abandoned/权限异常处理
+│   └── WindowFinder.cs         # EnumWindows 找同一 exe 的窗口并置前
+└── Drivers/
+    ├── CommDriver.cs           # ModbusArea / NumberBase / AddressArea / CommDriver
+    ├── DriverRegistry.cs       # 品牌地址数据表（含各品牌字节顺序约定）
+    ├── ModbusTcpClient.cs      # Modbus TCP 主站（FC01/02/03/04 读 + FC05/06/16 写 + 本地端点绑定）
+    └── ModbusHeartbeat.cs      # 独立心跳调度与异常分类
+```
+
+
+## 16. 样式键全表（原 AGENTS.md §3.3）
+
+> **为什么搬到这里**：这是 Window.Resources 里 **51 个 x:Key** 的查表，约 5.8 KB。
+> 改外观时按需查；AGENTS.md §3.3 只留「名字前缀约定 + 4 条最容易踩的」。
+
+> 全部定义在 `MainWindow.xaml` 的 `Window.Resources` 里（**51 个 `x:Key`** + 一个**无 key 的隐式 `ScrollBar`**）。改外观先在这里找现成的；下表只列**会复用、或踩过坑**的，其余是某行专用模板（`*ItemTemplate`）。
+
+**名字前缀**：`Io*` = IO 页/分页、`Form*` = 表单、`Monitor*` = 自由监控行内、`Acq*` = 采集任务组行内、`GlobalVar*` / `SystemVar*` = 两个分段模板、`Scanner*` = 扫码器、`Dialog.*` = 对话框（在 `Themes/DialogControls.xaml`，见 §9.3）。
+
+| Key | 用途 |
+|-----|------|
+| `CaptionButton` / `CloseCaptionButton` | 标题栏按钮（关闭悬停红底） |
+| `NavRadioButton` | 导航项（灰底背板，选中加粗） |
+| `AccountButton` | 导航底部的账户入口（头像 18 + 用户名）。**比 `NavRadioButton` 紧凑**（Padding 10 / 头像 18 / 间距 8）：导航列 112 DIP 放不下「技术员」三个汉字，按 `NavRadioButton` 的 14+20+10+14 只剩 38 DIP（需约 42）。⚠️ `Margin` 左边距仍是 8，左缘才与其余导航项齐平 |
+| `NavItemTemplate` | 导航项共享 `ControlTemplate`：外距/内距/高度全从 Style 传。要做不同缩进改 Style，别复制模板 |
+| `IoSegmentRadioButton` | 分段控件，**14 处**：IO 页输入 X / 输出 Y / 自由监控 / 系统变量、数据管理三档、设置页主题两档、设备连接两档（PLC / 扫码器） |
+| `ToggleSwitch` | **开关**（Win11 式）：轨道 40×20、柄 12、内缩 4；关＝`Control.Background`、开＝`Accent.Fill`；**状态文字在轨道左侧**，由代码按 `IsChecked` 改写 `Content`（「开」/「关」） |
+| `IoItemTemplate` | IO 点位单元格（灯 10×10、注释 MinWidth 144；`Comment` 为 INPC） |
+| `IoItemsControlStyle` | IO 条目横向拉伸 |
+| `IoPagerButton` | 分页箭头（26×26，首末页置灰） |
+| `IoCardButton` | **通用文字按钮**（浅灰实底胶囊／圆角 6／高 26／字号 12；底色走 `Brush.Control.Background`） |
+| `FormButton` | 表单按钮，`BasedOn` `IoCardButton`，仅字号 14、内边距 14 |
+| `FormComboBox` | 表单下拉框：**胶囊**（灰底 + 圆角 6 + chevron），字号 14／高 26。默认 `BorderThickness=0`；模板已 `TemplateBinding` `BorderBrush`/`BorderThickness`，个别位置需要框线时自己设 1（总览页「当前视图」就是） |
+| `FormComboItem` | 表单下拉项容器（含 `ItemContainerStyle`，勿漏） |
+| `FormTextBox` | 表单输入框：**框线**（白底 + `Brush.Input.Border` 圆角 4），字号 14／高 26 |
+| `MonitorInlineComboBox` / `MonitorTypeCombo` | 行内下拉框：胶囊，字号 12／高 22 |
+| `MonitorComboItem` | 行内下拉项容器 |
+| `MonitorTypeItemTemplate` | 类型下拉的**展开项**模板，绑 `{Binding DisplayName}` —— 数据源必须是 `DataTypeSpec` 对象，放字符串会整列空白（§5.2） |
+| `MonitorInlineTextBox` / `MonitorValueTextBox` | 行内输入框：框线，字号 12／高 22 |
+| `MonitorItemTemplate` | 自由监控整行（名称/类型/格式/当前值/删除）；`IsSelected` 时整行底色 `Brush.Accent.Subtle` |
+| `MonitorIconButton` | 行尾删除 ×（**悬停红**＝删除语义） |
+| `MonitorHeaderIconButton` | 表头新增 ＋（**悬停主色**＝新增语义） |
+| `MonitorClearAllButton` | 表头「🗑 清空」 |
+| `GlobalVarItemTemplate` | 全局变量整行（序号/名称/类型/映射地址/注释/删除）；选中底色同上 |
+| `SystemVarItemTemplate` / `SystemVarMonitorItemTemplate` | 系统变量清单行（只读，无输入框）/ 监控行（多一列「当前值」） |
+| `AcqRowIconButton` | 采集任务组行内图标按钮（… ↑↓）：22×22，悬停中性灰底 + 深字。**刻意不复用** `MonitorIconButton`（红＝删除）与 `MonitorHeaderIconButton`（主色＝新增）—— 同一行混两种语义会读错 |
+| `AcqRowDeleteButton` | 行「删除本组」×，`BasedOn` `AcqRowIconButton`，**只把悬停换实心红**（`Brush.Danger.Fill.Hover` + 白字），与全局变量 / 监控行的行尾删除一致 |
+| `AcqEnableSwitch` | 「启用」开关，`BasedOn` `ToggleSwitch`，只补「文案随 `IsChecked` 变」。⚠️ 必须在 `Style.Triggers` 里换 `Content`，模板触发器压不过局部值 |
+| `AcquisitionSourceBox` / `AcquisitionTargetBox` | 采集写入任务的来源 / 写入变量框，`BasedOn` `MonitorInlineTextBox`，只加「有错时字变红」。⚠️ `BasedOn` 要求被继承者**先定义** |
+| `AcquisitionTaskRowTemplate` / `AcquisitionItemRowTemplate` | 任务组行（7 列 + 展开子表）/ 数据项行（序号·名称·变量·类型只读·删除） |
+| `AcqLiveCard`（代码构造） | 实时数据卡片：`Border` + 项名称 + 数值，放 Canvas 里拖动（§5.8.1） |
+| `LogClearButton` / `DeviceLogItemTemplate` / `DeviceLogListStyle` | 日志卡清空 / 日志行（时间戳灰 + 按级别着色）/ 列表（无选中底色） |
+| `AreaChipTemplate` / `AreaItemsControlStyle` | 设备连接页「地址表元件」那排地址 chip |
+| `IconFont` | 图标字体族（`Segoe Fluent Icons, Segoe MDL2 Assets`） |
+| `EnumUpperConverter` / `EnumUpperTemplate` / `BoolToVis` | 枚举转大写 / 布尔转 `Visibility` |
+| **隐式 `ScrollBar`**（**无 `x:Key`**） | 细滚动条（10px）。⚠️ 隐式样式是唯一能命中 `ScrollViewer` 内部创建的滚动条的手段，**别改成 keyed**。⚠️ **横向必须在 `ControlTemplate.Triggers` 里把 `PART_Track.IsDirectionReversed` 翻回 `False`**：模板那个 `True` 是给纵向的，横向不翻的话 `Value=0` 时滑块贴右端（2026-11-06 实测复现并修真，历史表格的横向条就是这么坏的） |
+
+
