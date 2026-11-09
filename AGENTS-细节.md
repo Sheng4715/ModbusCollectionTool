@@ -1941,3 +1941,140 @@ UI 线程写、采集线程每拍读的字段，一律显式 `volatile`：
   （`AcquisitionConstant` 未链接、`AcquisitionWriteStatus.Skipped` 已改名 `CannotAddress`、
   `WritePlan.cs` 路径写错），与本章无关，属于更早迭代留下的 —— 要跑它们得先修这些
 - ⚠️ 跑 `.tmp` 下的工程前先 `$env:TEMP = "$PWD\.tmp\<名字>-temp"`（沙箱下 `%TEMP%` 挂 ACE，建目录会被拒）
+
+## 14. 单实例保护（2026-11-09）
+
+**需求**：每台机器只允许运行一个实例（用户定案）。此前可以随便开多个，
+危害是实的：多实例同写一份 `app-settings.json` / `*.json`、`AcquisitionCsv` 的
+`File.AppendAllText` 会让 CSV 行交错、多个实例连同一个 PLC 时写入互相打架。
+
+### 14.1 为什么是 `Global\` 命名互斥量
+
+| 方案 | 结论 |
+|---|---|
+| **`Global\` 命名互斥量 + 唤起已有窗口** | ✅ **采用** |
+| `Local\` 命名互斥量 | ❌ 只在**当前登录会话**可见。远程桌面 / 快速用户切换 / 另一账户登录是另一个会话，看不到 → 照样两个实例。需求是「每台机器一个」，必须跨会话 |
+| 文件锁（独占打开 .lock） | ⚠️ 可行但更差：要挑落盘位置（`ProgramData` 又要写权限）、崩溃后留残留文件让人误会、且 `File.Exists` 判据经典坑 |
+| 进程枚举（`GetProcessesByName`） | ❌ 有竞态：两进程同时枚举时都看不到对方。双击两下就能穿透 |
+| 命名管道 / 内存映射 | ❌ 过度设计：本项目没有跨进程传参需求 |
+
+**实测（本机，标准用户非管理员）**：
+- 标准用户**可以**创建 `Global\` 互斥量，无需提权
+- 有真实持有者时 `WaitOne(0)` 返回 **`false`**（判重可靠）
+- 持有者被强杀后抛 **`AbandonedMutexException`**，必须 catch 并当作「拿到所有权」
+
+### 14.2 ⚠️ `createdNew` 不能用来判重
+
+```csharp
+// 错！第二次创建时 createdNew 恒为 false，但它只说明「名字已存在」，
+// 完全不代表有别的进程持有它（名字会一直存在，直到所有句柄关闭）
+new Mutex(false, name, out bool createdNew);
+
+// 对：非阻塞 WaitOne(0)
+bool acquired = mutex.WaitOne(0);
+```
+
+这条由 `.tmp/SingleInstanceCheck` 的 3、4 两组断言分别从「语义」和「跨线程持有」
+两个角度钉住。
+
+### 14.3 名字刻意不含路径 / 版本 / 用户名
+
+`Startup/SingleInstanceName.cs`：`Global\` + `"DSH_Modbus采集工具"`
+
+- **不含 exe 路径** —— 否则同一台机器上两个发布目录（`_1.0.0` / `_1.0.1`）各起一个，
+  同时连同一个 PLC，正是要防的场景
+- **不含版本号** —— 升级期间新旧版不能共存。代价是「升级前必须先关旧的」，
+  但第二个实例会明确提示，不会让人以为双击没反应
+- **不含用户名** —— 含了就退化成「每用户一个」，与需求相反
+- 用固定产品名而不是程序集名：程序集名将来改了不至于让新旧两版互相看不见
+
+### 14.4 三类异常都要当成「抢到了」，否则死锁
+
+`SingleInstanceGuard.Acquire()`：
+
+- `AbandonedMutexException` → **拿到所有权**（上一个实例崩溃/被强杀）
+- `UnauthorizedAccessException` → **按「已有实例」处理**：一个**更高权限**的进程
+  （如管理员跑的旧实例）持有同名对象时，标准用户连打开句柄都不被允许
+- 其它异常 → **放行**（`IsFirstInstance = true`）。宁可允许启动，也不要让人打不开程序；
+  原因留在 `FailureReason` 里供提示用
+
+### 14.5 唤起已有窗口：不能用 `Process.MainWindowHandle`
+
+`Startup/WindowFinder.cs` 走 `EnumWindows` + 按**完整 exe 路径**匹配 + 跳过多余窗口：
+
+- 判据是**可见 + 有标题**（主窗口都有标题；隐藏的辅助窗口 / 消息窗没有）
+- 必须跳过**本进程**的窗口（否则唤起自己）
+- `MainModule.FileName` 取不到时（权限不足 / 进程已退出）**跳过该候选**，不影响其它候选
+- 找到后 `IsIconic` 则先 `SW_RESTORE`，再 `SetForegroundWindow`
+- ⚠️ `SetForegroundWindow` 受**前台锁定限制**：本进程不是当前前台应用时，
+  系统可能只闪任务栏而不真置前。**这不是 bug，也不需兜底** —— 看得见它在闪，
+  比静默退出好得多
+
+### 14.6 第二实例的表现：唤起 → 失败则弹框 → 退出
+
+`App.RejectSecondInstance()`：
+
+1. 先试 `TryActivateExistingWindow()`，成功则 `Shutdown()`
+2. 找不到窗口（已有实例还在启动中）或唤起失败 → 弹 `ThemeMessageDialog.Info`
+   「程序已在运行」，带上 `FailureReason`
+3. `finally` 里 `Dispose()` + `Shutdown()`
+
+⚠️ **绝不静默退出**：双击图标没任何反应，用户会以为程序坏了、再点几次、甚至去重装。
+哪怕只是闪一下任务栏也比「什么都没发生」好。
+
+### 14.7 检查必须是 `OnStartup` 的第一件事
+
+`_singleInstance = SingleInstanceGuard.Acquire();` 放在异常兜底与
+`ThemeManager.Initialize()` **之前**：
+
+- 第二个实例不该碰任何配置（`Initialize` 会读 `app-settings.json` 并可能写盘）
+- 也不该在退出前弹一堆初始化相关的框
+- 抢不到时**不调 `base.OnStartup(e)`** → `StartupUri` 不会再建主窗口
+
+⚠️ **锁要全程持有到进程退出**，不能放进 `using` —— 一释放第二个实例立刻就能起来。
+`OnExit` 里显式 `Dispose()`（进程退出内核也会回收，但显式释放能让「调试器反复启动」
+这个常见场景立刻恢复正常：调试宿主可能比被测进程活得久）。
+
+### 14.8 与开机自启的交互（安全）
+
+自启实例先拿到锁；用户之后手动双击 → 只唤起已有窗口，不会起第二个、不会重复连接。
+自启的 `TryAutoConnect` 只在**唯一实例**里跑，因此不会被第二个进程重复触发。
+
+### 14.9 验证
+
+`.tmp/SingleInstanceCheck`（**17 项**，纯逻辑）：命名规则跨会话性 / 名字不含路径版本用户 /
+`createdNew` 语义 / `WaitOne(0)` 跨线程持有 / Abandoned 可重获 / 不同名字互不干扰 /
+标准用户权限。
+
+`.tmp/single-instance/run.ps1` + `activate.ps1`（端到端）：
+
+| 场景 | 结果 |
+|---|---|
+| 启动第二个实例 | 立刻退出（退出码 0），进程总数恒为 1 ✅ |
+| 连开三次（模拟狂点图标） | 三次都自动退出 ✅ |
+| 第一个实例是否被误杀 | 存活、窗口标题正常 ✅ |
+| 关掉后再启动 | 能正常起来（锁已释放）✅ |
+| **强杀后立刻重启** | 能起来（Abandoned 路径，不被死锁）✅ |
+| **最小化第一个 → 启动第二个** | 第二个退出；第一个被**还原并置前**（`GetForegroundWindow == 它的 hwnd`）✅ |
+| `crash.log` | 无 ✅ |
+
+⚠️ **跨会话（远程桌面）那条未能实测**：本机只有一个活动会话（`console` ID=1，
+`rdp-tcp` 仅 Listen），且当前身份非管理员，无法创建第二个会话的进程。
+`Global\` 跨会话可见是 Windows 既定语义（对象在全局 `\BaseNamedObjects`，
+`Local\` 只在会话自己的命名空间），上现场前建议用远程桌面实连一次确认。
+
+### 14.10 顺带修复：`.tmp` 固定名 → GUID
+
+`AtomicFile.WriteAllText` 原来用固定的 `path + ".tmp"` 作中转。单实例保护挡住的是
+**同一台机器同目录**双写，但挡不住**两台机器共用同一个网络共享目录的配置** ——
+那种场景下固定名的 `.tmp` 会被两个进程同时 `FileMode.Create`，一个正在写、
+另一个把它 `Replace` 掉，结果是一份**内容被截断的配置**。
+
+现在：
+- 临时名 `path + "." + Guid.NewGuid().ToString("N") + ".tmp"`
+- `FileMode.CreateNew`（不是 `Create`）：名字重复时直接失败，而不是静默共用
+- `try/finally` 里清理残留（替换成功时 tmp 已不存在；失败时留着会不断堆积垃圾）
+
+验证见 `.tmp/AtomicFileCheck`（**22 项**）：基本往返 / `.bak` 只留上一版 /
+**并发写同一文件后内容必为某一次写入的完整原文（200 KB payload）** /
+坏文件逐元素抢救 + `.bad-*` 备份 / 不存在与纯空白 / 深层目录自动创建 / 无 BOM。

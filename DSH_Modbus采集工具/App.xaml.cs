@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using DSH_Modbus采集工具.Startup;
 using DSH_Modbus采集工具.Themes;
 using DSH_Modbus采集工具.Ui;
 
@@ -13,8 +14,24 @@ namespace DSH_Modbus采集工具
     {
         private bool _fatalDialogShown;
 
+        /// <summary>
+        /// 单实例锁。**全程持有到进程退出**，不能放进 using —— 一旦释放，
+        /// 第二个实例立刻就能起来，保护等于没有。
+        /// </summary>
+        private SingleInstanceGuard? _singleInstance;
+
         protected override void OnStartup(StartupEventArgs e)
         {
+            // 单实例检查必须是**第一件事**，早于异常兜底、早于 ThemeManager.Initialize()：
+            // 第二个实例不该碰任何配置（Initialize 会读 app-settings.json 并可能写盘），
+            // 也不该在退出前弹一堆初始化相关的框。
+            _singleInstance = SingleInstanceGuard.Acquire();
+            if (!_singleInstance.IsFirstInstance)
+            {
+                RejectSecondInstance(_singleInstance);
+                return; // 不调 base.OnStartup：StartupUri 不会再建主窗口
+            }
+
             // 全局异常兜底必须**先于任何可能抛异常的初始化**注册（2026-11-08）：
             // 曾放在 ThemeManager.Initialize() 之后，若 ValidateKeyParity 在 Initialize
             // 内抛异常，兜底还没挂上 —— WinExe 无控制台，用户只看到窗口消失，crash.log 也不会写。
@@ -27,6 +44,44 @@ namespace DSH_Modbus采集工具
             ThemeManager.Initialize();
 
             base.OnStartup(e);
+        }
+
+        /// <summary>
+        /// 已有实例在跑：尽量把它的窗口唤到前台，然后本进程退出。
+        /// <para>
+        /// **为什么不静默退出**：双击图标没任何反应，用户会以为程序坏了、再点几次，
+        /// 甚至去重装。哪怕只是闪烁一下任务栏，也比「什么都没发生」好。
+        /// </para>
+        /// <para>
+        /// 唤起失败（已有实例还在启动中、窗口未创建 / 前台锁定限制）时退化为**弹框提示**，
+        /// 并带上 <see cref="SingleInstanceGuard.FailureReason"/>（权限不足那一路的说法不同）。
+        /// </para>
+        /// </summary>
+        private void RejectSecondInstance(SingleInstanceGuard guard)
+        {
+            try
+            {
+                if (guard.TryActivateExistingWindow())
+                {
+                    Shutdown();
+                    return;
+                }
+
+                string reason = guard.FailureReason ?? "程序已经在运行。";
+                ThemeMessageDialog.Info(
+                    owner: null,
+                    "程序已在运行",
+                    reason + "\n同一台计算机上只允许运行一个实例，请切换到已打开的窗口。");
+            }
+            catch
+            {
+                // 提示失败也绝不能留一个「什么都不做」的进程在这里：照常退出
+            }
+            finally
+            {
+                guard.Dispose();
+                Shutdown();
+            }
         }
 
         private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs args)
@@ -97,6 +152,15 @@ namespace DSH_Modbus采集工具
             {
                 // 弹窗失败不再处理，避免在兜底里再抛
             }
+        }
+
+        protected override void OnExit(ExitEventArgs e)
+        {
+            // 显式释放互斥量：进程退出内核也会回收，但显式释放能让「调试器反复启动」
+            // 这个常见场景立刻恢复正常（调试宿主可能比被测进程活得久）
+            _singleInstance?.Dispose();
+            _singleInstance = null;
+            base.OnExit(e);
         }
     }
 }

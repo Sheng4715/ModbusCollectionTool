@@ -31,33 +31,56 @@ namespace DSH_Modbus采集工具.Modeling
                 string dir = Path.GetDirectoryName(path) ?? AppContext.BaseDirectory;
                 Directory.CreateDirectory(dir);
 
-                string tmp = path + ".tmp";
+                // ⚠️ 临时文件名必须**唯一**，不能是固定的 path + ".tmp"：
+                // 单实例保护只挡住「同一台机器」的同目录双写，挡不住两台机器共用同一个
+                // 网络共享目录的配置 —— 那种场景下固定名的 .tmp 会被两个进程同时 Create，
+                // 一个正在写、另一个把它 Replace 掉，结果是一份**内容被截断的配置**。
+                // 加 GUID 后各写各的，最后一个 Replace 赢，最坏情况也只是后写的覆盖先写的（正常语义）。
+                string tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 string bak = path + ".bak";
 
-                using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
-                using (var sw = new StreamWriter(fs, new UTF8Encoding(false)))
+                try
                 {
-                    sw.Write(content);
-                    sw.Flush();
-                    fs.Flush(flushToDisk: true);
-                }
+                    using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    using (var sw = new StreamWriter(fs, new UTF8Encoding(false)))
+                    {
+                        sw.Write(content);
+                        sw.Flush();
+                        fs.Flush(flushToDisk: true);
+                    }
 
-                if (File.Exists(path))
+                    if (File.Exists(path))
+                    {
+                        try
+                        {
+                            // 原子替换：旧文件自动移到 bak，且尽量保留元数据
+                            File.Replace(tmp, path, bak, ignoreMetadataErrors: true);
+                        }
+                        catch
+                        {
+                            // File.Replace 在跨卷 / 权限受限时失败 → 退化为覆盖式 Move
+                            File.Move(tmp, path, overwrite: true);
+                        }
+                    }
+                    else
+                    {
+                        File.Move(tmp, path);
+                    }
+                }
+                finally
                 {
+                    // 替换成功时 tmp 已不存在；失败时留着会不断堆积垃圾文件
                     try
                     {
-                        // 原子替换：旧文件自动移到 bak，且尽量保留元数据
-                        File.Replace(tmp, path, bak, ignoreMetadataErrors: true);
+                        if (File.Exists(tmp))
+                        {
+                            File.Delete(tmp);
+                        }
                     }
                     catch
                     {
-                        // File.Replace 在跨卷 / 权限受限时失败 → 退化为覆盖式 Move
-                        File.Move(tmp, path, overwrite: true);
+                        // 删不掉不阻断（下次失败还会再试）
                     }
-                }
-                else
-                {
-                    File.Move(tmp, path);
                 }
 
                 return true;
