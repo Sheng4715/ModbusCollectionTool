@@ -27,6 +27,9 @@
     <Compile Include="..\..\DSH_Modbus采集工具\Drivers\CommDriver.cs" Link="CommDriver.cs" />
     <Compile Include="..\..\DSH_Modbus采集工具\Drivers\DriverRegistry.cs" Link="DriverRegistry.cs" />
       <Compile Include="..\..\DSH_Modbus采集工具\Modeling\AtomicFile.cs" Link="AtomicFile.cs" />
+      <Compile Include="..\..\DSH_Modbus采集工具\Modeling\ArrayValueCodec.cs" Link="ArrayValueCodec.cs" />
+      <Compile Include="..\..\DSH_Modbus采集工具\Modeling\ArrayRules.cs" Link="ArrayRules.cs" />
+    <Compile Include="..\..\DSH_Modbus采集工具\Modeling\DataTypeEnums.cs" Link="DataTypeEnums.cs" />
   </ItemGroup>
 
 </Project>

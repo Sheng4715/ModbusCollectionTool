@@ -521,6 +521,11 @@ namespace DSH_Modbus采集工具
 
             _monitorSet.ReResolveAll();
 
+            // ⚠️ **数据层**先重建数组子行：这一步不依赖可视树，故监控页不可见时也有效。
+            // 用户是在全局变量页改完定义、再切回监控表看的 —— 那时行容器还没生成，
+            // 只靠下面那个视觉循环会一条都碰不到（= 用户报的「要重启才出现」）。
+            _monitorSet.RebuildAllElementRows();
+
             // 已生成的行容器要同步类型框（置灰与否、显示的类型名都可能变了）。
             // 遍历**可视树**而不是 ItemContainerGenerator：容器未必已生成，
             // 且这里要的是模板根（Tag 上挂着 MonitorItem 的那个），容器层级并不保证。
@@ -533,7 +538,13 @@ namespace DSH_Modbus采集工具
                         continue;
                     }
 
-                    if (item.IsVariable)
+                    // 视觉侧只需保证样式/候选对；子行集合已在上面统一重建过
+                    if (item.IsArray)
+                    {
+                        // 数组行：类型框与格式框都置灰（变量行也一样，见下）
+                        ApplyArrayRowState(row, item);
+                    }
+                    else if (item.IsVariable)
                     {
                         ApplyVariableRowState(row, item);
                     }
@@ -661,10 +672,26 @@ namespace DSH_Modbus采集工具
                 // 两种写法就漏判了。这里用归一后的 item.Address 去查，比的是规范形式。
                 GlobalVariable? conflict = _globalVarSet.FindByAddress(item.Address, item.Model);
 
+                // 再查**区间重叠**（2026-11-09，数组引入后必需）：
+                // 全等比较在标量时代够用，但数组占的是一段连续单元 ——
+                // D10 声明 ARRAY<INT>[3] 就占了 D10/D11/D12，此时另一条变量映射 D11
+                // 会与它互相覆盖，而全等比较看不出任何问题。
+                conflict ??= _globalVarSet.FindByAddressOverlap(item.Model);
+
                 if (conflict != null)
                 {
-                    // 提示格式由用户定稿：「{地址}」已被使用
-                    ThemeMessageDialog.Info(this, "地址重复", $"\"{item.Address}\"已被使用");
+                    // 提示格式由用户定稿：「{地址}」已被使用。
+                    // 区间冲突时说清是被**哪条变量**占的 —— 只说「D11 已被使用」，
+                    // 用户会去变量表里找一条叫 D11 的，而实际占着它的是 D10 起的数组。
+                    bool sameStart = string.Equals(
+                        conflict.Address.Trim(), item.Address.Trim(), StringComparison.OrdinalIgnoreCase);
+
+                    ThemeMessageDialog.Info(
+                        this,
+                        "地址重复",
+                        sameStart
+                            ? $"\"{item.Address}\"已被使用"
+                            : $"\"{item.Address}\"与变量「{conflict.Name}」（{conflict.Address}，{conflict.TypeDisplayName}）占用的地址重叠");
 
                     // 回退到改之前的值（拿不出旧值时清空），避免界面上留着一条非法配置。
                     // ⚠️ 回退后要**重新解析一次**：ResolvedAddress / Area 还停在刚填的冲突地址上，
@@ -736,7 +763,23 @@ namespace DSH_Modbus采集工具
             // STRING 需要用户声明长度。
             // 与自由监控走**同一个**对话框与同一套参数（见 AskStringLength），
             // 不在这里另写一份文案与范围 —— 两处各写一份，改一处就悄悄不一致了。
-            if (matched == DataType.String)
+            // ARRAY 问的是「元素类型 + 元素数量」，用的是自己那个声明对话框。
+            if (matched == DataType.Array)
+            {
+                (DataType ElementType, int Count)? declared =
+                    Ui.ArrayDeclareDialog.Ask(this, item.Model.ElementType, item.Model.Length);
+
+                if (declared == null)
+                {
+                    // 取消：下拉框退回原类型，模型一个字不动
+                    SyncGlobalVarTypeCombo(combo, item);
+                    return;
+                }
+
+                item.Model.ElementType = declared.Value.ElementType;
+                item.Model.Length = declared.Value.Count;
+            }
+            else if (matched == DataType.String)
             {
                 int? len = AskStringLength(item.Model.Length);
 

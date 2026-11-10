@@ -273,6 +273,13 @@ namespace DSH_Modbus采集工具
         public GlobalVariable? FindByAddress(string address, GlobalVariable? exclude) =>
             _set.FindByAddress(address, exclude);
 
+        /// <summary>
+        /// 查找与之**占用区间重叠**的另一条变量（2026-11-09，数组引入后必需）。
+        /// <para>数组占一段连续单元，只比起点会漏判「D11 落在 D10 起的 ARRAY&lt;INT&gt;[3] 里」。</para>
+        /// </summary>
+        public GlobalVariable? FindByAddressOverlap(GlobalVariable candidate) =>
+            _set.FindByAddressOverlap(candidate);
+
         /// <summary>改名（含合法性与重名检查）</summary>
         public bool Rename(GlobalVarItem item, string newName, out string error)
         {

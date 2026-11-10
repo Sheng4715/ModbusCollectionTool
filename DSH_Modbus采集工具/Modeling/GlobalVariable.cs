@@ -46,6 +46,12 @@ namespace DSH_Modbus采集工具.Modeling
         public int Length { get; set; }
 
         /// <summary>
+        /// 仅 <c>ARRAY</c> 使用：**元素类型**（BOOL / INT / UINT / DINT / UDINT / REAL，不含 STRING）。
+        /// <para>数组的 <see cref="Length"/> 是**元素个数**（1~128），不是字符数。</para>
+        /// </summary>
+        public DataType ElementType { get; set; } = DataType.Int;
+
+        /// <summary>
         /// 映射地址，如 <c>HD100</c>；**空串 = 不关联地址**（纯内存变量）。
         /// <para>⚠️ 这里存的是**元件名**，不是 Modbus 绝对地址 —— 绝对地址由驱动按当前设备类型
         /// 重新解析，换设备类型后仍然有效。</para>
@@ -109,13 +115,21 @@ namespace DSH_Modbus采集工具.Modeling
         [JsonIgnore]
         public int RawCount => Type == DataType.Bool
             ? 1
-            : DataTypes.Get(Type).RegistersForLength(Length);
+            : Type == DataType.Array
+                ? DataTypes.ArrayUnitsOf(ElementType, 0, Length)
+                : DataTypes.Get(Type).RegistersForLength(Length);
 
-        /// <summary>类型显示名，如 <c>DINT</c> / <c>STRING[9]</c></summary>
+        /// <summary>
+        /// 类型显示名，如 <c>DINT</c> / <c>STRING[9]</c> / <c>INT[20]</c>（用户 2026-11-09 定案）。
+        /// <para>数组 = 元素类型 + 元素个数，与 <c>STRING[n]</c> 同一套方括号写法。</para>
+        /// </summary>
         [JsonIgnore]
-        public string TypeDisplayName => Type == DataType.String
-            ? $"STRING[{Length}]"
-            : DataTypes.Get(Type).DisplayName;
+        public string TypeDisplayName => Type switch
+        {
+            DataType.String => $"STRING[{Length}]",
+            DataType.Array => $"{DataTypes.Get(ElementType).DisplayName}[{Length}]",
+            _ => DataTypes.Get(Type).DisplayName,
+        };
     }
 
     /// <summary>
@@ -217,9 +231,9 @@ namespace DSH_Modbus采集工具.Modeling
         /// </para>
         /// <para>⚠️ 是否**只读**由元件决定（X 只读），不在这里判断。</para>
         /// </summary>
-        public static bool CanMapTo(DataType type, ModbusArea area)
+        public static bool CanMapTo(DataType type, ModbusArea area, DataType elementType = DataType.Int)
         {
-            bool coilOnly = DataTypes.Get(type).CoilOnly;
+            bool coilOnly = DataTypes.Get(type).IsCoilOnlyFor(elementType);
             return coilOnly
                 ? area is ModbusArea.Coil or ModbusArea.DiscreteInput
                 : area is ModbusArea.HoldingRegister or ModbusArea.InputRegister;
@@ -370,6 +384,15 @@ namespace DSH_Modbus采集工具.Modeling
                 return false;
             }
 
+            // 数组：元素类型与元素个数单独校验（长度对数组 = 元素个数）
+            if (spec.IsArray
+                && !ArrayRules.TryValidate(v.ElementType, v.Length, out error))
+            {
+                kind = AddressErrorKind.Configuration;
+                v.ResolveError = error;
+                return false;
+            }
+
             // 拆不出「符号 + 编号」= 这个软元件根本不存在，与类型无关
             if (!CommDriver.TrySplitName(v.Address, out string element, out string index, out string splitError))
             {
@@ -397,7 +420,7 @@ namespace DSH_Modbus采集工具.Modeling
             ModbusArea? matched = null;
             foreach (ModbusArea area in candidates)
             {
-                if (GlobalVariableRules.CanMapTo(v.Type, area))
+                if (GlobalVariableRules.CanMapTo(v.Type, area, v.ElementType))
                 {
                     matched = area;
                     break;
@@ -407,9 +430,10 @@ namespace DSH_Modbus采集工具.Modeling
             // 元件存在、但存储区与类型对不上 → 这是「类型不符」，不是「元件无效」
             if (matched == null)
             {
-                error = spec.CoilOnly
-                    ? $"{spec.DisplayName} 只能映射线圈区元件"
-                    : $"{spec.DisplayName} 只能映射寄存器区元件";
+                bool needsCoil = spec.IsCoilOnlyFor(v.ElementType);
+                error = needsCoil
+                    ? $"{v.TypeDisplayName} 只能映射线圈区元件"
+                    : $"{v.TypeDisplayName} 只能映射寄存器区元件";
                 kind = AddressErrorKind.TypeMismatch;
                 v.ResolveError = error;
                 return false;
@@ -422,6 +446,20 @@ namespace DSH_Modbus采集工具.Modeling
                 kind = AddressErrorKind.InvalidElement;
                 v.ResolveError = error;
                 return false;
+            }
+
+            // 整项必须完整落在同一区段内：数组要占 N 个单元，末地址越界就是配置错误
+            int need = v.RawCount;
+            if (need > 1)
+            {
+                var owner = driver.FindArea(matched.Value, address);
+                if (owner != null && !owner.TryGetIndex(address + need - 1, out _))
+                {
+                    error = $"{v.Address} 声明 {v.TypeDisplayName} 需占 {need} 个单元，末地址超出 {owner.Element} 区段";
+                    kind = AddressErrorKind.InvalidElement;
+                    v.ResolveError = error;
+                    return false;
+                }
             }
 
             // 只读区（X 等输入元件 / 离散输入 / 输入寄存器）：读得到、写不了。
@@ -658,6 +696,42 @@ namespace DSH_Modbus采集工具.Modeling
                 && v.HasAddress
                 && string.Equals(v.Address.Trim(), wanted, StringComparison.OrdinalIgnoreCase));
         }
+
+        /// <summary>
+        /// 查找**占用区间重叠**的另一条变量（2026-11-09，数组引入后必需）。
+        /// <para>
+        /// 原先只比「地址字符串全等」—— 那在标量时代成立（一个地址一个值）。
+        /// 数组占的是**一段连续单元**：<c>D10</c> 声明 <c>ARRAY&lt;INT&gt;[3]</c> 就占了 D10/D11/D12，
+        /// 此时另一条变量映射 <c>D11</c> 会与它重叠，两边互相覆盖，而界面上看不出任何异常。
+        /// </para>
+        /// <para>
+        /// 判据：两条都已解析（<c>ResolvedAddress &gt;= 0</c>）且**同一存储区**，
+        /// 且区间 <c>[start, start + RawCount)</c> 有交集。
+        /// </para>
+        /// <para>空地址 / 未解析的变量不参与：它们不落 PLC，谈不上占用。</para>
+        /// </summary>
+        /// <param name="candidate">待检查的变量（可以是刚改完的、也可能是新建的）</param>
+        /// <returns>与它区间重叠的第一条变量；没有返回 <c>null</c></returns>
+        public GlobalVariable? FindByAddressOverlap(GlobalVariable candidate)
+        {
+            if (candidate == null || !candidate.HasAddress || candidate.ResolvedAddress < 0)
+            {
+                return null;
+            }
+
+            int start = candidate.ResolvedAddress;
+            int end = start + Math.Max(1, candidate.RawCount);
+
+            return _items.FirstOrDefault(v =>
+                !ReferenceEquals(v, candidate)
+                && v.HasAddress
+                && v.ResolvedAddress >= 0
+                && v.Area == candidate.Area
+                && Overlaps(v.ResolvedAddress, v.ResolvedAddress + Math.Max(1, v.RawCount), start, end));
+        }
+
+        private static bool Overlaps(int aStart, int aEnd, int bStart, int bEnd) =>
+            aStart < bEnd && bStart < aEnd;
 
         private int IndexOfName(string name) =>
             _items.FindIndex(v => string.Equals(v.Name, name, StringComparison.Ordinal));

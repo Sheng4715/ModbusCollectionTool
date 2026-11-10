@@ -532,6 +532,39 @@ namespace DSH_Modbus采集工具
             typeCombo.IsEnabled = item.IsTypeEditable;
         }
 
+        /// <summary>
+        /// 数组行：类型框**置灰**（2026-11-10 用户要求）。
+        /// <para>
+        /// 数组的元素类型与元素个数是一组配置，不能在行内下拉里换来换去 ——
+        /// 那个下拉只有 ARRAY 一个值，可点也换不出任何东西，留着可点反而让人以为能改。
+        /// </para>
+        /// <para>
+        /// 要改元素类型 / 个数：把类型切走再切回 ARRAY，会重新弹「数组设置」；
+        /// 或先删掉这一行重建。**故意不做「置灰但仍可点开对话框」** ——
+        /// WPF 的 IsEnabled=false 同时挡掉点击，要那样得换成按钮或改模板，代价大于收益。
+        /// </para>
+        /// </summary>
+        private static void ApplyArrayRowState(FrameworkElement row, MonitorItem item)
+        {
+            if (row.FindName("TypeCombo") is not ComboBox typeCombo)
+            {
+                return;
+            }
+
+            // 候选集只放 ARRAY 自己，闭合态才有正确文字
+            typeCombo.ItemsSource = new[] { DataTypes.Get(DataType.Array) };
+            typeCombo.SelectedIndex = 0;
+            typeCombo.IsEnabled = false;
+
+            if (row.FindName("FormatCombo") is ComboBox formatCombo)
+            {
+                // 元素的显示格式由元素类型决定（DEC），数组本身不给选格式
+                formatCombo.ItemsSource = new[] { item.Model.Format };
+                formatCombo.SelectedIndex = 0;
+                formatCombo.IsEnabled = false;
+            }
+        }
+
         /// <summary>深度遍历可视树，取出所有「Tag 上挂着 MonitorItem」的行根。</summary>
         private static IEnumerable<FrameworkElement> EnumerateRows(DependencyObject root)
         {
@@ -592,12 +625,19 @@ namespace DSH_Modbus采集工具
 
             DataTypeSpec spec = DataTypes.Get(item.Model.Type);
 
+            // ⚠️ 数组要看**元素类型**才能判断该落线圈区还是寄存器区：
+            // ARRAY<BOOL> 占 N 个线圈、ARRAY<INT> 占 N 个寄存器。
+            // 用 spec.CoilOnly（ARRAY 恒为 false）会把 BOOL 数组当成寄存器类型，
+            // 判成「与线圈元件 M100 不符」并**自动改成 INT** —— 用户的 BOOL 数组就丢了。
+            bool coilOnly = spec.IsCoilOnlyFor(item.Model.ElementType);
+
             // 元件不在驱动里（打了一半的输入）→ 保留当前类型所在的候选集，别让下拉框突然空掉
-            if (known && autoCorrect && spec.CoilOnly != coilElement)
+            if (known && autoCorrect && coilOnly != coilElement)
             {
                 item.Model.Type = coilElement ? DataType.Bool : DataType.Int;
                 spec = DataTypes.Get(item.Model.Type);
                 item.Model.Format = spec.DefaultFormat;
+                coilOnly = spec.CoilOnly;
             }
 
             if (row.FindName("TypeCombo") is ComboBox typeCombo)
@@ -606,9 +646,13 @@ namespace DSH_Modbus采集工具
                 typeCombo.IsEnabled = item.IsTypeEditable;
 
                 // 候选集跟随「元件」；但元件未知（输入未完成）或载入时声明与元件不符时跟随「当前类型」——
-                // 保证下拉框里始终能看到并选中已声明的类型，不会显示成空白
-                bool useCoil = known && autoCorrect ? coilElement : spec.CoilOnly;
-                typeCombo.ItemsSource = useCoil ? DataTypes.CoilTypes : DataTypes.RegisterTypes;
+                // 保证下拉框里始终能看到并选中已声明的类型，不会显示成空白。
+                //
+                // ⚠️ 寄存器区用 **MonitorRegisterTypes**（不含 ARRAY）：监控表一行对应一个元件地址，
+                // 数组占一段连续单元，在监控表里选它等于打破「一行 = 一个值」的前提。
+                // 数组要走全局变量（2026-11-10 用户定案）。
+                bool useCoil = known && autoCorrect ? coilElement : coilOnly;
+                typeCombo.ItemsSource = useCoil ? DataTypes.CoilTypes : DataTypes.MonitorRegisterTypes;
                 typeCombo.SelectedItem = spec;
             }
 
@@ -663,6 +707,27 @@ namespace DSH_Modbus采集工具
 
             DataType previousType = item.Model.Type;
 
+            // ⚠️ **软元件（裸地址）不允许用 ARRAY**（2026-11-10 用户定案）：
+            // 「不想让软元件以 ARRAY 类型显示」。数组要占一段连续单元，而监控表的一行
+            // 对应一个元件地址、一个「当前值」格就该有一个确定的值 —— 两者前提冲突。
+            // 数组一律走**全局变量**（在变量页声明 BOOL[80]，监控表里按变量名监控）。
+            //
+            // 下拉候选里已经不含 ARRAY（见 DataTypes.MonitorRegisterTypes），这里是**兜底**：
+            // 万一将来有别的入口（快捷键 / 加载旧配置 / 代码直调）走到，也要挡住并说清。
+            if (spec.IsArray)
+            {
+                cb.SelectedItem = DataTypes.Get(previousType);
+                ThemeMessageDialog.Info(
+                    this,
+                    "不能用数组类型",
+                    "软元件地址不能用 ARRAY 类型监控。\n\n"
+                    + "请到「数据管理 → 全局变量」里新建一条数组变量（如 BOOL[80]），"
+                    + "再在监控表里填变量名监控它。");
+                return;
+            }
+
+            // STRING：先问长度，取消则整件事作废。
+            // （数组不走这里 —— 上面已挡住，软元件不能用 ARRAY。）
             if (spec.HasVariableLength)
             {
                 // 与全局变量共用同一个入口，参数不在这里重复定义
@@ -686,6 +751,9 @@ namespace DSH_Modbus采集工具
             {
                 item.Model.Format = spec.DefaultFormat;
             }
+
+            // 数组项要按新的元素个数重建子行（非数组项会把子行清空）
+            item.RebuildElements();
 
             _monitorSet.AfterChange(item);
 
@@ -865,6 +933,112 @@ namespace DSH_Modbus采集工具
             }
         }
 
+        // ---------- 数组元素子行（2026-11-09） ----------
+
+        /// <summary>展开 / 收起数组项的元素子行。</summary>
+        private void ToggleMonitorArrayExpand_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.DataContext is MonitorItem item && item.IsArray)
+            {
+                item.IsExpanded = !item.IsExpanded;
+            }
+        }
+
+        /// <summary>
+        /// 元素值框获得焦点：标记编辑中，回填要跳过它。
+        /// <para>⚠️ 同时清掉「上一次已提交的文本」记录：用户重新聚焦＝新一轮编辑，
+        /// 输同样的值也该能再提交（与普通值框同一口径）。</para>
+        /// </summary>
+        private void MonitorElement_GotFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (sender is TextBox box && box.DataContext is MonitorElement element)
+            {
+                element.IsEditing = true;
+                _lastCommittedElementValue.Remove(box);
+            }
+        }
+
+        /// <summary>元素值框失焦：提交。</summary>
+        private void MonitorElement_LostFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            if (sender is TextBox box && box.DataContext is MonitorElement element)
+            {
+                _ = CommitMonitorElementAsync(box, element);
+            }
+        }
+
+        /// <summary>元素值框回车：等同失焦，立刻提交。</summary>
+        private void MonitorElement_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter || sender is not TextBox box
+                || box.DataContext is not MonitorElement element)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            _ = CommitMonitorElementAsync(box, element);
+        }
+
+        /// <summary>元素值框「上次已提交文本」记录（回车 + 失焦去重，同普通值框）。</summary>
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBox, string>
+            _lastCommittedElementValue = new();
+
+        /// <summary>
+        /// 提交**单个数组元素**的写入（用户定案：数组只能对元素写）。
+        /// <para>
+        /// 与 <see cref="CommitMonitorValueAsync"/> 同一套规矩：编码失败保持编辑态、
+        /// 成功不假装改写、失败原因留在元素上。差别只有「地址按元素偏移」与「编码用元素类型」。
+        /// </para>
+        /// </summary>
+        private async Task CommitMonitorElementAsync(TextBox box, MonitorElement element)
+        {
+            ModbusTcpClient? modbus = _session.Client;
+            string text = box.Text;
+
+            // 回车与失焦先后各触发一次，同一次编辑只写一次
+            if (_lastCommittedElementValue.TryGetValue(box, out string? last) && last == text)
+            {
+                return;
+            }
+
+            if (!_session.IsConnected || modbus == null)
+            {
+                element.Error = "未连接，无法写入";
+                return;
+            }
+
+            if (!MonitorItemSet.TryBuildElementWrite(
+                    element, text, _byteOrders, out WritePlan plan, out string error))
+            {
+                // 本地就能判定（越界 / 类型不符）——不发报文，且保持编辑态
+                element.Error = error;
+                element.IsEditing = true;
+                _lastCommittedElementValue.AddOrUpdate(box, text);
+                return;
+            }
+
+            _lastCommittedElementValue.AddOrUpdate(box, text);
+
+            try
+            {
+                await WriteToDeviceAsync(modbus, plan).ConfigureAwait(true);
+                element.Error = null;
+                element.IsEditing = false;
+            }
+            catch (OperationCanceledException)
+            {
+                element.Error = "写入已取消";
+                element.IsEditing = true;
+            }
+            catch (Exception ex)
+            {
+                element.Error = ClassifyWriteError(ex);
+                element.IsEditing = true;
+                _lastCommittedElementValue.AddOrUpdate(box, text);
+            }
+        }
+
         /// <summary>按存储区选择写功能码：线圈 FC05，寄存器按长度选 FC06（单）或 FC16（多）。</summary>
         private static Task WriteToDeviceAsync(ModbusTcpClient modbus, WritePlan plan)
         {
@@ -916,11 +1090,26 @@ namespace DSH_Modbus采集工具
 
             row.Tag = item;
 
+            // 数组项：容器每次重建都要把元素子行**补回来**。
+            // ⚠️ 漏了这一步的表现：重启后数组行显示正常、点展开却什么都没有 ——
+            // Elements 是运行期集合（不落盘），只有类型切换那条路径建过它。
+            item.RebuildElements();
+
             // 输入框文本：变量行是变量名，元件行是 HD100 这样的元件名。
             // 文本已一致时不写，避免触发无谓的落盘
             if (row.FindName("NameBox") is TextBox nameBox && nameBox.Text != item.Name)
             {
                 nameBox.Text = item.Name;
+            }
+
+            // 数组行：元素类型/个数只能在「数组设置」里配，行内下拉置灰。
+            // ⚠️ 必须排在**变量行之前**：数组变量（如 var1 = BOOL[80]）同时满足
+            // IsVariable 与 IsArray，若先走变量分支就 return 了，
+            // 格式框永远不会被置灰（用户 2026-11-10 截图里 DEC 仍可点就是这个）。
+            if (item.IsArray)
+            {
+                ApplyArrayRowState(row, item);
+                return;
             }
 
             // 变量行：类型来自变量表，下拉框置灰只展示，不再按元件反推候选

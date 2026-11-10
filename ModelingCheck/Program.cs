@@ -92,7 +92,10 @@ Check("BOOL 不允许 DEC", DataTypes.Get(DataType.Bool).AllowsFormat(DisplayFor
 Check("STRING 只允许 ASCII", DataTypes.Get(DataType.String).AllowedFormats.Count, 1);
 Check("STRING 不允许 HEX", DataTypes.Get(DataType.String).AllowsFormat(DisplayFormat.Hex), false);
 Check("线圈类型只有 BOOL", DataTypes.CoilTypes.Count, 1);
-Check("寄存器类型有 6 种", DataTypes.RegisterTypes.Count, 6);
+
+// ⚠️ 2026-11-09 预期变更：ARRAY 加入后寄存器区可选类型 6 → 7
+// （INT / UINT / DINT / UDINT / REAL / STRING / ARRAY）
+Check("寄存器类型有 7 种（含 ARRAY）", DataTypes.RegisterTypes.Count, 7);
 CheckThrows("STRING 按 HEX 格式化应报错", () =>
     ValueCodec.FormatRegisters(DataType.String, d810, DisplayFormat.Hex, orders, 4));
 
@@ -588,6 +591,141 @@ Check("DINT 回填 -100 的 Numeric", negDint.Numeric, -100d);
     List<GlobalReadBlock> coilPlan = GlobalReadPlan.Build(coils);
     Check("线圈块仍按 2000（300 个 BOOL → 1 块）", coilPlan.Count, 1);
     Check("线圈块长 300", coilPlan[0].Count, 300);
+}
+
+Console.WriteLine();
+Console.WriteLine("============================================================");
+Console.WriteLine("ARRAY 元素寻址与占用（2026-11-09）");
+Console.WriteLine("============================================================");
+{
+    // ① 占用量 = 元素个数 × 单元素单元数
+    Check("ARRAY<INT>[3] 占 3 寄存器", DataTypes.ArrayUnitsOf(DataType.Int, 0, 3), 3);
+    Check("ARRAY<DINT>[3] 占 6 寄存器", DataTypes.ArrayUnitsOf(DataType.DInt, 0, 3), 6);
+    Check("ARRAY<REAL>[2] 占 4 寄存器", DataTypes.ArrayUnitsOf(DataType.Real, 0, 2), 4);
+    Check("ARRAY<BOOL>[5] 占 5 线圈", DataTypes.ArrayUnitsOf(DataType.Bool, 0, 5), 5);
+    Check("0 个元素占 0", DataTypes.ArrayUnitsOf(DataType.Int, 0, 0), 0);
+
+    // ⚠️ 回归：不能拿 STRING 的 ⌈n/2⌉ 去算数组
+    Check("不按 ⌈n/2⌉ 算数组（INT 3 个 ≠ 1）",
+        DataTypes.ArrayUnitsOf(DataType.Int, 0, 3) != DataTypes.Get(DataType.Int).RegistersForLength(3),
+        true);
+
+    // ② 元素偏移 = 下标 × 单元素单元数
+    Check("INT 元素偏移第 0", ArrayValueCodec.OffsetOf(DataType.Int, 0), 0);
+    Check("INT 元素偏移第 2", ArrayValueCodec.OffsetOf(DataType.Int, 2), 2);
+    Check("DINT 元素偏移第 2（×2）", ArrayValueCodec.OffsetOf(DataType.DInt, 2), 4);
+    Check("REAL 元素偏移第 3（×2）", ArrayValueCodec.OffsetOf(DataType.Real, 3), 6);
+    Check("BOOL 元素偏移第 3", ArrayValueCodec.OffsetOf(DataType.Bool, 3), 3);
+    Check("负下标 → -1", ArrayValueCodec.OffsetOf(DataType.Int, -1), -1);
+
+    // ③ 切片：越界不读邻居
+    ushort[] raw = { 10, 11, 12, 13 };
+
+    Check("切片第 1 个元素", ArrayValueCodec.TrySliceElement(DataType.Int, raw, 1, out var sliceA), true);
+    Check("切片值 = 11", sliceA[0], 11);
+    Check("切片越界返回 false", ArrayValueCodec.TrySliceElement(DataType.Int, raw, 4, out _), false);
+    Check("DINT 切片取 2 个寄存器",
+        ArrayValueCodec.TrySliceElement(DataType.DInt, raw, 1, out var sliceB) && sliceB.Length == 2, true);
+    Check("DINT 第 2 个元素越界（只剩 2 个）",
+        ArrayValueCodec.TrySliceElement(DataType.DInt, raw, 2, out _), false);
+
+    // ④ 线圈元素
+    bool[] coils = { true, false, true };
+    Check("线圈第 0 个 = true", ArrayValueCodec.TryGetCoilElement(coils, 0, out bool c0) && c0, true);
+    Check("线圈第 1 个 = false", ArrayValueCodec.TryGetCoilElement(coils, 1, out bool c1) && !c1, true);
+    Check("线圈越界返回 false", ArrayValueCodec.TryGetCoilElement(coils, 3, out _), false);
+
+    // ⑤ 元素名（0 基）
+    Check("元素名 D100[0]", ArrayValueCodec.ElementName("D100", 0), "D100[0]");
+    Check("元素名 D100[12]", ArrayValueCodec.ElementName("D100", 12), "D100[12]");
+
+    // ⑤b 类型显示名：元素类型 + 元素个数（用户 2026-11-09 定案，与 STRING[n] 同一套写法）
+    var arrInt20 = new DataPoint { Type = DataType.Array, ElementType = DataType.Int, Length = 20 };
+    Check("数组显示名 INT[20]", arrInt20.TypeDisplayName, "INT[20]");
+
+    var arrDint3 = new DataPoint { Type = DataType.Array, ElementType = DataType.DInt, Length = 3 };
+    Check("数组显示名 DINT[3]", arrDint3.TypeDisplayName, "DINT[3]");
+
+    var arrReal128 = new DataPoint { Type = DataType.Array, ElementType = DataType.Real, Length = 128 };
+    Check("数组显示名 REAL[128]", arrReal128.TypeDisplayName, "REAL[128]");
+
+    var arrBool5 = new DataPoint { Type = DataType.Array, ElementType = DataType.Bool, Length = 5 };
+    Check("数组显示名 BOOL[5]", arrBool5.TypeDisplayName, "BOOL[5]");
+
+    // 与 STRING[n] 同一套方括号（不是 ARRAY<INT> 那种尖括号）
+    var strPoint = new DataPoint { Type = DataType.String, Length = 9 };
+    Check("STRING 仍是 STRING[9]", strPoint.TypeDisplayName, "STRING[9]");
+
+    // ⑤c 存储区归属必须按**元素类型**判（2026-11-10 修的 bug）
+    //     回归：SyncMonitorTypeWithElement 原先用 spec.CoilOnly（ARRAY 恒 false），
+    //     把 BOOL 数组判成寄存器类型，遇到线圈元件 M100 就自动改成 INT —— 用户的 BOOL 数组丢了。
+    Check("ARRAY<BOOL> 只能落线圈区",
+        DataTypes.Get(DataType.Array).IsCoilOnlyFor(DataType.Bool), true);
+    Check("ARRAY<INT> 落寄存器区",
+        DataTypes.Get(DataType.Array).IsCoilOnlyFor(DataType.Int), false);
+    Check("ARRAY<REAL> 落寄存器区",
+        DataTypes.Get(DataType.Array).IsCoilOnlyFor(DataType.Real), false);
+
+    // 标量仍照旧
+    Check("BOOL 标量只落线圈区", DataTypes.Get(DataType.Bool).IsCoilOnlyFor(DataType.Int), true);
+
+    // ⑤d 变量行必须把**元素类型**一起从变量表同步下来（2026-11-10 修的 bug）
+    //     回归：MonitorItem.Resolve 只同步了 Type / Format / Length，
+    //     漏了 ElementType → DataPoint.ElementType 停默认值 Int，
+    //     于是 BOOL[80] 的变量行显示成 INT[80]。
+    //     这里用一个「同步后的 DataPoint」验显示名，模拟变量行的最终状态。
+    var syncedFromVar = new DataPoint
+    {
+        Type = DataType.Array,
+        ElementType = DataType.Bool,   // ← 变量表里的 ElementType
+        Length = 80,                   // ← 变量表里的 Length
+    };
+    Check("变量行 BOOL 数组显示 BOOL[80]", syncedFromVar.TypeDisplayName, "BOOL[80]");
+    Check("变量行 BOOL 数组占 80 个线圈", syncedFromVar.RawCount, 80);
+
+    // 反例：只同步 Type/Length、忘了 ElementType（默认 Int）时，就会显示成 INT[80]
+    var forgottenSync = new DataPoint { Type = DataType.Array, Length = 80 };
+    Check("漏同步 ElementType 会显示 INT[80]（此断言钉住这个坑）",
+        forgottenSync.TypeDisplayName, "INT[80]");
+
+    // ⑤e 软元件不能用 ARRAY（2026-11-10 用户定案）
+    //     监控表的一行对应一个元件地址、一个「当前值」格，而数组占一段连续单元 —— 前提冲突。
+    //     故监控表的候选类型（MonitorRegisterTypes）**不含 ARRAY**，
+    //     全局变量的候选（RegisterTypes）**仍含**，否则 ARRAY 就彻底没入口了。
+    Check("监控表候选里没有 ARRAY",
+        DataTypes.MonitorRegisterTypes.Any(s => s.IsArray), false);
+    Check("全局变量候选里仍有 ARRAY",
+        DataTypes.RegisterTypes.Any(s => s.IsArray), true);
+
+    Check("监控表候选比全局变量少一个",
+        DataTypes.MonitorRegisterTypes.Count, DataTypes.RegisterTypes.Count - 1);
+
+    // 其余类型一个不少（不能顺手把别的也过滤掉）
+    Check("监控表仍含 INT",
+        DataTypes.MonitorRegisterTypes.Any(s => s.Type == DataType.Int), true);
+    Check("监控表仍含 STRING",
+        DataTypes.MonitorRegisterTypes.Any(s => s.Type == DataType.String), true);
+    Check("监控表仍含 REAL",
+        DataTypes.MonitorRegisterTypes.Any(s => s.Type == DataType.Real), true);
+    Check("线圈候选本来就没有 ARRAY",
+        DataTypes.CoilTypes.Any(s => s.IsArray), false);
+    Check("INT 标量落寄存器区", DataTypes.Get(DataType.Int).IsCoilOnlyFor(DataType.Bool), false);
+
+    // ⑥ 元素编码：定长，长度必须与元素占用相符
+    ByteOrderSettings elemOrders = ByteOrderSettings.Default;
+    Check("INT 元素编码成功",
+        ArrayValueCodec.TryEncodeElement(DataType.Int, "258", elemOrders, out ushort[] e1, out string err1), true);
+    Check("INT 元素编码 = 1 个寄存器", e1.Length, 1);
+    Check("INT 元素编码值 258", e1[0], 258);
+
+    Check("DINT 元素编码 = 2 个寄存器",
+        ArrayValueCodec.TryEncodeElement(DataType.DInt, "1", elemOrders, out ushort[] dintRegs, out _) && dintRegs.Length == 2, true);
+
+    // BOOL 走线圈，不能编码成寄存器
+    Check("BOOL 元素不按寄存器编码",
+        ArrayValueCodec.TryEncodeElement(DataType.Bool, "1", elemOrders, out _, out string boolErr), false);
+    Check("BOOL 拒绝原因提到线圈",
+        boolErr.Contains("线圈", StringComparison.Ordinal), true);
 }
 
 Console.WriteLine();

@@ -373,6 +373,91 @@
 - 子串安全：`Scanner1` 改名时表达式里的 `Scanner1_Done` **完好**（只精确命中才换）
 - 改名后采集页「配置错误」出现次数 **0**（没有被误判）
 
+### 5.2.3 ARRAY 数组类型（2026-11-09）
+
+**需求**（Brief P6.4）：「新增数组 ARRAY 类型，选择为 ARRAY 时，弹出对话框显示
+数据类型（除 STRING）+ 元素数量（最大 128）」；「数组同样遵守不能重复映射同样地址的规则」。
+
+**用户后续定案的三条**：
+1. **类型显示名写 `INT[20]`**（元素类型 + 元素个数，方括号；不是 `ARRAY<INT>` 那种尖括号写法）——
+   与 `STRING[9]` 同一套写法，一眼看出里面是几个
+2. **不做整组 `[1, 2, 3]` 展示**：数组项占一行，展开出 N 个元素子行，每行独立
+3. **只能对元素写**：整组写入被拒
+
+| 文件 | 职责 |
+|---|---|
+| `Modeling/DataTypeEnums.cs` | `DataType.Array = 7`（**追加末尾**）+ `DisplayFormat`。**零依赖**，单独成文件的原因见下 |
+| `Modeling/ArrayRules.cs` | 声明规则（元素类型合法 + 个数 1~128）。**零依赖**，地址校验也要用 |
+| `Modeling/ArrayValueCodec.cs` | 元素寻址 / 切片 / 格式化 / 编码 |
+| `Ui/ArrayDeclareDialog.cs` | 「数组设置」对话框（元素类型下拉 + 元素数量） |
+| `MonitorItem.cs` | `MonitorElement` 子行模型 + `ApplyArrayRegisterBlock` / `ApplyArrayCoilBlock` + `TryBuildElementWrite` |
+| `MainWindow.xaml` | `MonitorItemTemplate` 外层套两行 Grid：第 0 行普通行、第 1 行元素子行 |
+
+**必须守住的**：
+
+- ⚠️ **数组占用量 = 元素个数 × 单元素单元数**，**不能**套 `RegistersForLength`
+  —— 那个是按 STRING 的「每寄存器 2 字符」做的 ⌈n/2⌉，3 个 INT 会被算成占 1 个（实为 3）。
+  入口是 `DataTypes.ArrayUnitsOf` / `DataTypeSpec.UnitsFor`。
+- ⚠️ **存储区按元素类型判**：`ARRAY<BOOL>` 占 N 个线圈、`ARRAY<INT>` 占 N 个寄存器。
+  `DataTypeSpec.CoilOnly` 对数组**不足以判断**，一律走 `IsCoilOnlyFor(elementType)`。
+  漏了这条，`ARRAY<BOOL>` 会被当寄存器类型去校验，报「元件是线圈元件，不能声明为 ARRAY」。
+- ⚠️ **元素偏移 = 下标 × 单元素单元数**（`ArrayValueCodec.OffsetOf`）。
+  这依赖「元素定长」，也正是**元素不能是 STRING** 的原因。
+- ⚠️ **子行不进 `data-points.json`**：它们是 `Type=Array` + `ElementType` + `Length` 的推导结果，
+  落盘会产生两份真值。
+- ⚠️ **子行可见性绑 `IsExpanded`，不绑派生属性**：曾绑 `ElementsVisibility`（= `IsArray && IsExpanded`），
+  结果点箭头后行高纹丝不动、元素一个都不出来 —— 而诊断日志明明显示 `展开=True 元素数=3`。
+  绑定派生属性要求每个中间状态都发 `PropertyChanged`，多一层中转就多一处可漏；直接绑源头最稳。
+- ⚠️ **容器重建时要 `RebuildElements()`**：`Elements` 是运行期集合，只有类型切换那条路径建过它。
+  漏了的表现是「重启后数组行看着正常、点展开什么都没有」。
+- ⚠️ **`RebuildElements` 不能只比个数**：首次载入时 `Elements` 是空集合而 `count` 可能是 3，
+  只比个数会直接 return。判据要连元素下标一起比。
+- ⚠️ **`DataTypeEnums.cs` 与 `ArrayRules.cs` 刻意拆开**：枚举零依赖，而 `DataTypes.cs` 的规格表要用
+  驱动层常量。拆开后 `ArrayRules` 才能被最小断言工程单独链接（否则 `ExpressionCheck` 编不过）。
+- ⚠️⚠️ **凡是「从变量表同步定义」的地方，`ElementType` 必须一起同步**（2026-11-10 用户报的 bug）。
+  `MonitorItem.Resolve` 有两条路径（有映射地址 / 内存变量），都只写了 `Model.Type` / `Format` / `Length`，
+  漏了 `Model.ElementType` → `DataPoint.ElementType` 停默认值 `Int` → **`BOOL[80]` 的变量行显示成 `INT[80]`**。
+  症状是「明明是 BOOL 数组，监控行显示 INT」，而 json 里存的确实是对的 —— 因为错的是**同步**那一步。
+- ⚠️ **存储区归属必须按元素类型判**，不能用 `spec.CoilOnly`（ARRAY 恒 false）：
+  `SyncMonitorTypeWithElement` 曾用它，把 `BOOL[4]` 映射到线圈元件 `M100` 时判成「类型不符」
+  并**自动改成 INT** —— 用户的 BOOL 数组当场丢失。一律走 `DataTypeSpec.IsCoilOnlyFor(elementType)`。
+- ⚠️ **软元件（裸地址）不能用 ARRAY**（2026-11-10 用户定案）：「不想让软元件以 ARRAY 类型显示」。
+  监控表的一行对应**一个元件地址**、「当前值」格就该有一个确定的值；而数组占一段连续单元 ——
+  两个前提冲突。故监控表的候选类型是 `DataTypes.MonitorRegisterTypes`（= `RegisterTypes` **去掉 ARRAY**），
+  与全局变量页的 `RegisterTypes`（**仍含 ARRAY**）**刻意不同**。
+  ⚠️ 不要为了「统一」把数组从全局变量也删掉 —— 那样 ARRAY 就彻底没入口了。
+  `ApplyTypeChangeWithPrompt` 里另有一道兜底：万一有其他路径走到 ARRAY，弹框说明并退回原类型。
+- ⚠️ **数组行的类型框与格式框都置灰**（用户 2026-11-10 要求）：元素类型/个数只能在「数组设置」里配。
+  要改就先把类型切走再切回 ARRAY（会重弹对话框）。**故意不做「置灰但仍可点开」** ——
+  `IsEnabled=false` 在 WPF 里同时挡掉点击，要那样得换按钮或改模板，代价大于收益。
+- ⚠️⚠️ **模板里给文字写死画刷颜色 = 禁用态没有任何视觉变化**（2026-11-10 用户报的 bug）：
+  `MonitorTypeCombo` 的 `TextBlock.Foreground` 原先写死 `Brush.Text.Primary`，
+  于是 `IsEnabled=false` 只是「点不动」，看起来与可编辑时一模一样。
+  **正确做法照抄 `FormComboBox`**：模板里的文字/chevron 用 `{TemplateBinding Foreground}`，
+  Style 里给默认值 + 一条 `<Trigger Property="IsEnabled" Value="False">
+  <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}"/></Trigger>`。
+  ⚠️ 只设 `ComboBox.Foreground` 而模板里是硬编码画刷 / `ContentPresenter` 不理它时，那行 Setter 是**无效的**。
+- ⚠️ **拆枚举的连带影响**：所有链接 `DataTypes.cs` 的断言工程都要**同时**加 `DataTypeEnums.cs`
+  （`.tmp` 下 6 个 + `ModelingCheck` + `ModelingCheck/live` + `OrderProbe`）；
+  链接 `DataPoint.cs` / `GlobalVariable.cs` 的还要加 `ArrayRules.cs`；碰编解码的才加 `ArrayValueCodec.cs`。
+  **`DriverSwitchCheck` 只做地址校验，只需要 `ArrayRules`** —— 给它链 `ArrayValueCodec` 会连带拉进
+  `ByteOrderSettings` 而编译失败。
+
+**地址重复的处理**（数组引入后升级）：`GlobalVariableSet.FindByAddressOverlap` 比**区间**而非全等。
+⚠️ 冲突提示要区分两种情形 —— 同起点报「"D11"已被使用」；区间重叠要说清是被**哪条变量**占的
+（只说「D11 已被使用」，用户会去变量表里找一条叫 D11 的，而实际占着它的是 D10 起的数组）。
+
+**验证**：
+- `.tmp/ExpressionCheck` **§24（12 项）**：`ArrayRules` 的元素类型候选 / 数量边界 / 拒绝原因文案 / 枚举值 = 7
+- `ModelingCheck` **§ARRAY（33 项）**：占用量四种元素类型 / 不按 ⌈n/2⌉ 算 / 偏移 / 切片越界不读邻居 /
+  线圈元素 / 元素名 / 元素编码定长 / BOOL 拒绝按寄存器编码 / 显示名 `INT[20]`·`BOOL[80]` /
+  存储区按元素类型判 / 变量行元素类型同步（含「漏同步会显示成 INT[80]」的反例）
+- 合计 **403 项断言通过**（176 + 227）
+- UIA 实测：类型下拉里有 ARRAY → 弹出「数组设置」→ 确认后 `data-points.json` 落成
+  `{"Type":"Array","Length":3,"ElementType":"Int"}` → 点箭头行高 48→230、出现 `D200[0..2]` 三个可写子行
+- **变量行实测（2026-11-10）**：`var1` 声明为 `ARRAY<BOOL>[80]` → 监控行显示 **`BOOL[80]`**、
+  类型框与格式框均 `IsEnabled=False`
+
 ### 5.3 系统变量（P3.5，数据管理页第三分段）
 
 摆出一份**写死、只读**的预定义变量清单（17 项）。
@@ -2198,6 +2283,9 @@ DSH_Modbus采集工具/
 ├── Modeling/                   # 数据模型与纯逻辑（24 个，均无 WPF）
 │   ├── AtomicFile.cs           # 配置文件原子写（.tmp→Replace+`.bak`）+ 容错读（逐元素抢救）
 │   ├── DataTypes.cs            # 类型枚举 + 规格表
+│   ├── DataTypeEnums.cs        # DataType / DisplayFormat 两个枚举（零依赖，可被最小断言工程单独链接）
+│   ├── ArrayRules.cs           # ARRAY 声明规则：元素类型候选 / 个数 1~128（零依赖）
+│   ├── ArrayValueCodec.cs      # ARRAY 逐元素寻址 / 切片 / 格式化 / 编码（§5.2.3）
 │   ├── ValueCodec.cs           # 寄存器 ↔ 类型值编解码 + 显示格式化
 │   ├── ByteOrderSettings.cs    # 三套字节顺序（整数 / 浮点 / 字符串）
 │   ├── DataPoint.cs            # 监控项模型 + data-points.json + 驱动校验解析
@@ -2241,6 +2329,7 @@ DSH_Modbus采集工具/
 │   ├── LiveImagePicker.cs      # 背景图选择弹框（两个入口共用）
 │   ├── ScannerErrorMark.cs     # 扫码器输入框标红用的 bool 附加属性
 │   ├── NumberInputDialog.cs    # STRING 长度等单值输入弹窗
+│   ├── ArrayDeclareDialog.cs   # ARRAY 声明：元素类型 + 元素数量（§5.2.3）
 │   ├── LoginDialog.cs          # 账户登录框（用户名下拉 + 密码掩码 + 注销/登录）
 │   └── ThemeMessageDialog.cs   # 全应用唯一的提示 / 确认弹框（Info / Confirm，§9.3）
 ├── Startup/                    # 开机自启动 + 单实例（无 WPF）

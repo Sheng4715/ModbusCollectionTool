@@ -33,6 +33,19 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>仅 <c>STRING</c> 使用：用户声明的字符数</summary>
         public int Length { get; set; }
 
+        /// <summary>
+        /// 仅 <c>ARRAY</c> 使用：**元素类型**（BOOL / INT / UINT / DINT / UDINT / REAL，不含 STRING）。
+        /// <para>
+        /// 与 <see cref="Type"/> 分开存：<see cref="Type"/> 是「ARRAY」这件事实，
+        /// 元素怎么解释由本字段决定。合用一个字段就得靠字符串编码（如 <c>"ARRAY&lt;INT&gt;"</c>），
+        /// json 一被手改就解析不出来了。
+        /// </para>
+        /// <para>
+        /// 数组的 <see cref="Length"/> 解释为**元素个数**（1~128），不是字符数。
+        /// </para>
+        /// </summary>
+        public DataType ElementType { get; set; } = DataType.Int;
+
         /// <summary>备注（可选，用户自定义）</summary>
         public string Comment { get; set; } = string.Empty;
 
@@ -66,17 +79,28 @@ namespace DSH_Modbus采集工具.Modeling
         [JsonIgnore]
         public string DisplayName => Element + Index;
 
-        /// <summary>类型显示名，如 <c>DINT</c>；字符串带长度，如 <c>STRING[9]</c></summary>
+        /// <summary>
+        /// 类型显示名，如 <c>DINT</c>；字符串带长度，如 <c>STRING[9]</c>；
+        /// 数组写成 <c>INT[20]</c>（用户 2026-11-09 定案：元素类型 + 元素个数，方括号）。
+        /// <para>
+        /// 与 <c>STRING[n]</c> 同一套方括号写法，一眼能看出「里面是几个」。
+        /// </para>
+        /// </summary>
         [JsonIgnore]
-        public string TypeDisplayName => Type == DataType.String
-            ? $"STRING[{Length}]"
-            : DataTypes.Get(Type).DisplayName;
+        public string TypeDisplayName => Type switch
+        {
+            DataType.String => $"STRING[{Length}]",
+            DataType.Array => $"{DataTypes.Get(ElementType).DisplayName}[{Length}]",
+            _ => DataTypes.Get(Type).DisplayName,
+        };
 
         /// <summary>本项需要读取的寄存器（或线圈）个数。</summary>
         [JsonIgnore]
         public int RawCount => Type == DataType.Bool
             ? 1
-            : DataTypes.Get(Type).RegistersForLength(Length);
+            : Type == DataType.Array
+                ? DataTypes.ArrayUnitsOf(ElementType, 0, Length)
+                : DataTypes.Get(Type).RegistersForLength(Length);
     }
 
     /// <summary>监控项集合的持久化（<c>data-points.json</c>，与 <c>io-comments.json</c> 同模式）。</summary>
@@ -133,8 +157,17 @@ namespace DSH_Modbus采集工具.Modeling
                 return false;
             }
 
-            // BOOL 只能在线圈区，其余只能在寄存器区
-            ModbusArea[] candidates = spec.CoilOnly
+            // 数组：元素类型与元素个数都要单独校验（长度对数组 = 元素个数）
+            if (spec.IsArray
+                && !ArrayRules.TryValidate(p.ElementType, p.Length, out error))
+            {
+                return false;
+            }
+
+            // BOOL 只能在线圈区，其余只能在寄存器区。
+            // ⚠️ 数组要看**元素类型**：ARRAY<BOOL> 占 N 个线圈，ARRAY<INT> 占 N 个寄存器。
+            bool coilOnly = spec.IsCoilOnlyFor(p.ElementType);
+            ModbusArea[] candidates = coilOnly
                 ? new[] { ModbusArea.Coil }
                 : new[] { ModbusArea.HoldingRegister, ModbusArea.InputRegister };
 
@@ -162,11 +195,15 @@ namespace DSH_Modbus采集工具.Modeling
                     continue;
                 }
 
-                int need = spec.CoilOnly ? 1 : spec.RegistersForLength(p.Length);
+                // 线圈：BOOL 占 1 个，ARRAY<BOOL> 占 N 个（N = 元素个数）；
+                // 寄存器：按类型 / 长度 / 元素个数算。
+                int need = coilOnly
+                    ? (spec.IsArray ? p.Length : 1)
+                    : spec.UnitsFor(p.Length, p.ElementType);
                 int lastAddr = addr + need - 1;
                 if (owner.TryGetIndex(lastAddr, out _) == false)
                 {
-                    error = $"{p.DisplayName} 声明 {spec.DisplayName} 需占 {need} 个单元，末地址超出 {owner.Element} 区段";
+                    error = $"{p.DisplayName} 声明 {p.TypeDisplayName} 需占 {need} 个单元，末地址超出 {owner.Element} 区段";
                     continue;
                 }
 

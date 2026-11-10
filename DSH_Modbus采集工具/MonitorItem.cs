@@ -62,6 +62,9 @@ namespace DSH_Modbus采集工具
 
         private bool _isSelected;
 
+        /// <summary>数组项是否展开（纯界面态）。</summary>
+        private bool _isExpanded;
+
         public MonitorItem(DataPoint model)
         {
             Model = model ?? throw new ArgumentNullException(nameof(model));
@@ -91,6 +94,161 @@ namespace DSH_Modbus采集工具
 
         /// <summary>底层数据模型（持久化的就是它）。</summary>
         public DataPoint Model { get; }
+
+        /// <summary>
+        /// 数组项的**元素子行**（2026-11-09 用户要求：展开成 N 行、每行可单独写）。
+        /// <para>
+        /// 非数组项恒为空集合；数组项在 <see cref="RebuildElements"/> 里按元素个数重建。
+        /// </para>
+        /// <para>
+        /// ⚠️ 子行**不进 <c>data-points.json</c>**：它们不是独立配置，而是父项
+        /// <c>Type=Array</c> + <c>ElementType</c> + <c>Length</c> 的推导结果。
+        /// 落盘再读回会与父项产生两份真值。
+        /// </para>
+        /// </summary>
+        public ObservableCollection<MonitorElement> Elements { get; } = new();
+
+
+        /// <summary>本项是不是数组（决定界面要不要给展开箭头）。</summary>
+        public bool IsArray => Model.Type == DataType.Array;
+
+        /// <summary>数组是否已展开（纯界面态，不落盘）。</summary>
+        public bool IsExpanded
+        {
+            get => _isExpanded;
+            set
+            {
+                if (_isExpanded == value)
+                {
+                    return;
+                }
+
+                _isExpanded = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(ExpandGlyph));
+            }
+        }
+
+        /// <summary>展开箭头字形（同采集任务组用的那套）。</summary>
+        public string ExpandGlyph => _isExpanded ? "\uE70E" : "\uE70D";
+
+        /// <summary>子行表格的可见性。</summary>
+        public System.Windows.Visibility ElementsVisibility =>
+            IsArray && _isExpanded
+                ? System.Windows.Visibility.Visible
+                : System.Windows.Visibility.Collapsed;
+
+        /// <summary>
+        /// 按当前元素类型与元素个数重建子行（类型 / 个数变了由调用方触发）。
+        /// <para>值的填充交给 <see cref="ApplyArrayBlock"/>，这里只保证行长一致。</para>
+        /// </summary>
+        public void RebuildElements()
+        {
+            int count = IsArray ? Math.Max(0, Model.Length) : 0;
+
+
+            // ⚠️ 判据是「个数 + 元素名都要对」，不能只比个数：
+            // 首次载入时 Elements 是空集合，而 count 可能是 3 —— 只比个数会直接 return，
+            // 于是数组行看着正常、展开后一个元素都没有。
+            bool shapeMatches = Elements.Count == count;
+            if (shapeMatches)
+            {
+                for (int i = 0; i < count && shapeMatches; i++)
+                {
+                    if (Elements[i].Index != i)
+                    {
+                        shapeMatches = false;
+                    }
+                }
+            }
+
+            if (!shapeMatches)
+            {
+                Elements.Clear();
+                for (int i = 0; i < count; i++)
+                {
+                    Elements.Add(new MonitorElement(this, i));
+                }
+            }
+
+            // 展开块里显示「共 N 个元素」，形状变了要重新算
+            RaiseElementShapeChanged();
+        }
+
+        private void RaiseElementShapeChanged()
+        {
+            OnPropertyChanged(nameof(Elements));
+            OnPropertyChanged(nameof(IsArray));
+            OnPropertyChanged(nameof(ElementsVisibility));
+        }
+
+        /// <summary>
+        /// 类型 / 元素个数被外部改掉后（从变量表同步、或用户改全局变量），
+        /// 把「数组形态」相关的显示一次性刷新：重建元素子行 + 发通知。
+        /// <para>
+        /// ⚠️ 与 <see cref="RebuildElements"/> 的区别：那个只保证子行数量对，
+        /// **不发** <c>IsArray</c> 通知。而 <c>Model.Type</c> 被覆盖时，
+        /// 绑定 <c>IsArray</c> 的展开箭头不会自己重算 —— 漏了这一步的表现就是
+        /// 「新加的数组行没有展开箭头，要重启软件才出现」（用户 2026-11-10 报的）。
+        /// </para>
+        /// <para>同时刷新「类型框能否编辑」：数组行要置灰，从标量变成数组时它得跟着变。</para>
+        /// </summary>
+        public void RaiseArrayShapeChanged()
+        {
+            RebuildElements();
+            OnPropertyChanged(nameof(IsArray));
+            OnPropertyChanged(nameof(ElementsVisibility));
+            OnPropertyChanged(nameof(IsTypeEditable));
+        }
+
+        /// <summary>
+        /// 把一次块读到的**寄存器**按元素切开、逐元素回填子行（<c>ARRAY</c> 用）。
+        /// <para>
+        /// ⚠️ 不做整组 <c>[1, 2, 3]</c> 格式化 —— 用户 2026-11-09 明确不要；
+        /// 每个元素就是一行普通单值，故用元素类型自己的默认格式（DEC）。
+        /// </para>
+        /// </summary>
+        public void ApplyArrayRegisterBlock(ReadOnlySpan<ushort> raw, ByteOrderSettings orders)
+        {
+            DataType elementType = Model.ElementType;
+
+            for (int i = 0; i < Elements.Count; i++)
+            {
+                MonitorElement element = Elements[i];
+
+                if (!ArrayValueCodec.TrySliceElement(elementType, raw, i, out ReadOnlySpan<ushort> slice))
+                {
+                    element.Error = "响应长度不足";
+                    continue;
+                }
+
+                try
+                {
+                    element.ApplyValue(ArrayValueCodec.FormatElement(elementType, slice, orders));
+                }
+                catch (Exception ex)
+                {
+                    element.Error = ex.Message;
+                }
+            }
+        }
+
+        /// <summary>同上，但数据来自线圈区（<c>ARRAY&lt;BOOL&gt;</c>）。</summary>
+        public void ApplyArrayCoilBlock(ReadOnlySpan<bool> raw)
+        {
+            for (int i = 0; i < Elements.Count; i++)
+            {
+                MonitorElement element = Elements[i];
+
+                if (!ArrayValueCodec.TryGetCoilElement(raw, i, out bool on))
+                {
+                    element.Error = "响应长度不足";
+                    continue;
+                }
+
+                element.ApplyValue(ValueCodec.FormatCoil(on));
+            }
+        }
 
         /// <summary>序号，界面左侧显示。</summary>
         /// <remarks>
@@ -554,6 +712,12 @@ namespace DSH_Modbus采集工具
                 Model.Type = variable.Type;
                 Model.Format = variable.Format;
                 Model.Length = variable.Length;
+
+                // ⚠️ 数组变量必须一起同步**元素类型**：漏了它，DataPoint.ElementType
+                // 会一直停在默认值 Int，于是 BOOL[80] 的变量行显示成 INT[80]
+                // （2026-11-10 用户报的 bug）。元素个数在 Length 里，上面已同步。
+                Model.ElementType = variable.ElementType;
+
                 Model.Element = string.Empty;
                 Model.Index = string.Empty;
                 Model.Address = -1;
@@ -562,6 +726,11 @@ namespace DSH_Modbus采集工具
                 OnPropertyChanged(nameof(TypeDisplayName));
                 OnPropertyChanged(nameof(FormatDisplayName));
                 OnPropertyChanged(nameof(RawCount));
+
+                // ⚠️ IsArray 必须显式通知：它算自 Model.Type，而 Type 刚刚从变量表覆盖掉了。
+                // 漏了它的表现就是用户报的「新加的数组行没有展开箭头」——
+                // 箭头绑的是 IsArray，不发通知就不会重算，要重启才显示。
+                RaiseArrayShapeChanged();
 
                 Address = -1;
                 ResolveError = null;
@@ -591,6 +760,10 @@ namespace DSH_Modbus采集工具
             Model.Type = variable.Type;
             Model.Format = variable.Format;
             Model.Length = variable.Length;
+
+            // ⚠️ 同上：数组的元素类型必须一起同步，否则显示名与解码都按 Int 走
+            Model.ElementType = variable.ElementType;
+
             Model.Element = ExtractElementOf(variable.Address);
             Model.Index = variable.Address[Model.Element.Length..];
             Model.Address = variable.ResolvedAddress;
@@ -599,6 +772,9 @@ namespace DSH_Modbus采集工具
             OnPropertyChanged(nameof(TypeDisplayName));
             OnPropertyChanged(nameof(FormatDisplayName));
             OnPropertyChanged(nameof(RawCount));
+
+            // ⚠️ 同上：类型从变量表覆盖后，IsArray / 展开箭头要重新算
+            RaiseArrayShapeChanged();
 
             Address = variable.ResolvedAddress;
             ResolveError = null;
@@ -1024,11 +1200,16 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        /// <summary>本项占用的读取单元数：线圈恒为 1，寄存器按类型与 STRING 长度算。</summary>
+        /// <summary>
+        /// 本项占用的读取单元数：线圈恒为 1（数组为元素个数），寄存器按类型 / 长度 / 元素个数算。
+        /// </summary>
         private static int UnitsOf(MonitorItem item)
         {
-            DataTypeSpec spec = DataTypes.Get(item.Model.Type);
-            return spec.CoilOnly ? 1 : spec.RegistersForLength(item.Model.Length);
+            DataPoint itemModel = item.Model;
+            DataTypeSpec spec = DataTypes.Get(itemModel.Type);
+            return spec.IsArray
+                ? DataTypes.ArrayUnitsOf(itemModel.ElementType, 0, itemModel.Length)
+                : spec.CoilOnly ? 1 : spec.RegistersForLength(itemModel.Length);
         }
 
         private static ReadBlock MakeBlock(ModbusArea area, int start, List<(MonitorItem Item, int Units)> entries)
@@ -1081,7 +1262,15 @@ namespace DSH_Modbus采集工具
                             continue;
                         }
 
-                        e.Item.ApplyReadValue(ValueCodec.FormatCoil(coils[e.Offset]));
+                        // ARRAY<BOOL>：本项占 N 个线圈，逐个元素回填到子行
+                        if (e.Item.IsArray)
+                        {
+                            e.Item.ApplyArrayCoilBlock(coils.AsSpan(e.Offset, Math.Min(e.Units, coils.Length - e.Offset)));
+                        }
+                        else
+                        {
+                            e.Item.ApplyReadValue(ValueCodec.FormatCoil(coils[e.Offset]));
+                        }
                     }
                     else
                     {
@@ -1092,12 +1281,21 @@ namespace DSH_Modbus采集工具
                         }
 
                         ReadOnlySpan<ushort> slice = registers.AsSpan(e.Offset, e.Units);
-                        e.Item.ApplyReadValue(ValueCodec.FormatRegisters(
-                            e.Item.Model.Type,
-                            slice,
-                            e.Item.Model.Format,
-                            orders,
-                            e.Item.Model.Length));
+
+                        // ARRAY：本项占 N 个单元，逐元素解码到子行（不做整组格式化）
+                        if (e.Item.IsArray)
+                        {
+                            e.Item.ApplyArrayRegisterBlock(slice, orders);
+                        }
+                        else
+                        {
+                            e.Item.ApplyReadValue(ValueCodec.FormatRegisters(
+                                e.Item.Model.Type,
+                                slice,
+                                e.Item.Model.Format,
+                                orders,
+                                e.Item.Model.Length));
+                        }
                     }
 
                     // 读成功即清掉上一次的读失败标记（含「长度不足」的临时故障）
@@ -1153,6 +1351,14 @@ namespace DSH_Modbus采集工具
                 return false;
             }
 
+            // 数组项**只能写单个元素**（用户 2026-11-09 定案）：
+            // 整组写入不在需求内，走 TryBuildElementWrite。
+            if (item.IsArray)
+            {
+                error = "数组只能逐个元素写入";
+                return false;
+            }
+
             DataTypeSpec spec = DataTypes.Get(item.Model.Type);
 
             // 线圈：BOOL 走 FC05，只接受 0 / 1
@@ -1195,6 +1401,121 @@ namespace DSH_Modbus采集工具
                 Registers = regs,
             };
             return true;
+        }
+
+        /// <summary>
+        /// 生成**某一个数组元素**的写入计划（2026-11-09 用户要求：只能对元素写）。
+        /// <para>
+        /// 与 <see cref="TryBuildWrite"/> 的差别只有一处：地址 = 父项基址 + 元素偏移，
+        /// 编码用**元素类型**而不是数组类型。功能码选择规则完全不变
+        /// （线圈 → FC05、1 个寄存器 → FC06、≥2 → FC16）。
+        /// </para>
+        /// </summary>
+        /// <param name="element">要写的元素子行</param>
+        /// <param name="text">用户输入的文本</param>
+        /// <param name="orders">三套字节顺序</param>
+        /// <param name="plan">报文参数</param>
+        /// <param name="error">失败原因</param>
+        public static bool TryBuildElementWrite(
+            MonitorElement element,
+            string? text,
+            ByteOrderSettings orders,
+            out WritePlan plan,
+            out string error)
+        {
+            plan = default;
+            error = string.Empty;
+
+            if (element == null)
+            {
+                error = "元素为空";
+                return false;
+            }
+
+            MonitorItem item = element.Owner;
+
+            if (!item.IsArray)
+            {
+                error = "该项不是数组";
+                return false;
+            }
+
+            if (item.HasError)
+            {
+                error = item.ResolveError ?? "该项配置有误";
+                return false;
+            }
+
+            if (item.IsMemoryVariable)
+            {
+                error = "内存变量不通过 Modbus 写入";
+                return false;
+            }
+
+            if (element.Address < 0)
+            {
+                error = "元素地址未解析";
+                return false;
+            }
+
+            DataType elementType = item.Model.ElementType;
+            DataTypeSpec elementSpec = DataTypes.Get(elementType);
+
+            // BOOL 元素：占 1 个线圈，FC05 只接受 0 / 1
+            if (elementSpec.CoilOnly)
+            {
+                string s = (text ?? string.Empty).Trim();
+                if (s != "0" && s != "1")
+                {
+                    error = "线圈只能写 0 或 1";
+                    return false;
+                }
+
+                plan = new WritePlan
+                {
+                    Area = item.Model.Area,
+                    Address = element.Address,
+                    IsCoil = true,
+                    CoilValue = s == "1",
+                };
+                return true;
+            }
+
+            // 寄存器元素：按元素类型编码成**定长**寄存器（1 个走 FC06、2 个走 FC16）
+            if (!ArrayValueCodec.TryEncodeElement(elementType, text, orders, out ushort[] regs, out error))
+            {
+                return false;
+            }
+
+            plan = new WritePlan
+            {
+                Area = item.Model.Area,
+                Address = element.Address,
+                IsCoil = false,
+                Registers = regs,
+            };
+            return true;
+        }
+
+        /// <summary>
+        /// 变量定义变化后，让所有数组项按最新定义重建元素子行（2026-11-10）。
+        /// <para>
+        /// ⚠️ **必须遍历数据集合、不能遍历可视树**：`Elements` 是运行期数据，
+        /// 而 `RefreshAfterVariableChange` 触发时用户正停在**全局变量页** ——
+        /// 那时监控页不可见、行容器一个都没生成，靠 `EnumerateRows` 会一条都碰不到，
+        /// 结果就是「改完变量回监控表，子行还是旧的，得重启」（用户报的 bug）。
+        /// </para>
+        /// <para>行容器的视觉刷新交给窗口侧另一个循环，两者职责分开。</para>
+        /// </summary>
+        public void RebuildAllElementRows()
+        {
+            foreach (MonitorItem item in _items)
+            {
+                if (item.IsArray)
+                {
+                    item.RaiseArrayShapeChanged();
+                }
+            }
         }
 
         private void Save()
@@ -1246,6 +1567,129 @@ namespace DSH_Modbus采集工具
         public int Offset { get; init; }
 
         public int Units { get; init; }
+    }
+
+    /// <summary>
+    /// 数组项展开后的**一个元素子行**（2026-11-09 用户要求）。
+    /// <para>
+    /// 界面形态：父行仍是普通一行（名称 / 类型 / 格式 / 当前值 / 删除），
+    /// 展开后在下方列出 N 个子行，每行只有「元素名 + 值框」——
+    /// 值框可直接编辑并单独写入（用户定案：**只能对元素写**）。
+    /// </para>
+    /// <para>
+    /// 为什么不做成独立的 <see cref="DataPoint"/> 行：元素不是独立配置，
+    /// 是父项「Type=Array + ElementType + Length」推导出来的。落盘再读回会产生两份真值。
+    /// </para>
+    /// </summary>
+    public sealed class MonitorElement : INotifyPropertyChanged
+    {
+        private string _value = string.Empty;
+        private string? _error;
+        private bool _isEditing;
+
+        public MonitorElement(MonitorItem owner, int index)
+        {
+            Owner = owner ?? throw new ArgumentNullException(nameof(owner));
+            Index = index;
+        }
+
+        /// <summary>所属的数组项。</summary>
+        public MonitorItem Owner { get; }
+
+        /// <summary>元素下标（0 基，与 PLC 侧「基址 + 偏移」一致）。</summary>
+        public int Index { get; }
+
+        /// <summary>
+        /// 元素显示名，如 <c>D100[0]</c>。
+        /// <para>父项是变量行时用变量名，故 <c>speed[0]</c> 也读得通。</para>
+        /// </summary>
+        public string Name => ArrayValueCodec.ElementName(Owner.Name, Index);
+
+        /// <summary>元素的 Modbus 绝对地址（父项地址 + 元素偏移）；未解析为 −1。</summary>
+        public int Address
+        {
+            get
+            {
+                int baseAddress = Owner.Address;
+                if (baseAddress < 0)
+                {
+                    return -1;
+                }
+
+                int offset = ArrayValueCodec.OffsetOf(Owner.Model.ElementType, Index);
+                return offset < 0 ? -1 : baseAddress + offset;
+            }
+        }
+
+        /// <summary>元素值（显示文本；可直接编辑）。</summary>
+        public string Value
+        {
+            get => _value;
+            set
+            {
+                if (_value == value)
+                {
+                    return;
+                }
+
+                _value = value ?? string.Empty;
+                Raise();
+            }
+        }
+
+        /// <summary>该元素的读 / 写失败原因；正常时为 null。</summary>
+        public string? Error
+        {
+            get => _error;
+            set
+            {
+                if (_error == value)
+                {
+                    return;
+                }
+
+                _error = value;
+                Raise();
+                Raise(nameof(HasError));
+            }
+        }
+
+        public bool HasError => !string.IsNullOrEmpty(_error);
+
+        /// <summary>用户正在编辑本元素的值框（回填要跳过它，否则输入被覆盖）。</summary>
+        public bool IsEditing
+        {
+            get => _isEditing;
+            set
+            {
+                if (_isEditing == value)
+                {
+                    return;
+                }
+
+                _isEditing = value;
+                Raise();
+            }
+        }
+
+        /// <summary>回填读到的值；正在编辑时跳过（与父行 <c>ApplyReadValue</c> 同一口径）。</summary>
+        /// <returns>真正写入了返回 true。</returns>
+        public bool ApplyValue(string text)
+        {
+            if (IsEditing)
+            {
+                return false;
+            }
+
+            Value = text;
+            Error = null;
+            return true;
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private void Raise([CallerMemberName] string? name = null) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
 }

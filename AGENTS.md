@@ -372,6 +372,7 @@ public sealed class MyDialog : DialogWindow
 | **配置落盘 / 容错读 / 写失败可见（改任何 `*Store` 必读）** | 一律走 `Modeling/AtomicFile.cs`：写走「临时文件 → `Flush(flushToDisk)` → `File.Replace` 保留 `.bak`」；读走「整体失败 → 逐元素抢救 + 原文件备份 `.bad-时间戳`」。`ThemeManager.Save` 失败经 `SettingsSaveFailed` 上浮到运行日志。**不要再用 `File.WriteAllText` 直写配置** —— 见 `AGENTS-细节.md` §13 |
 | **字节顺序（字序/字符串序）** | `Modeling/ByteOrderSettings.cs`（三套值）+ 设备连接页三个下拉框 + `ApplyByteOrders` / `SyncByteOrderCombos`（§8.1）；读取用 `MonitorItemSet.ByteOrders` |
 | **类型值编解码与显示格式化** | `Modeling/ValueCodec.cs`（入参传字节顺序，不读全局状态） |
+| **ARRAY 数组类型（P6.4）** | `Modeling/DataTypeEnums.cs`（枚举，零依赖）+ `ArrayRules.cs`（声明规则，零依赖）+ `ArrayValueCodec.cs`（逐元素寻址/编解码）+ `Ui/ArrayDeclareDialog.cs`；子行模型 `MonitorElement` 与 `TryBuildElementWrite` 在 `MonitorItem.cs`。⚠️ 显示名写 `INT[20]`（元素类型+个数）、**不做整组聚合**、**只能对元素写**、占用按「个数 × 单元素单元数」算 —— 见 §5.2.3 |
 | Modbus 报文/超时、心跳 | `Drivers/ModbusTcpClient.cs`；`Drivers/ModbusHeartbeat.cs` → `RunAsync`、`HeartbeatIfIdleAsync` |
 | 轮询与断线逻辑 | `Polling/ModbusPoller.cs` 的 `PollLoopAsync` / `PollOnceAsync` + `Disconnect(status,color)` |
 | **IO 合法异常码不再断开（连续 5 次才记日志）** | `PollOnceAsync` 的 `catch (ModbusResponseException)` + `ConsecutiveExceptionThreshold` + `_blockExceptionStreaks`；告警通道 `ICollectorHost.ReportCommunicationWarning` → 窗口 `ReportCommunicationWarning`（§5，证据 `Design.md` §10.2） |

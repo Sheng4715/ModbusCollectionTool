@@ -6,6 +6,9 @@ obj/
 *.suo
 *.userprefs
 
+# WPF 编译期临时工程（XAML 标记编译时生成，构建中断会残留）
+*_wpftmp.csproj
+
 # 发布输出目录（dotnet publish -o Release，框架依赖产物）
 Release/
 

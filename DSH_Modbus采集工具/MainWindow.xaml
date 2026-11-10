@@ -907,6 +907,14 @@
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}"/>
+                                <!--
+                                    ⚠️ 只设 Foreground 是**无效的**：模板里的 ContentPresenter 显示的是
+                                    SelectionBoxItem（一个 DataTypeSpec 对象）+ ItemTemplate，
+                                    它不理会 ComboBox.Foreground。必须显式给 chevron 换色、
+                                    并去掉灰底 —— 否则控件实际不可点、看着却和可编辑时一样。
+                                -->
+                                <Setter TargetName="Chev" Property="Foreground" Value="{DynamicResource Brush.Text.Disabled.Faint}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="Transparent"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1195,6 +1203,12 @@
         -->
         <Style x:Key="MonitorTypeCombo" TargetType="ComboBox"
                BasedOn="{StaticResource MonitorInlineComboBox}">
+            <!--
+                Foreground 是**禁用态的载体**：模板里的文字与 chevron 都 TemplateBinding 它。
+                与 FormComboBox 同一套做法（那边的置灰一直是对的），
+                区别只是这里再多一个「打开下拉」的按钮 —— 所以必须走模板绑定而非继承。
+            -->
+            <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Primary}"/>
             <Setter Property="ItemTemplate" Value="{StaticResource MonitorTypeItemTemplate}"/>
             <Setter Property="ItemContainerStyle" Value="{StaticResource MonitorComboItem}"/>
             <Setter Property="Template">
@@ -1207,18 +1221,30 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <!-- 行内显示名（STRING[9]）；数据上下文即该行的 MonitorItem -->
-                                    <TextBlock Grid.Column="0"
+                                    <!--
+                                        行内显示名（如 STRING[20] / BOOL[80]）；数据上下文即该行的 MonitorItem。
+
+                                        ⚠️ Foreground 走 **TemplateBinding**，不要写死 Brush.Text.Primary：
+                                        与 FormComboBox 同一套做法 —— 禁用时由 Style 里的
+                                        「IsEnabled=False → Foreground=Brush.Text.Disabled」改掉
+                                        ComboBox.Foreground，这里继承下去，文字自然变灰。
+                                        写死的话控件实际不可点、看着却和可编辑时一模一样
+                                        （用户 2026-11-10 报的正是这个）。
+                                    -->
+                                    <TextBlock x:Name="TypeText"
+                                               Grid.Column="0"
                                                Text="{Binding TypeDisplayName}"
-                                               FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                                               FontSize="12"
+                                               Foreground="{TemplateBinding Foreground}"
                                                VerticalAlignment="Center"
                                                HorizontalAlignment="Left"
                                                IsHitTestVisible="False"/>
-                                    <TextBlock Grid.Column="1"
+                                    <TextBlock x:Name="TypeChevron"
+                                               Grid.Column="1"
                                                Text="&#xE70D;"
                                                FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
                                                FontSize="9"
-                                               Foreground="{DynamicResource Brush.Text.Faint}"
+                                               Foreground="{TemplateBinding Foreground}"
                                                VerticalAlignment="Center"
                                                Margin="4,1,0,0"/>
                                 </Grid>
@@ -1260,6 +1286,17 @@
                             <Trigger Property="IsDropDownOpen" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
+                            <!--
+                                禁用态（变量行 / 数组行）：只改 Foreground。
+                                与 FormComboBox 完全一致 —— 模板里的文字与 chevron 都
+                                TemplateBinding Foreground，改这一处两处都跟着变灰。
+                                以前的写法是在模板里给控件写死画刷颜色，那样
+                                IsEnabled=False 不会产生任何视觉变化：
+                                控件实际不可点、看着却和可编辑时一模一样（用户 2026-11-10 报的）。
+                            -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}"/>
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -1268,35 +1305,44 @@
 
         <!-- 自由监控的一行 -->
         <DataTemplate x:Key="MonitorItemTemplate">
-            <Border Height="30" Margin="0,0,0,2"
-                    BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1"
-                    Loaded="MonitorRow_Loaded"
-                    PreviewMouseLeftButtonDown="MonitorRow_PreviewMouseLeftButtonDown">
-                <!-- 选中态走 Style.Triggers：行里有输入框/下拉框，选中只改底色，不影响编辑 -->
-                <Border.Style>
-                    <Style TargetType="Border">
-                        <Setter Property="Background" Value="Transparent"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </Border.Style>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="34"/>   <!-- 序号 -->
-                        <ColumnDefinition Width="200"/>  <!-- 元件名称（符号+编号，方案 2；2026-11-06 由 100 加宽到 200） -->
-                        <!-- 106 = 下拉宽 96 + 左间距 6，留 4 余量放 STRING[128] 这类长文本 -->
-                        <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
-                        <ColumnDefinition Width="88"/>   <!-- 显示格式 ↓ -->
-                        <ColumnDefinition Width="*"/>    <!-- 当前值 -->
-                        <ColumnDefinition Width="40"/>   <!-- 删除 -->
-                    </Grid.ColumnDefinitions>
+            <!-- Grid 两行：第 0 行 = 普通行本身，第 1 行 = 数组元素子行（折叠时 Row 高度不占位）。
+                 套一层 Grid 的原因：DataTemplate 只能有一个根元素，而子行必须在父行**下方**。 -->
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Column="0" Text="{Binding Id}"
-                               FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
-                               VerticalAlignment="Center"/>
+                <Border Grid.Row="0" Height="30" Margin="0,0,0,2"
+                        BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1"
+                        Loaded="MonitorRow_Loaded"
+                        PreviewMouseLeftButtonDown="MonitorRow_PreviewMouseLeftButtonDown">
+                    <!-- 选中态走 Style.Triggers：行里有输入框/下拉框，选中只改底色，不影响编辑 -->
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                            <ColumnDefinition Width="24"/>   <!-- 展开箭头（仅数组项可点） -->
+                            <ColumnDefinition Width="200"/>  <!-- 元件名称（符号+编号，方案 2；2026-11-06 由 100 加宽到 200） -->
+                            <!-- 106 = 下拉宽 96 + 左间距 6，留 4 余量放 STRING[128] 这类长文本 -->
+                            <ColumnDefinition Width="106"/>  <!-- 数据类型 -->
+                            <ColumnDefinition Width="88"/>   <!-- 显示格式 ↓ -->
+                            <ColumnDefinition Width="*"/>    <!-- 当前值（数组行置灰留空） -->
+                            <ColumnDefinition Width="40"/>   <!-- 删除 -->
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" Text="{Binding Id}"
+                                   FontSize="12" Foreground="{DynamicResource Brush.Text.Muted}"
+                                   VerticalAlignment="Center"/>
 
                     <!-- 元件名称：符号与编号合并输入（方案 2），如 HD100 / X17；
                           也可填已定义的全局变量名。**打字途中不校验**（需求）：
@@ -1306,7 +1352,7 @@
                           MonitorInlineTextBox 是 5 处共用的基础样式，不能在里面绑这个
                           只有自由监控行才有的属性 —— 否则其余四处的绑定失败会退化成黑字。 -->
                     <TextBox x:Name="NameBox"
-                             Grid.Column="1"
+                             Grid.Column="2"
                              Style="{StaticResource MonitorInlineTextBox}"
                              Foreground="{Binding RowBrush}"
                              KeyDown="MonitorName_KeyDown"
@@ -1318,14 +1364,14 @@
                         （见 MonitorType_SelectionChanged / DataPoint.TypeDisplayName）。
                         行内不再放长度输入框 —— 改长度＝重选一次 STRING。
                     -->
-                    <ComboBox Grid.Column="2" x:Name="TypeCombo"
+                    <ComboBox Grid.Column="3" x:Name="TypeCombo"
                               Width="96"
                               Margin="6,0,0,0"
                               HorizontalAlignment="Left"
                               Style="{StaticResource MonitorTypeCombo}"
                               SelectionChanged="MonitorType_SelectionChanged"/>
 
-                    <ComboBox Grid.Column="3" x:Name="FormatCombo"
+                    <ComboBox Grid.Column="4" x:Name="FormatCombo"
                               Width="76"
                               HorizontalAlignment="Left"
                               Style="{StaticResource MonitorInlineComboBox}"
@@ -1339,22 +1385,117 @@
                         否则输入到一半就被下一拍读值覆盖。
                         读/写失败只转琥珀色（红＝配置要改，琥珀＝通讯侧的事）；
                         本表格不设悬停提示。
+
+                        ⚠️ 数组行（IsArray）**置灰留空**（用户 2026-11-10 定案）：
+                        数组的值全在展开后的元素子行里，父行这个框读不到也写不进
+                        （读走 ApplyArrayXxxBlock、写被 TryBuildWrite 拒掉），
+                        留着可编辑只会让人以为能整组写。**保留控件本身**而不是删掉 ——
+                        删了要连带改三个焦点/按键处理器，且列宽会塌。
                     -->
-                    <TextBox Grid.Column="4"
+                    <TextBox Grid.Column="5"
                              x:Name="ValueBox"
                              Text="{Binding CurrentValue, UpdateSourceTrigger=PropertyChanged}"
-                             Style="{StaticResource MonitorValueTextBox}"
                              GotKeyboardFocus="MonitorValue_GotFocus"
                              LostKeyboardFocus="MonitorValue_LostFocus"
-                             KeyDown="MonitorValue_KeyDown"/>
+                             KeyDown="MonitorValue_KeyDown">
+                        <TextBox.Style>
+                            <Style TargetType="TextBox" BasedOn="{StaticResource MonitorValueTextBox}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsArray}" Value="True">
+                                        <Setter Property="IsEnabled" Value="False"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBox.Style>
+                    </TextBox>
 
-                    <Button Grid.Column="5"
+                    <!--
+                        展开箭头：只有数组项显示（非数组项整格空着，不占视觉注意力）。
+                        位置在**名称左侧**（第 1 列）—— 与序号相邻，点开看元素时视线不用跨到行尾。
+                    -->
+                    <Button Grid.Column="1"
+                            Content="{Binding ExpandGlyph}"
+                            AutomationProperties.Name="展开或收起数组元素"
+                            ToolTip="展开或收起数组元素"
+                            Style="{StaticResource MonitorHeaderIconButton}"
+                            HorizontalAlignment="Left"
+                            Click="ToggleMonitorArrayExpand_Click"
+                            Visibility="{Binding IsArray, Converter={StaticResource BoolToVis}}"/>
+
+                    <Button Grid.Column="6"
                             Content="&#xE711;"
                             ToolTip="删除本项"
                             Style="{StaticResource MonitorIconButton}"
                             Click="RemoveMonitorItem_Click"/>
                 </Grid>
             </Border>
+
+            <!--
+                数组项展开后的元素子行（2026-11-09 用户要求：展开成 N 行、每行可单独写）。
+                整块浅底 + 边框，与采集任务组的子表同一套观感（Brush.Acquisition.SubTable.*）。
+                子行**不带删除按钮**：元素不是独立配置，删整组才有意义。
+
+                ⚠️ 可见性绑 **IsExpanded**，不绑 ElementsVisibility：后者是「派生属性」，
+                要有人发 PropertyChanged 才会重算，多一层中转就多一处可漏。
+                这里 IsArray 由箭头按钮的 Visibility 已经挡掉，没展开时整块不需要额外判断。
+
+                ⚠️ **左边缘要铺到与父行同一列**（Margin.Left = 34 = 序号列宽，2026-11-10 用户要求）：
+                父行的第 0 列是序号（34），卡片从序号列右边起、宽度铺满剩余部分，
+                这样卡片左缘与「元件名称」列左缘对齐，而不是缩进成一个小方块。
+                ⚠️ 元素子行的列宽**必须与父行同步**：元素名占「名称列」那一段、
+                值框与外层「当前值」列同宽同起点，两边的框才能上下对齐。
+                具体见下面子行 Grid 的列定义（34 占位 + 200 名称 + 106+88 空白 + * 值框）。
+            -->
+            <Border Grid.Row="1" Margin="34,0,0,4"
+                    Padding="10,6,10,6"
+                    Background="{DynamicResource Brush.Acquisition.SubTable.Background}"
+                    BorderBrush="{DynamicResource Brush.Acquisition.SubTable.Border}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}">
+                <StackPanel>
+                    <ItemsControl ItemsSource="{Binding Elements}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <!--
+                                    列宽与父行**逐列镜像**（父行：34 序号 / 24 箭头 / 200 名称 / 106 类型 / 88 格式 / * 当前值 / 40 删除）。
+                                    卡片从「序号列右边」起（Margin.Left=34），但卡片自己还有
+                                    Padding.Left=10 + 边框 1，会把子行整体右推 11 DIP ——
+                                    故这里用 **Margin.Left=-11** 抵消回来，元素名的起点才与父行「名称」列对齐。
+                                    ⚠️ 改卡片的 Padding/BorderThickness 时必须同步改这个负数，否则三处一起错位。
+                                -->
+                                <Grid Height="26" Margin="-11,0,-11,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="24"/>   <!-- 箭头列（父行有箭头，子行留空） -->
+                                        <ColumnDefinition Width="200"/>  <!-- 元素名，与父行「元件名称」同起点 -->
+                                        <ColumnDefinition Width="106"/>  <!-- 类型列，留空 -->
+                                        <ColumnDefinition Width="88"/>   <!-- 格式列，留空 -->
+                                        <ColumnDefinition Width="*"/>    <!-- 元素值，与外层「当前值」同宽 -->
+                                        <ColumnDefinition Width="40"/>   <!-- 删除列，留空 -->
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0"
+                                               Grid.ColumnSpan="2"
+                                               Text="{Binding Name}"
+                                               FontSize="12"
+                                               Margin="6,0,0,0"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource Brush.Text.Secondary}"/>
+
+                                    <TextBox Grid.Column="4"
+                                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource MonitorValueTextBox}"
+                                             GotKeyboardFocus="MonitorElement_GotFocus"
+                                             LostKeyboardFocus="MonitorElement_LostFocus"
+                                             KeyDown="MonitorElement_KeyDown"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+            </Grid>
         </DataTemplate>
 
         <!--
@@ -2640,6 +2781,7 @@
                                             <Grid x:Name="MonitorHeaderColumns">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="34"/>   <!-- 序号 -->
+                                                    <ColumnDefinition Width="24"/>   <!-- 展开箭头（仅数组项有） -->
                                                     <ColumnDefinition Width="200"/>  <!-- 元件（与行模板同步：2026-11-06 100 → 200） -->
                                                     <ColumnDefinition Width="106"/>  <!-- 数据类型（+ STRING 长度），随模板同步 -->
                                                     <ColumnDefinition Width="88"/>   <!-- 显示格式 -->
@@ -2647,16 +2789,16 @@
                                                     <ColumnDefinition Width="40"/>   <!-- 行内删除列（表头留空） -->
                                                 </Grid.ColumnDefinitions>
                                                 <TextBlock Grid.Column="0" Text="#" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="1" Text="元件或变量名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="2" Text="元件或变量名称" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                 <!--
-                                                    ⚠️ 第 2 列文字要带 Margin="6,0,0,0"，与该列下拉框的左边距一致 ——
+                                                    ⚠️ 第 3 列文字要带 Margin="6,0,0,0"，与该列下拉框的左边距一致 ——
                                                     否则文字贴列左边缘、下拉框右移 6，表头与内容看着错开。
                                                 -->
-                                                <TextBlock Grid.Column="2" Text="数据类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}"
+                                                <TextBlock Grid.Column="3" Text="数据类型" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}"
                                                            Margin="6,0,0,0" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="3" Text="显示格式" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Column="4" Text="当前值" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                                <!-- 第 5 列留空：与行内 × 同列，保留列宽使「当前值」宽度与行一致 -->
+                                                <TextBlock Grid.Column="4" Text="显示格式" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="5" Text="当前值" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                                <!-- 第 1 列（展开箭头）与第 6 列（删除）留空：与行内控件同列，保留列宽使其余列与行一致 -->
                                             </Grid>
 
                                             <!--
