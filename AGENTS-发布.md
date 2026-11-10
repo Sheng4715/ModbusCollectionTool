@@ -11,12 +11,12 @@
 
 ## 12. 发布与交付（2026-11-03 定案）
 
-**形态：框架依赖（framework-dependent）**。产物只有 **4 个文件 / 约 593 KB**，目标机必须预装
+**形态：框架依赖（framework-dependent）**。产物只有 **4 个文件 / 约 630 KB**，目标机必须预装
 **\.NET 8 Desktop Runtime**。发布到 `Release\<程序集名>_<版本号>\`，`Release/` 已进 `.gitignore`。
 
 > 全部结论均为 2026-11-03 实测（发布 → 启动 → 改配置 → 覆盖更新 → 拷到"第二台机器" → 只读目录），
 > 不是推断。**唯独"目标机没装运行时"这条没实测**（本机 8/9/10 全装，且 apphost 会查注册表兜底）。
-> 体积于 2026-11-09 重新实测（dll 随功能增长 373 → 452.5 KB），**以本文数字为准**。
+> 体积于 2026-11-11 重新实测（dll 随功能增长 373 → 489.5 KB），**以本文数字为准**。
 
 ### 12.1 发布命令
 
@@ -47,14 +47,14 @@ dotnet publish "DSH_Modbus采集工具\DSH_Modbus采集工具.csproj" `
 ### 12.2 产物
 
 ```
-Release\DSH_Modbus采集工具_1.0.0\                       合计 4 个文件 / 593 KB
+Release\DSH_Modbus采集工具_1.0.1\                       合计 4 个文件 / 630 KB
 ├── DSH_Modbus采集工具.exe                  140 KB   apphost，只负责找运行时、加载 dll
-├── DSH_Modbus采集工具.dll                452.5 KB   全部业务代码（含 XAML 编译出的 BAML）
+├── DSH_Modbus采集工具.dll                489.5 KB   全部业务代码（含 XAML 编译出的 BAML）
 ├── DSH_Modbus采集工具.deps.json           0.4 KB   依赖清单（本项目只有自己一个库）
 └── DSH_Modbus采集工具.runtimeconfig.json  0.4 KB   声明要 .NET 8 桌面运行时
 ```
 
-- 实测 exe 属性：`FileVersion 1.0.0.0` / `ProductVersion 1.0.0+<sha>` / `ProductName DSH Modbus 采集工具`
+- 实测 exe 属性：`FileVersion 1.0.1.0` / `ProductVersion 1.0.1+<sha>` / `ProductName DSH Modbus 采集工具`
 - `runtimeconfig.json` 里是**两条** `frameworks`：`Microsoft.NETCore.App` + `Microsoft.WindowsDesktop.App`。
   后者是 WPF 独有 —— 目标机装错成体积更小的 **Console Runtime** 会起不来
 - `.deps.json` 只有一个条目，正是「零第三方 NuGet」的直接证据
@@ -234,9 +234,9 @@ dotnet publish "DSH_Modbus采集工具\DSH_Modbus采集工具.csproj" `
 ### 12.10 交付前验证清单
 
 ```powershell
-$dir = "Release\DSH_Modbus采集工具_1.0.0"
+$dir = "Release\DSH_Modbus采集工具_1.0.1"
 Get-ChildItem $dir -Recurse -File            # ① 应为 4 个文件，无 pdb、无 Log
-(Get-Item "$dir\DSH_Modbus采集工具.exe").VersionInfo.ProductVersion   # ② 应为干净的 1.0.0+<sha>
+(Get-Item "$dir\DSH_Modbus采集工具.exe").VersionInfo.ProductVersion   # ② 应为干净的 1.0.1+<sha>
 Get-Content "$dir\DSH_Modbus采集工具.runtimeconfig.json" | Select-String "Microsoft\."  # ③ 必须含 WindowsDesktop
 Start-Process "$dir\DSH_Modbus采集工具.exe"; Start-Sleep 6
 Get-Process "DSH_Modbus采集工具" | Select-Object MainWindowTitle      # ④ 窗口应出现
