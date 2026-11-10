@@ -59,6 +59,42 @@ namespace DSH_Modbus采集工具.Modeling
             // 组级问题先报：表达式坏了的组，逐项查完也跑不起来
             DescribeTrigger(task, findVariable, issues);
 
+            // 执行完成输出变量（2026-11-10）：填了就必须是能装下 1 / 2 的整数全局变量。
+            // 与任务选项对话框共用 AcquisitionTaskRules.TryValidateCompletionVariable，
+            // 避免「对话框放行、这里判配置错误」两边不一致。
+            if (!AcquisitionTaskRules.TryValidateCompletionVariable(
+                    task.CompletionVariableName, findVariable, out _, out string completionError))
+            {
+                issues.Add(completionError);
+            }
+            else if (!string.IsNullOrWhiteSpace(task.CompletionVariableName))
+            {
+                // ⚠️ 输出变量与任务项撞车要说一声（2026-11-11）：
+                // 写入任务先写业务值、完成写随后用 1/2 覆盖它；读取任务的变量也会被临时污染，
+                // 直到下一拍轮询读回。用户看不出这是自己配的，只看到「值莫名其妙变了」。
+                string completionName = task.CompletionVariableName.Trim();
+
+                foreach (AcquisitionItem item in task.Items)
+                {
+                    if (item == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (string reference in new[] { item.VariableName, item.SourceVariableName })
+                    {
+                        if (!string.IsNullOrWhiteSpace(reference)
+                            && SameReference(reference, completionName))
+                        {
+                            issues.Add(
+                                "执行完成输出变量「" + completionName + "」与数据项引用的是同一变量，"
+                                + "执行结果会覆盖该变量的值");
+                            return issues;
+                        }
+                    }
+                }
+            }
+
             for (int i = 0; i < task.Items.Count; i++)
             {
                 AcquisitionItem item = task.Items[i];
@@ -111,16 +147,17 @@ namespace DSH_Modbus采集工具.Modeling
                 return;
             }
 
-            if (!compiled.TryValidateNames(NameExists, out error))
+            if (!compiled.TryValidateNames(NameError, out error))
             {
                 // error 自带「第 N 个字符」与变量名，直接转达
                 issues.Add("触发表达式无效（" + error + "）");
             }
 
             // 表达式里的名字必须是变量：系统变量或全局变量，口径同任务选项对话框；
-            // 刻意不复用「任务名」那套判断（同名不同义，混用会写出「填任务名也算合法」）
-            bool NameExists(string name) =>
-                SystemVariable.Find(name) != null || findVariable?.Invoke(name) != null;
+            // 刻意不复用「任务名」那套判断（同名不同义，混用会写出「填任务名也算合法」）。
+            // 数组必须带下标（如 var1[0]）——用户定案 2026-11-10：只能对元素读写。
+            string? NameError(string name) =>
+                VariableReference.Describe(name, findVariable, allowWholeArray: false);
         }
 
         private static void DescribeItem(
@@ -152,7 +189,7 @@ namespace DSH_Modbus采集工具.Modeling
                 if (source == null)
                 {
                     // 常量解析失败要把「为什么」说出来，不能笼统报「不存在」
-                    issues.Add(prefix + DescribeSourceUnresolved(sourceName, isConstant));
+                    issues.Add(prefix + DescribeSourceUnresolved(sourceName, isConstant, findVariable));
                     return;
                 }
 
@@ -162,28 +199,34 @@ namespace DSH_Modbus采集工具.Modeling
                     return;
                 }
 
-                GlobalVariable? variable = findVariable?.Invoke(variableName);
-                if (variable == null)
+                // 数组只能对元素写（var1[0]）——整条数组在这里就被拒，
+                // 不能退化成「变量不存在」（用户定案 2026-11-10）。
+                if (!VariableReference.TryResolve(
+                        variableName, findVariable, allowWholeArray: false,
+                        out GlobalVariable? variable, out int? targetIndex, out string targetError))
                 {
-                    issues.Add(prefix + "写入变量「" + variableName + "」不存在");
+                    issues.Add(prefix + "写入变量" + targetError);
                     return;
                 }
+
+                // 元素写入看**元素类型**，整条标量看变量类型
+                DataType targetType = targetIndex is int t ? variable!.ElementType : variable!.Type;
 
                 if (isConstant)
                 {
                     // 常量的类型由写入变量定：只校验「这个字面量能不能按它的类型编出来」
-                    string? constantError = DescribeConstantProblem(sourceName, variable);
+                    string? constantError = DescribeConstantProblem(sourceName, variable!, targetType);
                     if (constantError != null)
                     {
                         issues.Add(prefix + constantError);
                         return;
                     }
                 }
-                else if (!AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type))
+                else if (!AcquisitionTaskRules.WriteTypesMatch(source.Type, targetType))
                 {
                     issues.Add(
                         prefix + "来源「" + source.Name + "」是 " + DataTypes.Get(source.Type).DisplayName
-                        + "，写入变量「" + variable.Name + "」是 " + DataTypes.Get(variable.Type).DisplayName
+                        + "，写入变量「" + variableName + "」是 " + DataTypes.Get(targetType).DisplayName
                         + "，两者必须相同");
                     return;
                 }
@@ -193,10 +236,10 @@ namespace DSH_Modbus采集工具.Modeling
                 // 全局变量**允许**映射 X（那条限制已经撤掉），所以「读得到、写不了」这件事
                 // 只能在这里报：放进「配置错误」整组拦下，比等到运行期才写失败、日志里
                 // 一句「从站回异常码 2」查不出来要好得多。
-                if (variable.IsReadOnly)
+                if (variable!.IsReadOnly)
                 {
                     issues.Add(
-                        prefix + "写入变量「" + variable.Name + "」映射到 " + variable.Address
+                        prefix + "写入变量「" + variableName + "」映射到 " + variable.Address
                         + "，属于只读区（输入元件），不能作为写入目标");
                 }
 
@@ -209,10 +252,29 @@ namespace DSH_Modbus采集工具.Modeling
                 return;
             }
 
-            if (findVariable?.Invoke(variableName) == null)
+            // 读取变量支持数组元素（var1[0]），整条数组同样被拒
+            if (!VariableReference.TryResolve(
+                    variableName, findVariable, allowWholeArray: false,
+                    out _, out _, out string readError))
             {
-                issues.Add(prefix + "读取变量「" + variableName + "」不存在");
+                issues.Add(prefix + "读取变量" + readError);
             }
+        }
+
+        /// <summary>
+        /// 两个引用是不是**同一个变量 / 同一个元素**（用于「输出变量与数据项撞车」判定）。
+        /// <para>基础名大小写敏感（与变量名规则一致）；数组元素要求下标也相同。</para>
+        /// </summary>
+        private static bool SameReference(string left, string right)
+        {
+            if (!VariableName.TrySplit(left, out string leftBase, out int? leftIndex, out _)
+                || !VariableName.TrySplit(right, out string rightBase, out int? rightIndex, out _))
+            {
+                return false;
+            }
+
+            return string.Equals(leftBase, rightBase, StringComparison.Ordinal)
+                && leftIndex == rightIndex;
         }
 
         /// <summary>
@@ -222,11 +284,18 @@ namespace DSH_Modbus采集工具.Modeling
         /// 用户会去变量表里找一个根本不存在的东西。
         /// </para>
         /// </summary>
-        private static string DescribeSourceUnresolved(string sourceName, bool isConstant)
+        private static string DescribeSourceUnresolved(
+            string sourceName, bool isConstant, Func<string, GlobalVariable?>? findVariable)
         {
             if (!isConstant)
             {
-                return "来源变量「" + sourceName + "」不存在";
+                // 数组整条被引用时要报「只能对元素读写」，不能笼统报「不存在」
+                string reason = AcquisitionSource.DescribeResolveError(sourceName, findVariable);
+
+                // 解析器给的是「「名字」不存在 / 「名字」是数组…」，补上这列的称呼
+                return reason.StartsWith("「", StringComparison.Ordinal)
+                    ? "来源变量" + reason
+                    : reason;
             }
 
             // 进入本函数的前提是常量解析失败（解析成功则 Resolve 已返回非 null，
@@ -249,7 +318,8 @@ namespace DSH_Modbus采集工具.Modeling
         /// 那条寄存器路径，只接受 <c>0</c> / <c>1</c>（<c>#TRUE</c> / <c>#FALSE</c> 已在解析时归一）。
         /// </para>
         /// </summary>
-        private static string? DescribeConstantProblem(string sourceName, GlobalVariable variable)
+        private static string? DescribeConstantProblem(
+            string sourceName, GlobalVariable variable, DataType targetType)
         {
             // 进入本函数的前提是来源已成功解析为常量（Resolve 已保证 TryParse 成功），
             // 故这里直接用解析结果，不再重复一道「解析失败」的防御 ——
@@ -257,7 +327,7 @@ namespace DSH_Modbus采集工具.Modeling
             AcquisitionConstant.TryParse(
                 sourceName, out string literal, out bool isQuoted, out _, out _);
 
-            DataTypeSpec spec = DataTypes.Get(variable.Type);
+            DataTypeSpec spec = DataTypes.Get(targetType);
 
             if (spec.CoilOnly)
             {
@@ -275,22 +345,24 @@ namespace DSH_Modbus采集工具.Modeling
                 return null;
             }
 
-            if (isQuoted && variable.Type != DataType.String)
+            if (isQuoted && targetType != DataType.String)
             {
                 return "字符串常量不能写入 "
                     + spec.DisplayName + " 变量「" + variable.Name + "」";
             }
 
-            if (!isQuoted && variable.Type == DataType.String)
+            if (!isQuoted && targetType == DataType.String)
             {
                 return "写入 STRING 变量「" + variable.Name + "」要用带引号的常量，如 #\"ABCD\"";
             }
 
-            // 复用编码层：进制自标定、范围校验、REAL 解析全在那一处
-            DisplayFormat format = AcquisitionConstant.FormatFor(literal, variable.Type);
+            // 复用编码层：进制自标定、范围校验、REAL 解析全在那一处。
+            // 元素写入没有「STRENGTH 长度」这回事（元素不能是 STRING），传 0。
+            DisplayFormat format = AcquisitionConstant.FormatFor(literal, targetType);
             return ValueCodec.TryEncodeRegisters(
-                variable.Type, format, literal, variable.Length, ByteOrderSettings.Default,
-                out _, out string encodeError)
+                targetType, format, literal,
+                targetType == DataType.String ? variable.Length : 0,
+                ByteOrderSettings.Default, out _, out string encodeError)
                 ? null
                 : "来源常量「" + sourceName + "」" + encodeError;
         }

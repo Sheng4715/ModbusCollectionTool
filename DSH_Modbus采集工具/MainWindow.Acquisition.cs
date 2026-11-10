@@ -256,8 +256,10 @@ namespace DSH_Modbus采集工具
                 this,
                 task.Model,
                 name => IsTaskNameTaken(task, name),
-                ExpressionNameExists,
-                () => CompletionSource.ForExpression(GlobalVarModels));
+                _globalVarSet.FindByName,
+                () => CompletionSource.ForExpression(GlobalVarModels),
+                () => CompletionSource.ForMonitorName(
+                    GlobalVarModels, CompletionSource.CompletionFilter.IntegerScalarOrElement));
 
             if (dialog == null)
             {
@@ -270,7 +272,7 @@ namespace DSH_Modbus采集工具
             task.ApplyDialogResult(
                 dialog.KindValue, dialog.TriggerValue, dialog.PeriodSecondsValue, dialog.ExpressionText,
                 dialog.LogEnabledValue, dialog.RecordEnabledValue, dialog.SavePathValue,
-                dialog.LiveImagePathValue);
+                dialog.LiveImagePathValue, dialog.CompletionVariableValue);
 
             // 改名不搬家：文件夹按名称建，改完新数据进新文件夹，旧的原样留着。
             // 不提示一句的话，用户会以为历史数据也跟着过去了
@@ -408,6 +410,9 @@ namespace DSH_Modbus采集工具
                         task,
                         AcquisitionTaskRules.DescribeLogSuccess(task, item.Index),
                         DeviceLogLevel.Neutral);
+
+                    // 没开记录也算一次执行完成 —— 执行完成输出变量照写（口径 B）
+                    QueueCompletionWrite(task, AcquisitionTaskRules.ResultSuccess);
                     continue;
                 }
 
@@ -421,6 +426,14 @@ namespace DSH_Modbus采集工具
                         ? AcquisitionTaskRules.DescribeLogSuccess(task, item.Index)
                         : AcquisitionTaskRules.DescribeLogFailure(task, item.Index, error),
                     error.Length == 0 ? DeviceLogLevel.Neutral : DeviceLogLevel.Warning);
+
+                // 执行完成输出变量（2026-11-10）：判据与日志同源 ——
+                // CSV 写盘失败算「异常执行完成」，其余算「正常执行完成」。
+                QueueCompletionWrite(
+                    task,
+                    error.Length == 0
+                        ? AcquisitionTaskRules.ResultSuccess
+                        : AcquisitionTaskRules.ResultFailure);
             }
 
             // 实时卡片跟着采集节拍刷新数值（P1.4）。
@@ -462,6 +475,10 @@ namespace DSH_Modbus采集工具
         private async Task RunWriteTaskAsync(
             AcquisitionTaskItem item, AcquisitionTask task, AcquisitionTaskState state, DateTime now)
         {
+            // 异常兜底只写一次结果：正常分支已经写过、或已经排进队列之后又抛异常时，
+            // 不能再补一个 2 把 1 盖掉。
+            bool completionQueued = false;
+
             try
             {
                 ModbusTcpClient? modbus = _session.Client;
@@ -494,7 +511,9 @@ namespace DSH_Modbus采集工具
                     {
                         // 正常情况下走不到：配置错误已经被开关挡在门外了
                         failures.Add(AcquisitionWrite.DescribeItemFailure(
-                            index, row.Name, "来源变量「" + row.SourceVariableName + "」不存在"));
+                            index, row.Name,
+                            AcquisitionSource.DescribeResolveError(
+                                row.SourceVariableName, _globalVarSet.FindByName)));
                         continue;
                     }
 
@@ -515,15 +534,27 @@ namespace DSH_Modbus采集工具
                         continue;
                     }
 
-                    GlobalVariable? target = _globalVarSet.FindByName(row.VariableName);
+                    // 写入变量支持数组元素（var1[0]）：解析成基础变量 + 元素下标，
+                    // 地址由 AcquisitionWrite.TryBuild 按偏移算。
+                    if (!VariableReference.TryResolve(
+                            row.VariableName, _globalVarSet.FindByName, allowWholeArray: false,
+                            out GlobalVariable? target, out int? targetIndex, out string targetError))
+                    {
+                        failures.Add(AcquisitionWrite.DescribeItemFailure(index, row.Name, targetError));
+                        continue;
+                    }
 
                     // ⚠️ **常量的格式必须自己算**，不能沿用来源的 Format：
                     // 变量的 Format 是「给人看的显示格式」（可能是 Hex / Bin），
                     // 而常量是用户直书的字面量 —— `#123` 就是十进制 123，
                     // 若拿一个 INT/Hex 变量的格式去解析，会当成 0x123 = 291，**静默写错值**。
                     // 进制由字面量自己的 0x / 0b 前缀标定，见 AcquisitionConstant.FormatFor。
-                    DisplayFormat sourceFormat = source.IsConstant && target != null
-                        ? AcquisitionConstant.FormatFor(source.Literal ?? string.Empty, target.Type)
+                    DataType targetType = targetIndex is int
+                        ? target!.ElementType
+                        : target!.Type;
+
+                    DisplayFormat sourceFormat = source.IsConstant
+                        ? AcquisitionConstant.FormatFor(source.Literal ?? string.Empty, targetType)
                         : source.Format;
 
                     AcquisitionWriteStatus status = AcquisitionWrite.TryBuild(
@@ -531,6 +562,7 @@ namespace DSH_Modbus采集工具
                         sourceText,
                         sourceFormat,
                         _byteOrders,
+                        targetIndex,
                         out WritePlan plan,
                         out string buildError);
 
@@ -540,7 +572,7 @@ namespace DSH_Modbus采集工具
                         // ⚠️ 这里**不能 continue 掉**：早期是「静默跳过、连编码都不做」，
                         // 结果是「写入变量没地址 → 变量值永远不变」，日志却写着「执行完成」。
                         // 现在按用户的定案：无地址也要能写入，只是写进内存。
-                        AcquisitionWrite.ApplyToMemory(target!, plan, _byteOrders);
+                        AcquisitionWrite.ApplyToMemory(target!, plan, _byteOrders, targetIndex);
                         continue;
                     }
 
@@ -563,7 +595,7 @@ namespace DSH_Modbus采集工具
 
                         // 报文发出去了，内存值也要同步 —— 否则「写成功了但界面上还是旧值」，
                         // 要等下一轮采集/读回才更新。与扫码器写变量同一个口径。
-                        AcquisitionWrite.ApplyToMemory(target!, plan, _byteOrders);
+                        AcquisitionWrite.ApplyToMemory(target!, plan, _byteOrders, targetIndex);
                     }
                     catch (OperationCanceledException)
                     {
@@ -602,6 +634,15 @@ namespace DSH_Modbus采集工具
                         ? AcquisitionTaskRules.DescribeLogSuccess(task, item.Index)
                         : AcquisitionTaskRules.DescribeLogFailure(task, item.Index, reason),
                     reason.Length == 0 ? DeviceLogLevel.Neutral : DeviceLogLevel.Warning);
+
+                // 执行完成输出变量（2026-11-10）：本轮写入有任一项失败、或 CSV 写盘失败，
+                // 都算「异常执行完成」。判据与上面这条日志**同源**（都看 reason 是否为空）。
+                QueueCompletionWrite(
+                    task,
+                    reason.Length == 0
+                        ? AcquisitionTaskRules.ResultSuccess
+                        : AcquisitionTaskRules.ResultFailure);
+                completionQueued = true;
             }
             catch (Exception ex)
             {
@@ -610,10 +651,206 @@ namespace DSH_Modbus采集工具
                     task,
                     AcquisitionTaskRules.DescribeLogFailure(task, item.Index, ex.Message),
                     DeviceLogLevel.Warning);
+
+                if (!completionQueued)
+                {
+                    QueueCompletionWrite(task, AcquisitionTaskRules.ResultFailure);
+                }
             }
             finally
             {
                 state.WriteInFlight = false;
+            }
+        }
+
+        /// <summary>
+        /// 写「执行完成输出变量」（2026-11-10，口径照扫码器的「执行结果输出变量」）。
+        /// <para>
+        /// 三件事按顺序做：
+        /// ① 先无条件回填**内存值**（无映射地址、PLC 未连接时界面照样能看到最新结果）；
+        /// ② 有映射地址且 PLC 已连接时，再经 FC06 / FC16 回写设备；
+        /// ③ 下发用「只保留最新一个」的合并队列（<see cref="AcquisitionTaskState.PendingCompletionValue"/>）——
+        /// 周期可能只有 0.1s，而 Modbus 往返更慢，排一队旧值只会越积越多。
+        /// </para>
+        /// <para>
+        /// ⚠️ **不能在这里 await**：读取任务的调用点是 50ms 定时器回调，
+        /// 写入任务的调用点也刚跑完一轮、不该为结果变量再拖住一个周期。
+        /// 故起后台流程，用 <see cref="AcquisitionTaskState.CompletionWriteInFlight"/> 挡重入。
+        /// </para>
+        /// <para>
+        /// 未配置（空串）直接 return：这是合法常态，不是错误。
+        /// </para>
+        /// </summary>
+        private void QueueCompletionWrite(AcquisitionTask task, string value)
+        {
+            if (task == null)
+            {
+                return;
+            }
+
+            // 入队也在 50ms 采集节拍里跑：变量被手改成非法格式 / 非法数组声明时，
+            // TryBuild / ApplyToMemory 可能抛异常。这里必须自己收掉，
+            // 否则异常会从 DispatcherTimer 回调逃出去、打断整拍采集（2026-11-11）。
+            try
+            {
+                QueueCompletionWriteCore(task, value);
+            }
+            catch (Exception ex)
+            {
+                LogTaskActivity(
+                    task,
+                    "执行完成输出变量：写入失败：" + ex.Message,
+                    DeviceLogLevel.Warning);
+            }
+        }
+
+        private void QueueCompletionWriteCore(AcquisitionTask task, string value)
+        {
+            string name = (task.CompletionVariableName ?? string.Empty).Trim();
+            if (name.Length == 0)
+            {
+                return;
+            }
+
+            // 配置检查已经把「查不到 / 类型不对」判成配置错误、整组拦下了；
+            // 这里仍要兜一次（例如刚删掉变量、配置检查还没来得及刷新的那一拍）。
+            // 数组元素（var1[0]）按元素下标写，整条数组会被 VariableReference 拒掉。
+            if (!VariableReference.TryResolve(
+                    name, _globalVarSet.FindByName, allowWholeArray: false,
+                    out GlobalVariable? variable, out int? elementIndex, out _)
+                || variable == null)
+            {
+                return;
+            }
+
+            AcquisitionWriteStatus status = AcquisitionWrite.TryBuild(
+                variable, value, DisplayFormat.Dec, _byteOrders, elementIndex,
+                out WritePlan plan, out string error);
+
+            if (status == AcquisitionWriteStatus.Failed)
+            {
+                LogTaskActivity(
+                    task,
+                    "执行完成输出变量：写入「" + name + "」失败：" + error,
+                    DeviceLogLevel.Warning);
+                return;
+            }
+
+            // 内存先落：与扫码器写变量同一口径（PLC 未连时结果只进内存）
+            AcquisitionWrite.ApplyToMemory(variable, plan, _byteOrders, elementIndex);
+
+            if (status == AcquisitionWriteStatus.CannotAddress)
+            {
+                // 没有寄存器可发：内存已经更新完，到此为止
+                return;
+            }
+
+            ModbusTcpClient? modbus = _session.Client;
+            if (modbus == null || !_session.IsConnected)
+            {
+                return;
+            }
+
+            if (!_acqRuntime.TryGetValue(task, out AcquisitionTaskState? state))
+            {
+                // 理论上不会发生：调用点都在 GetOrCreateRuntime 之后
+                return;
+            }
+
+            state.PendingCompletionValue = value;
+
+            if (state.CompletionWriteInFlight)
+            {
+                // 在途：让当前这一轮收尾时把最新值写出去，不另起并发流程
+                return;
+            }
+
+            _ = DrainCompletionWritesAsync(task, state);
+        }
+
+        /// <summary>
+        /// 把「执行完成输出变量」攒下的最新值逐个下发（每次只取当前最新一个）。
+        /// <para>
+        /// fire-and-forget，异常必须自己收掉 —— 与 <see cref="RunWriteTaskAsync"/> 同一纪律。
+        /// 断开连接时**丢掉待写值**：重连后补写一个陈年结果比不写更危险，也与采集任务
+        /// 「断线不补采」的口径一致。
+        /// </para>
+        /// </summary>
+        private async Task DrainCompletionWritesAsync(AcquisitionTask task, AcquisitionTaskState state)
+        {
+            state.CompletionWriteInFlight = true;
+
+            try
+            {
+                while (state.PendingCompletionValue.Length > 0)
+                {
+                    string value = state.PendingCompletionValue;
+                    state.PendingCompletionValue = string.Empty;
+
+                    string name = (task.CompletionVariableName ?? string.Empty).Trim();
+
+                    if (!VariableReference.TryResolve(
+                            name, _globalVarSet.FindByName, allowWholeArray: false,
+                            out GlobalVariable? variable, out int? elementIndex, out _)
+                        || variable == null)
+                    {
+                        // 变量被删 / 改名（改名会同步改引用，正常走不到这里）
+                        continue;
+                    }
+
+                    AcquisitionWriteStatus status = AcquisitionWrite.TryBuild(
+                        variable, value, DisplayFormat.Dec, _byteOrders, elementIndex,
+                        out WritePlan plan, out string buildError);
+
+                    if (status == AcquisitionWriteStatus.Failed)
+                    {
+                        LogTaskActivity(
+                            task,
+                            "执行完成输出变量：写入「" + name + "」失败：" + buildError,
+                            DeviceLogLevel.Warning);
+                        continue;
+                    }
+
+                    if (status == AcquisitionWriteStatus.CannotAddress)
+                    {
+                        // 无地址：内存值在 QueueCompletionWrite 里已经写过了
+                        continue;
+                    }
+
+                    ModbusTcpClient? modbus = _session.Client;
+                    if (modbus == null || !_session.IsConnected)
+                    {
+                        state.PendingCompletionValue = string.Empty;
+                        break;
+                    }
+
+                    try
+                    {
+                        await WriteToDeviceAsync(modbus, plan).ConfigureAwait(true);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // 关窗 / 断开途中的取消，不打扰用户
+                    }
+                    catch (Exception ex)
+                    {
+                        LogTaskActivity(
+                            task,
+                            "执行完成输出变量：写入「" + name + "」失败：" + ClassifyWriteError(ex),
+                            DeviceLogLevel.Warning);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogTaskActivity(
+                    task,
+                    "执行完成输出变量：写入失败：" + ex.Message,
+                    DeviceLogLevel.Warning);
+            }
+            finally
+            {
+                state.CompletionWriteInFlight = false;
             }
         }
 

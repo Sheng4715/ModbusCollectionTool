@@ -290,6 +290,16 @@ namespace DSH_Modbus采集工具
         private volatile IReadOnlyList<GlobalVariable> _acquisitionGlobals = Array.Empty<GlobalVariable>();
 
         /// <summary>
+        /// 扫码器**触发表达式**引用的全局变量（P4.5）—— **常驻采集，与页面可见性无关**。
+        /// <para>
+        /// 扫码器判定节拍本来就常驻（50ms），触发条件里的全局变量若跟着页面可见性采，
+        /// 用户切走设备连接页后触发沿永远等不到，而界面不会报任何错。
+        /// </para>
+        /// <para>⚠️ <c>volatile</c>：UI 线程替换、采集线程读引用。</para>
+        /// </summary>
+        private volatile IReadOnlyList<GlobalVariable> _scannerGlobals = Array.Empty<GlobalVariable>();
+
+        /// <summary>
         /// 每个任务组的运行时状态（下次该采的时刻、表达式上一拍的值）。
         /// <para>
         /// 键用 <see cref="AcquisitionTask"/> 的**实例引用**而不是名称 —— 名称可变，
@@ -497,8 +507,8 @@ namespace DSH_Modbus采集工具
             // PLC 状态机（P1.2）：从 machine-state.json 读 9 个状态的文字/颜色/表达式，
             // 再把固定布局画出来。求值由 _machineTimer 驱动，这里只负责首次绑定。
             _machineVariables.AttachGlobals(_globalVarSet);
-            _machineSet.Load(ExpressionNameExists);
-            _machineSet.RecompileAll(ExpressionNameExists);
+            _machineSet.Load(ExpressionNameError);
+            _machineSet.RecompileAll(ExpressionNameError);
             RefreshMachineGlobals();
             MachineStateViewControl.Bind(_machineSet.Items, _machineSet.EdgeLabels, _machineSet.Lamps);
             MachineStateViewControl.StateDoubleClicked += MachineStateView_StateDoubleClicked;
@@ -2525,7 +2535,8 @@ namespace DSH_Modbus采集工具
             PollIntervalMs: _pollIntervalMs,
             MachineViewActive: _machineViewActive,
             MachineGlobals: _machineGlobals,
-            AcquisitionGlobals: _acquisitionGlobals);
+            AcquisitionGlobals: _acquisitionGlobals,
+            ScannerGlobals: _scannerGlobals);
 
         bool ICollectorHost.IsCurrentConnection(ModbusTcpClient client, CancellationToken token) =>
             IsCurrentConnection(client, token);

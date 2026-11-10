@@ -54,6 +54,24 @@ namespace DSH_Modbus采集工具.Modeling
         /// </para>
         /// </summary>
         public bool WriteInFlight { get; set; }
+
+        /// <summary>
+        /// 「执行完成输出变量」还有一次下发在途（2026-11-10）。
+        /// <para>
+        /// 与 <see cref="WriteInFlight"/> 分开：那个挡的是**任务本身的写入**，
+        /// 这个是跑完之后写结果变量；后者慢不该把前者一起挡掉。
+        /// </para>
+        /// </summary>
+        public bool CompletionWriteInFlight { get; set; }
+
+        /// <summary>
+        /// 在途期间又攒下的最新结果值（空串 = 没有待写值）。
+        /// <para>
+        /// 用「只保留最新一个」而不是排队：结果变量表达的是**当前状态**，
+        /// 周期 0.1s 时排一队旧值只会在慢网络下越积越多，最后写进去的全是过期结果。
+        /// </para>
+        /// </summary>
+        public string PendingCompletionValue { get; set; } = string.Empty;
     }
 
     /// <summary>
@@ -184,12 +202,11 @@ namespace DSH_Modbus采集工具.Modeling
                 foreach (AcquisitionItem item in task.Items)
                 {
                     string variableName = item.VariableName ?? string.Empty;
-                    GlobalVariable? variable =
-                        variableName.Length == 0 ? null : findVariable(variableName);
 
+                    // 数组元素（var1[0]）按元素取值；整条数组/查不到 → 空单元格。
                     // 变量没填 / 找不到 → 空单元格。**不写占位符**：
                     // 表格是给下游（Excel、MES）读的，混进「—」会变成脏数据
-                    fields.Add(variable?.Value ?? string.Empty);
+                    fields.Add(VariableReference.ReadValue(variableName, findVariable) ?? string.Empty);
                 }
             }
 

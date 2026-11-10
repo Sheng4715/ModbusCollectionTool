@@ -79,13 +79,44 @@ namespace DSH_Modbus采集工具.Expressions
 
                 int start = i + 1;   // 报错用 1 基位置
 
-                // 标识符 / 关键字
+                // 标识符 / 关键字（数组元素写成 `变量名[下标]`，整段算一个标识符）
                 if (IsIdentifierStart(c))
                 {
                     int j = i + 1;
                     while (j < s.Length && IsIdentifierPart(s[j]))
                     {
                         j++;
+                    }
+
+                    // 数组元素后缀：`[` + 非负整数 + `]`。
+                    // ⚠️ 数组本身**不能被引用**（用户定案 2026-11-10），所以这里
+                    // 把下标和变量名编成**同一个词法单元**：`var1[0]` 走到求值/校验层
+                    // 时仍是「一个名字」，不必在语法树里再加一层下标节点。
+                    if (j < s.Length && s[j] == '[')
+                    {
+                        int open = j;
+                        int k = j + 1;
+                        int digitsStart = k;
+                        while (k < s.Length && s[k] >= '0' && s[k] <= '9')
+                        {
+                            k++;
+                        }
+
+                        if (k == digitsStart)
+                        {
+                            error = k < s.Length && s[k] == ']'
+                                ? $"第 {open + 1} 个字符：数组元素下标不能为空，应写成 变量名[0]"
+                                : $"第 {open + 1} 个字符：数组元素下标只能是非负整数";
+                            return false;
+                        }
+
+                        if (k >= s.Length || s[k] != ']')
+                        {
+                            error = $"第 {open + 1} 个字符：数组元素引用缺少右方括号“]”（应写成 变量名[0]）";
+                            return false;
+                        }
+
+                        j = k + 1;
                     }
 
                     string word = s.Substring(i, j - i);
@@ -193,6 +224,18 @@ namespace DSH_Modbus采集工具.Expressions
                 if (IsFullWidth(c))
                 {
                     error = $"第 {start} 个字符：“{c}”是全角符号，请改成半角";
+                    return false;
+                }
+
+                if (c == '[')
+                {
+                    error = $"第 {start} 个字符：数组元素下标必须紧跟在变量名后面，如 var1[0]";
+                    return false;
+                }
+
+                if (c == ']')
+                {
+                    error = $"第 {start} 个字符：多余的右方括号“]”（前面没有与之配对的“[”）";
                     return false;
                 }
 

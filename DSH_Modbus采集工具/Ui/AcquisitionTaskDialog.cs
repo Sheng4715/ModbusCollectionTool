@@ -27,7 +27,8 @@ namespace DSH_Modbus采集工具.Ui
         };
 
         /// <summary>
-        /// 七个表单行（名称 / 类型 / 日志记录 / 数据记录 / 保存路径 / 执行方式 / 表达式）的**统一行高**。
+        /// 九个表单行（名称 / 类型 / 日志记录 / 数据记录 / 保存路径 / 执行方式 / 表达式 /
+        /// 实时背景图 / 执行完成输出变量）的**统一行高**。
         /// <para>
         /// ⚠️ 必须固定。原先用自动行高 + 每行 10 下边距，行距 = 内容高 + 10，于是
         /// 文本框行 40、单选行 26、路径行（按钮 32）42 —— 实测 150% DPI 下
@@ -42,25 +43,27 @@ namespace DSH_Modbus采集工具.Ui
         private const double FormRowHeight = 40;
 
         /// <summary>
-        /// 固定行高的表单行数：名称 / 类型 / 日志记录 / 数据记录 / 保存路径 / 执行方式 / 表达式 / 实时背景图。
+        /// 固定行高的表单行数：名称 / 类型 / 日志记录 / 数据记录 / 保存路径 / 执行方式 / 表达式 /
+        /// 实时背景图 / 执行完成输出变量。
         /// <para>
         /// ⚠️ **加一个表单行就要把它 +1**：这个常量决定前几行用固定 <see cref="FormRowHeight"/>，
-        /// 其余行（错误提示、按钮行）用 Auto。漏改的后果是新增那行被建成 Auto 高
+        /// 其余行（提示、错误、按钮）用 Auto。漏改的后果是新增那行被建成 Auto 高
         /// （内容多高就多高）、比其它行矮一截，且按钮行落到网格定义之外
         /// （实测「实时背景图」加进来时漏改过：那一行高 32 而非 40，按钮行越界）。
         /// </para>
         /// </summary>
-        private const int FormRowCount = 8;
+        private const int FormRowCount = 9;
 
         /// <summary>
-        /// 总行数：八个表单行 + 错误提示行 + 按钮行。
-        /// <para>后两行仍是自动高度 —— 错误行大多数时候是折叠的，按钮行不该被撑到 40。</para>
+        /// 总行数：九个表单行 + 执行完成输出变量的说明行 + 错误提示行 + 按钮行。
+        /// <para>后三行是自动高度 —— 说明行与非错误态的提示行不该被撑到 40。</para>
         /// </summary>
-        private const int RowCount = FormRowCount + 2;
+        private const int RowCount = FormRowCount + 3;
 
         private readonly Func<string, bool> _taskNameExists;
-        private readonly Func<string, bool> _variableExists;
+        private readonly Func<string, GlobalVariable?> _findVariable;
         private readonly Func<IReadOnlyList<CompletionCandidate>>? _completions;
+        private readonly Func<IReadOnlyList<CompletionCandidate>>? _variableCompletions;
         private readonly string _originalName;
 
         private readonly TextBox _nameBox;
@@ -79,6 +82,9 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>实时背景图（相对 exe 的路径）；只读，走「选择…」改。</summary>
         private readonly TextBox _liveImageBox;
 
+        /// <summary>执行完成输出变量框（留空 = 不写结果）。</summary>
+        private readonly TextBox _completionBox;
+
         /// <summary>当前选中的实时背景图相对路径（空串 = 没配）。</summary>
         private string _liveImagePath = string.Empty;
         private readonly Button _browseButton;
@@ -87,20 +93,25 @@ namespace DSH_Modbus采集工具.Ui
         private AcquisitionTaskDialog(
             AcquisitionTask task,
             Func<string, bool> taskNameExists,
-            Func<string, bool> variableExists,
-            Func<IReadOnlyList<CompletionCandidate>>? completions)
-            : base("任务选项", 442)
+            Func<string, GlobalVariable?> findVariable,
+            Func<IReadOnlyList<CompletionCandidate>>? completions,
+            Func<IReadOnlyList<CompletionCandidate>>? variableCompletions)
+            : base("任务选项", 500)
         {
             _taskNameExists = taskNameExists;
-            _variableExists = variableExists;
+            _findVariable = findVariable;
             _completions = completions;
+            _variableCompletions = variableCompletions;
             _originalName = task.Name ?? string.Empty;
 
             var root = new Grid { Margin = new Thickness(16) };
-            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(68) });
+
+            // 68 只够 5 个汉字；「执行完成输出变量」是 8 个字，110 起才不裁断
+            // （TextBlock 没有 TextTrimming，裁了就是硬切）。
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(112) });
             root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-            // 七个表单行**固定行高 40**，标签与控件都垂直居中。
+            // 九个表单行**固定行高 40**，标签与控件都垂直居中。
             // ⚠️ 原来用自动行高 + 每行 10 下边距，于是行距 = 内容高 + 10：
             // 文本框 30 → 40、单选行 16 → 26、路径行的按钮 32 → 42、下拉框 30 → 40。
             // 实测（150% DPI）行距就是 60/49/39/51/62/60 px 这种参差 —— 而「对齐」
@@ -303,6 +314,32 @@ namespace DSH_Modbus采集工具.Ui
 
             Place(root, imageLine, row++, new Thickness(0), stretch: true);
 
+            // 执行完成输出变量（2026-11-10）：口径照扫码器的「执行结果输出变量」——
+            // 正常执行完成写 1、异常执行完成写 2，两个值固定不可配，框下用一行小字说明。
+            AddLabel(root, "执行完成输出变量", row, bottomMargin: 0);
+            _completionBox = MakeTextBox(task.CompletionVariableName);
+
+            if (_variableCompletions != null)
+            {
+                // 与扫码器同一份候选：只补全局变量（系统变量没有地址，写不进去）。
+                // 候选已由调用方按「只收整数（整条或元素）」过滤，见 2026-11-11。
+                CompletionPopup.Attach(_completionBox, _variableCompletions);
+            }
+
+            Place(root, _completionBox, row++, new Thickness(0), stretch: true);
+
+            // 说明行独立成 Auto 行：两行文字塞进 40 高的表单行会溢出压到错误行。
+            var completionHint = new TextBlock
+            {
+                Text = AcquisitionTaskRules.ResultValueHint,
+                Style = RequireStyle("Dialog.Hint"),
+                Margin = new Thickness(0, 0, 0, 6),
+            };
+
+            Grid.SetRow(completionHint, row++);
+            Grid.SetColumn(completionHint, 1);
+            root.Children.Add(completionHint);
+
             // 只在「触发」下可填的两项：置灰而不是隐藏 —— 隐藏会让对话框在两档之间
             // 忽高忽低，用户点一下就得重新找控件在哪。
             _periodRadio.Checked += (_, _) => SyncModeEnabled();
@@ -321,6 +358,7 @@ namespace DSH_Modbus采集工具.Ui
 
             // 一改字就把上次的错误提示撤掉（对话框里没有程序回填，不必像状态编辑窗那样加闸门）
             _expressionBox.TextChanged += (_, _) => ShowError(null);
+            _completionBox.TextChanged += (_, _) => ShowError(null);
 
             var buttons = new StackPanel
             {
@@ -411,15 +449,20 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>实时背景图相对路径（空串 = 没配图）。</summary>
         public string LiveImagePathValue => _liveImagePath;
 
+        /// <summary>执行完成输出变量名（空串 = 不写结果）。</summary>
+        public string CompletionVariableValue => _completionBox.Text.Trim();
+
         /// <summary>弹出对话框；用户取消返回 <c>null</c>。</summary>
         public static AcquisitionTaskDialog? Ask(
             Window owner,
             AcquisitionTask task,
             Func<string, bool> taskNameExists,
-            Func<string, bool> variableExists,
-            Func<IReadOnlyList<CompletionCandidate>>? completions = null)
+            Func<string, GlobalVariable?> findVariable,
+            Func<IReadOnlyList<CompletionCandidate>>? completions = null,
+            Func<IReadOnlyList<CompletionCandidate>>? variableCompletions = null)
         {
-            var dlg = new AcquisitionTaskDialog(task, taskNameExists, variableExists, completions);
+            var dlg = new AcquisitionTaskDialog(
+                task, taskNameExists, findVariable, completions, variableCompletions);
 
             dlg.AttachOwner(owner);
 
@@ -548,6 +591,17 @@ namespace DSH_Modbus采集工具.Ui
                 }
             }
 
+            // 执行完成输出变量：留空合法，填了必须是能装下 1 / 2 的整数全局变量。
+            // 与配置完整性检查共用同一处判据，避免「对话框放行、整组却报配置错误」。
+            if (!AcquisitionTaskRules.TryValidateCompletionVariable(
+                    _completionBox.Text, _findVariable, out _, out string completionError))
+            {
+                ShowError(completionError);
+                _completionBox.Focus();
+                _completionBox.SelectAll();
+                return;
+            }
+
             ShowError(null);
             DialogResult = true;
         }
@@ -610,7 +664,7 @@ namespace DSH_Modbus采集工具.Ui
                 return true;
             }
 
-            return compiled.TryValidateNames(_nameExistsOfVariable, out error);
+            return compiled.TryValidateNames(_nameErrorOfVariable, out error);
         }
 
         /// <summary>
@@ -620,8 +674,12 @@ namespace DSH_Modbus采集工具.Ui
         /// 两者签名一样但语义完全不同，共用一个会写出「表达式里填任务名也算合法」的 bug。
         /// </para>
         /// </summary>
-        private bool _nameExistsOfVariable(string name) =>
-            SystemVariable.Find(name) != null || _variableExists(name);
+        /// <summary>
+        /// 表达式名字校验：合法返回 <c>null</c>，否则返回原因。
+        /// <para>数组必须带下标（<c>var1[0]</c>），整条数组在这里被拒。</para>
+        /// </summary>
+        private string? _nameErrorOfVariable(string name) =>
+            VariableReference.Describe(name, _findVariable, allowWholeArray: false);
 
         private void ShowError(string? message)
         {

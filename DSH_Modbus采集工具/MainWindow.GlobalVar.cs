@@ -109,6 +109,9 @@ namespace DSH_Modbus采集工具
             RefreshGlobalVarView();
             GlobalVarItemsControl?.UpdateLayout();
             FocusGlobalVarRow(item);
+
+            // 新增变量也可能让别处原本「变量不存在」的引用恢复 —— 与删除走同一条刷新链
+            RefreshAfterVariableChange();
         }
 
         private void RemoveGlobalVar_Click(object sender, RoutedEventArgs e)
@@ -454,7 +457,7 @@ namespace DSH_Modbus采集工具
             // Compiled（按旧名字编译的），光改 Expression 文本不会让缓存跟着变，
             // 不重编译就是「文本看着对、求值仍报变量不存在」。
             _machineSet.RenameVariableReferences(oldName, newName);
-            _machineSet.RecompileAll(ExpressionNameExists);
+            _machineSet.RecompileAll(ExpressionNameError);
 
             // 扫码器：两个变量框 + 触发表达式
             _scannerSet.RenameVariableReferences(oldName, newName);
@@ -507,12 +510,26 @@ namespace DSH_Modbus采集工具
             // 放在下面的早退之前：没有监控行时也要更新状态机的清单与采集项的类型列
             RefreshMachineGlobals();
 
+            // ⚠️ 采集 / 扫码器的常驻清单必须在这里重算（2026-11-11）：
+            // 两份清单里存的是 `GlobalVariable` 的**对象引用**。删掉变量后重建同名变量，
+            // 清单里仍是旧对象 → 任务引用新对象、轮询却还在读旧对象，值永远不更新。
+            RefreshAcquisitionGlobals();
+
             // 数据采集项的「数据类型」是从变量表反推的，变量改名/换类型后这里会变成旧值
             _acqTaskSet.RefreshVariables();
 
             // 扫码器的缓冲区/通知变量也是按名字解析的：变量改名、删掉、换类型后要重算
             // 「不存在」「类型不对」「已在别处被引用」三种提示（同样放在早退之前）
             RefreshScannerReferenceHints();
+
+            // ⚠️ 上面那个只重算「变量已被引用」的黄字，**不重算配置错误**。
+            // 变量被删 / 换类型后，行上的「配置错误」与红框必须一起刷新，
+            // 否则用户改完变量表要等下次编辑某个框才看见（2026-11-11 补）。
+            RefreshAllScannerItemStates();
+
+            // ⚠️ **顺序**：必须先刷配置错误、再算常驻清单 ——
+            // RefreshScannerGlobals 按 `EffectiveEnabled` 过滤，用旧的 Problem 会多采 / 少采。
+            RefreshScannerGlobals();
 
             if (_monitorSet.Items.Count == 0)
             {

@@ -28,7 +28,7 @@ namespace DSH_Modbus采集工具.Ui
             ("粗斜体", MachineStateFontStyle.BoldItalic),
         };
 
-        private readonly Func<string, bool> _nameExists;
+        private readonly Func<string, string?> _nameError;
         private readonly Func<IReadOnlyList<CompletionCandidate>>? _completions;
         private readonly TextBox _textBox;
         private readonly ComboBox _styleCombo;
@@ -56,11 +56,11 @@ namespace DSH_Modbus采集工具.Ui
 
         private MachineStateEditDialog(
             MachineStateItem item,
-            Func<string, bool> nameExists,
+            Func<string, string?> nameError,
             Func<IReadOnlyList<CompletionCandidate>>? completions)
             : base("状态编辑", 442)
         {
-            _nameExists = nameExists;
+            _nameError = nameError;
             _completions = completions;
             _colorHex = MachineStateItem.NormalizeColor(item.Color);
             _lastValidExpression = item.Expression;
@@ -165,7 +165,7 @@ namespace DSH_Modbus采集工具.Ui
             _expressionBox = MakeTextBox(item.Expression);
             _expressionBox.LostFocus += ExpressionBox_LostFocus;
 
-            // 表达式框：变量名补全（P7.1）。候选口径与 ExpressionNameExists 一致 ——
+            // 表达式框：变量名补全（P7.1）。候选口径与 ExpressionNameError 一致 ——
             // 校验认什么，联想就该给什么，否则会出现「联想得出来、一确定就报不存在」。
             if (_completions != null)
             {
@@ -245,10 +245,10 @@ namespace DSH_Modbus采集工具.Ui
         public static MachineStateEditDialog? Ask(
             Window owner,
             MachineStateItem item,
-            Func<string, bool> nameExists,
+            Func<string, string?> nameError,
             Func<IReadOnlyList<CompletionCandidate>>? completions = null)
         {
-            var dlg = new MachineStateEditDialog(item, nameExists, completions);
+            var dlg = new MachineStateEditDialog(item, nameError, completions);
 
             dlg.AttachOwner(owner);
 
@@ -294,7 +294,7 @@ namespace DSH_Modbus采集工具.Ui
                 return false;
             }
 
-            return compiled!.TryValidateNames(_nameExists, out error);
+            return compiled!.TryValidateNames(_nameError, out error);
         }
 
         private void Ok_Click(object sender, RoutedEventArgs e)

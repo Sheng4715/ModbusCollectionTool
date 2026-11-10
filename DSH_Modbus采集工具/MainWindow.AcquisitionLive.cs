@@ -737,10 +737,21 @@ namespace DSH_Modbus采集工具
 
             // 「小数显示位数」只在变量是浮点时才出现（2026-11-06 用户定案的条件）。
             // 变量查不到 / 没填时按「不是浮点」处理 —— 那种卡片本来就只显示占位符
-            GlobalVariable? liveVar = card.Item.VariableName.Length == 0
-                ? null
-                : _globalVarSet.FindByName(card.Item.VariableName);
-            bool isFloat = liveVar?.Type == DataType.Real;
+            // 数组元素（var1[0]）按**元素类型**判断，不能拿整条数组的类型。
+            GlobalVariable? liveVar = null;
+            int? liveIndex = null;
+
+            if (card.Item.VariableName.Length > 0)
+            {
+                VariableReference.TryResolve(
+                    card.Item.VariableName, _globalVarSet.FindByName, allowWholeArray: false,
+                    out liveVar, out liveIndex, out _);
+            }
+
+            DataType liveType = liveIndex is int
+                ? liveVar?.ElementType ?? DataType.Int
+                : liveVar?.Type ?? DataType.Int;
+            bool isFloat = liveType == DataType.Real;
 
             AcquireLiveCardOptionDialog.Ask(
                 this, card.Item, isFloat,
@@ -794,11 +805,18 @@ namespace DSH_Modbus采集工具
 
         private void RefreshLiveCardValue(LiveCard card)
         {
-            GlobalVariable? variable = card.Item.VariableName.Length == 0
-                ? null
-                : _globalVarSet.FindByName(card.Item.VariableName);
+            GlobalVariable? variable = null;
+            int? elementIndex = null;
 
-            card.ValueText.Text = AcquisitionLiveText.Format(variable, card.Item.LiveFloatDecimals);
+            if (card.Item.VariableName.Length > 0)
+            {
+                VariableReference.TryResolve(
+                    card.Item.VariableName, _globalVarSet.FindByName, allowWholeArray: false,
+                    out variable, out elementIndex, out _);
+            }
+
+            card.ValueText.Text = AcquisitionLiveText.Format(
+                variable, elementIndex, card.Item.LiveFloatDecimals);
         }
 
         // ---------- 背景图 ----------

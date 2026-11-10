@@ -955,7 +955,7 @@ namespace DSH_Modbus采集工具.Modeling
         public IReadOnlyList<MachineStateLamp> Lamps => _lamps;
 
         /// <summary>从磁盘读，并把每条表达式编译好。</summary>
-        public void Load(Func<string, bool> nameExists)
+        public void Load(Func<string, string?> nameError)
         {
             (List<MachineStateItem> states, List<MachineEdgeLabel> edges, List<MachineStateLamp> lamps) =
                 MachineStateStore.LoadAll();
@@ -971,14 +971,18 @@ namespace DSH_Modbus采集工具.Modeling
 
             foreach (MachineStateItem item in _items)
             {
-                CompileQuietly(item, nameExists);
+                CompileQuietly(item, nameError);
             }
 
             foreach (MachineStateLamp lamp in _lamps)
             {
-                CompileQuietly(lamp, nameExists);
+                CompileQuietly(lamp, nameError);
             }
         }
+
+        /// <summary>兼容只判存在性的旧调用点（⚠️ 不认识数组，整条数组会被放行）。</summary>
+        [Obsolete("只判存在性，认不出数组（var1 会被放行）。请传 Func<string,string?> 返回原因")]
+        public void Load(Func<string, bool> nameExists) => Load(Wrap(nameExists));
 
         public bool Save() => MachineStateStore.Save(_items, _edgeLabels, _lamps);
 
@@ -987,9 +991,9 @@ namespace DSH_Modbus采集工具.Modeling
         /// <para>失败时**不动模型**（调用方负责把输入框退回旧值），与自由监控改名同一套规矩。</para>
         /// </summary>
         public bool TrySetExpression(
-            MachineStateItem item, string? text, Func<string, bool> nameExists, out string error)
+            MachineStateItem item, string? text, Func<string, string?> nameError, out string error)
         {
-            if (!TryCompile(text, nameExists, out CompiledExpression? compiled, out error))
+            if (!TryCompile(text, nameError, out CompiledExpression? compiled, out error))
             {
                 return false;
             }
@@ -1000,11 +1004,17 @@ namespace DSH_Modbus采集工具.Modeling
             return true;
         }
 
+        /// <summary>兼容只判存在性的旧调用点（⚠️ 不认识数组）。</summary>
+        [Obsolete("只判存在性，认不出数组。请传 Func<string,string?> 返回原因")]
+        public bool TrySetExpression(
+            MachineStateItem item, string? text, Func<string, bool> nameExists, out string error) =>
+            TrySetExpression(item, text, Wrap(nameExists), out error);
+
         /// <summary>改一个指示灯的表达式（规则与状态框完全一致）。</summary>
         public bool TrySetExpression(
-            MachineStateLamp lamp, string? text, Func<string, bool> nameExists, out string error)
+            MachineStateLamp lamp, string? text, Func<string, string?> nameError, out string error)
         {
-            if (!TryCompile(text, nameExists, out CompiledExpression? compiled, out error))
+            if (!TryCompile(text, nameError, out CompiledExpression? compiled, out error))
             {
                 return false;
             }
@@ -1015,19 +1025,29 @@ namespace DSH_Modbus采集工具.Modeling
             return true;
         }
 
+        /// <summary>兼容只判存在性的旧调用点（⚠️ 不认识数组）。</summary>
+        [Obsolete("只判存在性，认不出数组。请传 Func<string,string?> 返回原因")]
+        public bool TrySetExpression(
+            MachineStateLamp lamp, string? text, Func<string, bool> nameExists, out string error) =>
+            TrySetExpression(lamp, text, Wrap(nameExists), out error);
+
         /// <summary>启动 / 变量表变动时重建全部表达式缓存（失败的不报错，标红留给界面）。</summary>
-        public void RecompileAll(Func<string, bool> nameExists)
+        public void RecompileAll(Func<string, string?> nameError)
         {
             foreach (MachineStateItem item in _items)
             {
-                CompileQuietly(item, nameExists);
+                CompileQuietly(item, nameError);
             }
 
             foreach (MachineStateLamp lamp in _lamps)
             {
-                CompileQuietly(lamp, nameExists);
+                CompileQuietly(lamp, nameError);
             }
         }
+
+        /// <summary>兼容只判存在性的旧调用点（⚠️ 不认识数组）。</summary>
+        [Obsolete("只判存在性，认不出数组。请传 Func<string,string?> 返回原因")]
+        public void RecompileAll(Func<string, bool> nameExists) => RecompileAll(Wrap(nameExists));
 
         /// <summary>
         /// 全局变量改名后，把 9 个状态框与 2 个指示灯表达式里对它的引用改成新名字
@@ -1121,7 +1141,7 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>编译 + 变量存在性校验（成功返回 true，且 <paramref name="compiled"/> 非空）。</summary>
         private static bool TryCompile(
             string? text,
-            Func<string, bool> nameExists,
+            Func<string, string?> nameError,
             out CompiledExpression? compiled,
             out string error)
         {
@@ -1130,12 +1150,12 @@ namespace DSH_Modbus采集工具.Modeling
                 return false;
             }
 
-            return compiled!.TryValidateNames(nameExists, out error);
+            return compiled!.TryValidateNames(nameError, out error);
         }
 
-        private static void CompileQuietly(MachineStateItem item, Func<string, bool> nameExists)
+        private static void CompileQuietly(MachineStateItem item, Func<string, string?> nameError)
         {
-            bool ok = TryCompile(item.Expression, nameExists, out CompiledExpression? compiled, out string error);
+            bool ok = TryCompile(item.Expression, nameError, out CompiledExpression? compiled, out string error);
             item.Compiled = compiled;
             item.ExpressionError = ok ? string.Empty : error;
 
@@ -1143,11 +1163,15 @@ namespace DSH_Modbus采集工具.Modeling
             // 语义与「编译失败」一样是灭，但界面能拿到更具体的错误
         }
 
-        private static void CompileQuietly(MachineStateLamp lamp, Func<string, bool> nameExists)
+        private static void CompileQuietly(MachineStateLamp lamp, Func<string, string?> nameError)
         {
-            bool ok = TryCompile(lamp.Expression, nameExists, out CompiledExpression? compiled, out string error);
+            bool ok = TryCompile(lamp.Expression, nameError, out CompiledExpression? compiled, out string error);
             lamp.Compiled = compiled;
             lamp.ExpressionError = ok ? string.Empty : error;
         }
+
+        /// <summary>把「只判存在」的旧谓词包成「返回原因」的新校验器。</summary>
+        private static Func<string, string?> Wrap(Func<string, bool> nameExists) =>
+            name => nameExists(name) ? null : $"变量“{name}”不存在";
     }
 }

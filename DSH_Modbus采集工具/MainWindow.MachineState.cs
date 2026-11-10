@@ -33,9 +33,23 @@ namespace DSH_Modbus采集工具
     {
         // ---------- PLC 状态机（P1.2） ----------
 
-        /// <summary>表达式里能引用的变量名：系统变量 + 全局变量（两者不会重名）。</summary>
+        /// <summary>
+        /// 表达式里能引用的变量名：系统变量 + 全局变量（两者不会重名）。
+        /// <para>⚠️ 只判存在性、**认不出数组**；表达式校验一律用
+        /// <see cref="ExpressionNameError"/>。</para>
+        /// </summary>
         private bool ExpressionNameExists(string name) =>
             SystemVariable.Find(name) != null || _globalVarSet.FindByName(name) != null;
+
+        /// <summary>
+        /// 表达式名字校验：合法返回 <c>null</c>，否则返回原因（数组必须带下标、下标要合法）。
+        /// <para>
+        /// ⚠️ **不要退回 `ExpressionNameExists`**：那个只判存在性，`var1`（整条数组）
+        /// 会被当成合法引用，而用户明确「数组只能对元素读写」。
+        /// </para>
+        /// </summary>
+        private string? ExpressionNameError(string name) =>
+            VariableReference.Describe(name, _globalVarSet.FindByName, allowWholeArray: false);
 
         /// <summary>
         /// 全局变量模型列表，供补全用（P7.1）。
@@ -73,18 +87,25 @@ namespace DSH_Modbus采集工具
 
                 foreach (var (name, _) in compiled.UsedNames)
                 {
-                    if (!seen.Add(name))
+                    // 数组元素引用 `var1[0]`：上总线的应该是**基础变量** var1。
+                    // 直接把 `var1[0]` 拿去查变量表会查不到，于是这条引用永远不采。
+                    if (!VariableReference.TrySplit(name, out string baseName, out _, out _))
+                    {
+                        continue;
+                    }
+
+                    if (!seen.Add(baseName))
                     {
                         continue;
                     }
 
                     // 系统变量不是全局变量：它的值来自内存快照，不产生任何报文
-                    if (SystemVariable.Find(name) != null)
+                    if (SystemVariable.Find(baseName) != null)
                     {
                         continue;
                     }
 
-                    if (_globalVarSet.FindByName(name) is { } variable)
+                    if (_globalVarSet.FindByName(baseName) is { } variable)
                     {
                         needed.Add(variable);
                     }
@@ -103,6 +124,83 @@ namespace DSH_Modbus采集工具
             }
 
             _machineGlobals = needed;
+        }
+
+        /// <summary>
+        /// 重算「扫码器触发表达式引用了哪些全局变量」（2026-11-11）。
+        /// <para>
+        /// 与 <see cref="RefreshAcquisitionGlobals"/> 同一口径，只是来源换成
+        /// `scanner.json` 的 `TriggerExpression`：**常驻采集**，不随页面可见性停。
+        /// 漏了它，触发条件里写 `speed > 0` / `var1[0] == 1` 会永远拿初始值求值，
+        /// 而界面上没有任何报错（用户会以为扫码器坏了）。
+        /// </para>
+        /// <para>
+        /// 调用时机：扫码器表达式保存、扫码器增删、变量表变化、启动载入。
+        /// 同样**不放进每拍** —— <see cref="ICollectorHost.CaptureSnapshot"/> 必须便宜。
+        /// </para>
+        /// </summary>
+        private void RefreshScannerGlobals()
+        {
+            var needed = new List<GlobalVariable>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            void Take(string? name)
+            {
+                // 数组元素引用 `var1[0]`：上总线的是基础变量 var1
+                if (string.IsNullOrWhiteSpace(name)
+                    || !VariableName.TrySplit(name, out string baseName, out _, out _))
+                {
+                    return;
+                }
+
+                if (!seen.Add(baseName))
+                {
+                    return;
+                }
+
+                if (_globalVarSet.FindByName(baseName) is { } variable)
+                {
+                    needed.Add(variable);
+                }
+            }
+
+            foreach (ScannerItem scanner in _scannerSet.Items)
+            {
+                // 停用 / 配置错误的扫码器不触发，为它采变量等于白读
+                // （与 RefreshAcquisitionGlobals 判 EffectiveEnabled 同一口径）。
+                if (!scanner.EffectiveEnabled)
+                {
+                    continue;
+                }
+
+                string expression = scanner.Model.TriggerExpression;
+                if (string.IsNullOrWhiteSpace(expression))
+                {
+                    continue;
+                }
+
+                // 编译是惰性的（正常拍里由 EvaluateScannerTrigger 触发），
+                // 故这里按源文本现编一次；编不出来就跳过（非法表达式不该把变量拖上总线）
+                if (!CompiledExpression.TryParse(expression, out CompiledExpression? compiled, out _)
+                    || compiled == null)
+                {
+                    continue;
+                }
+
+                foreach (var (name, _) in compiled.UsedNames)
+                {
+                    // 系统变量由内存快照提供，不上总线
+                    if (VariableName.TrySplit(name, out string baseName, out _, out _)
+                        && SystemVariable.Find(baseName) != null)
+                    {
+                        continue;
+                    }
+
+                    Take(name);
+                }
+            }
+
+            _scannerGlobals = needed;
         }
 
         /// <summary>
@@ -130,12 +228,23 @@ namespace DSH_Modbus采集工具
             // 常量（# 开头）同理：它的值就在字面量里，没有任何东西要采。
             void Take(string? name)
             {
-                if (string.IsNullOrWhiteSpace(name) || !seen.Add(name))
+                if (string.IsNullOrWhiteSpace(name))
                 {
                     return;
                 }
 
-                if (_globalVarSet.FindByName(name) is { } variable)
+                // 数组元素引用 `var1[0]`：采的是基础变量 var1（整段一起读，见 GlobalReadPlan）
+                if (!VariableReference.TrySplit(name, out string baseName, out _, out _))
+                {
+                    return;
+                }
+
+                if (!seen.Add(baseName))
+                {
+                    return;
+                }
+
+                if (_globalVarSet.FindByName(baseName) is { } variable)
                 {
                     needed.Add(variable);
                 }
@@ -287,7 +396,7 @@ namespace DSH_Modbus采集工具
         {
             Ui.MachineStateEditDialog? dialog =
                 Ui.MachineStateEditDialog.Ask(
-                this, item, ExpressionNameExists, () => CompletionSource.ForExpression(GlobalVarModels));
+                this, item, ExpressionNameError, () => CompletionSource.ForExpression(GlobalVarModels));
 
             if (dialog != null)
             {
@@ -297,7 +406,7 @@ namespace DSH_Modbus采集工具
                 item.Color = dialog.ColorHex;
 
                 // 走集合的唯一入口：编译 + 变量存在性校验 + 清掉旧的错误态
-                _machineSet.TrySetExpression(item, dialog.ExpressionText, ExpressionNameExists, out _);
+                _machineSet.TrySetExpression(item, dialog.ExpressionText, ExpressionNameError, out _);
                 _machineSet.Save();
 
                 // 表达式换了 = 引用的变量可能换了，采集清单要跟着重算
@@ -319,7 +428,7 @@ namespace DSH_Modbus采集工具
         {
             Ui.MachineLampEditDialog? dialog =
                 Ui.MachineLampEditDialog.Ask(
-                this, lamp, ExpressionNameExists, () => CompletionSource.ForExpression(GlobalVarModels));
+                this, lamp, ExpressionNameError, () => CompletionSource.ForExpression(GlobalVarModels));
 
             if (dialog != null)
             {
@@ -329,7 +438,7 @@ namespace DSH_Modbus采集工具
                 lamp.Color = dialog.LampColor;
 
                 // 走集合的唯一入口：编译 + 变量存在性校验 + 清掉旧的错误态
-                _machineSet.TrySetExpression(lamp, dialog.ExpressionText, ExpressionNameExists, out _);
+                _machineSet.TrySetExpression(lamp, dialog.ExpressionText, ExpressionNameError, out _);
                 _machineSet.Save();
 
                 // 表达式换了 = 引用的变量可能换了，采集清单要跟着重算
@@ -432,24 +541,50 @@ namespace DSH_Modbus采集工具
 
             public bool TryGetValue(string name, out ExpressionValue value, out string error)
             {
-                if (SystemVariable.Find(name) is { } system)
+                // 数组元素引用（var1[0]）：先拆基础名，系统变量不接受下标。
+                if (!VariableName.TrySplit(name, out string baseName, out int? elementIndex, out string splitError))
                 {
-                    if (_system.TryGetValue(name, out string? text))
-                    {
-                        return Convert(system.Type, text, out value, out error);
-                    }
-
-                    error = $"系统变量“{name}”当前取不到值";
+                    error = splitError.Length > 0 ? splitError : "变量名为空";
                     value = default;
                     return false;
                 }
 
-                GlobalVariable? global = _globals?.FindByName(name);
-                if (global == null)
+                if (SystemVariable.Find(baseName) is { } system)
                 {
-                    error = $"变量“{name}”不存在";
+                    if (elementIndex != null)
+                    {
+                        error = $"系统变量“{baseName}”不是数组，不能写成“{name}”";
+                        value = default;
+                        return false;
+                    }
+
+                    if (_system.TryGetValue(baseName, out string? text))
+                    {
+                        return Convert(system.Type, text, out value, out error);
+                    }
+
+                    error = $"系统变量“{baseName}”当前取不到值";
                     value = default;
                     return false;
+                }
+
+                // 数组元素按元素类型 / 元素值取；整条数组被拒。
+                Func<string, GlobalVariable?>? findGlobal =
+                    _globals == null ? null : _globals.FindByName;
+
+                if (!VariableReference.TryResolve(
+                        name, findGlobal, allowWholeArray: false,
+                        out GlobalVariable? global, out int? index, out string resolveError)
+                    || global == null)
+                {
+                    error = resolveError;
+                    value = default;
+                    return false;
+                }
+
+                if (index is int i)
+                {
+                    return Convert(global.ElementType, global.GetElementValue(i), out value, out error);
                 }
 
                 return Convert(global.Type, global.Value, out value, out error);

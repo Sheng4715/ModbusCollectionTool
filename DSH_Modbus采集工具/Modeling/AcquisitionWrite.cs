@@ -49,6 +49,24 @@ namespace DSH_Modbus采集工具.Modeling
             DisplayFormat sourceFormat,
             ByteOrderSettings orders,
             out WritePlan plan,
+            out string error) =>
+            TryBuild(target, sourceText, sourceFormat, orders, null, out plan, out error);
+
+        /// <summary>
+        /// 同上，但可以指定**数组元素下标**（<c>var1[0]</c>，2026-11-10）。
+        /// <para>
+        /// 数组只能逐个元素写入（用户定案）：<paramref name="elementIndex"/> 为空时，
+        /// 目标是数组就报「数组只能逐个元素写入」；不是数组却给了下标也报错。
+        /// 元素的地址 = 基址 + <see cref="ArrayValueCodec.OffsetOf"/>，编码用元素类型。
+        /// </para>
+        /// </summary>
+        public static AcquisitionWriteStatus TryBuild(
+            GlobalVariable? target,
+            string? sourceText,
+            DisplayFormat sourceFormat,
+            ByteOrderSettings orders,
+            int? elementIndex,
+            out WritePlan plan,
             out string error)
         {
             plan = default;
@@ -57,6 +75,30 @@ namespace DSH_Modbus采集工具.Modeling
             if (target == null)
             {
                 error = "写入变量不存在";
+                return AcquisitionWriteStatus.Failed;
+            }
+
+            bool isElement = elementIndex is int;
+
+            if (target.Type == DataType.Array)
+            {
+                if (elementIndex is not int index)
+                {
+                    error = "数组只能逐个元素写入（如 " + target.Name + "[0]）";
+                    return AcquisitionWriteStatus.Failed;
+                }
+
+                if (index < 0 || index >= target.Length)
+                {
+                    error = target.Length <= 0
+                        ? "数组元素个数为 0，不能写入元素"
+                        : $"「{target.Name}[{index}]」元素下标超出范围（0 ~ {target.Length - 1}）";
+                    return AcquisitionWriteStatus.Failed;
+                }
+            }
+            else if (elementIndex is int badIndex)
+            {
+                error = $"「{target.Name}」不是数组，不能写成「{target.Name}[{badIndex}]」";
                 return AcquisitionWriteStatus.Failed;
             }
 
@@ -88,7 +130,23 @@ namespace DSH_Modbus采集工具.Modeling
                 ? AcquisitionWriteStatus.Ready
                 : AcquisitionWriteStatus.CannotAddress;
 
-            DataTypeSpec spec = DataTypes.Get(target.Type);
+            // 元素写入用**元素类型**；整条标量仍用目标类型。
+            DataType valueType = isElement ? target.ElementType : target.Type;
+            int address = target.ResolvedAddress;
+
+            if (isElement && target.ResolvedAddress >= 0)
+            {
+                int offset = ArrayValueCodec.OffsetOf(target.ElementType, elementIndex!.Value);
+                if (offset < 0)
+                {
+                    error = $"「{target.Name}[{elementIndex}]」元素地址无法计算";
+                    return AcquisitionWriteStatus.Failed;
+                }
+
+                address += offset;
+            }
+
+            DataTypeSpec spec = DataTypes.Get(valueType);
 
             if (spec.CoilOnly)
             {
@@ -104,16 +162,21 @@ namespace DSH_Modbus采集工具.Modeling
                 plan = new WritePlan
                 {
                     Area = target.Area,
-                    Address = target.ResolvedAddress,
+                    Address = address,
                     IsCoil = true,
                     CoilValue = coilText == "1",
                 };
                 return ready;
             }
 
+            // ⚠️ 解析文本仍用**来源的显示格式**（常量由调用方换成字面量自标定的格式）：
+            // 来源 INT/Hex 的值是 "2A"，按十进制读会失败；元素写入只是把**目标类型**
+            // 换成元素类型，不改变「来源文本怎么解析」。
+            DisplayFormat format = sourceFormat;
+
             // 寄存器区：STRING 按目标长度补齐，整数按目标类型校验范围
             if (!ValueCodec.TryEncodeRegisters(
-                    target.Type, sourceFormat, sourceText, target.Length, orders,
+                    valueType, format, sourceText, isElement ? 0 : target.Length, orders,
                     out ushort[] registers, out error))
             {
                 return AcquisitionWriteStatus.Failed;
@@ -122,7 +185,7 @@ namespace DSH_Modbus采集工具.Modeling
             plan = new WritePlan
             {
                 Area = target.Area,
-                Address = target.ResolvedAddress,
+                Address = address,
                 IsCoil = false,
                 Registers = registers,
             };
@@ -146,9 +209,38 @@ namespace DSH_Modbus采集工具.Modeling
         /// <param name="plan">已编码好的报文参数（<c>Registers</c> 或 <c>CoilValue</c> 有效）</param>
         /// <param name="orders">字节序</param>
         public static void ApplyToMemory(GlobalVariable target, WritePlan plan, ByteOrderSettings orders)
+            => ApplyToMemory(target, plan, orders, null);
+
+        /// <summary>
+        /// 同上，但回填的是**数组元素**（<paramref name="elementIndex"/> 非空时）。
+        /// <para>
+        /// ⚠️ 元素值一律按十进制文本存（与 <see cref="ArrayValueCodec.FormatElement"/> 同口径），
+        /// 数值形态一起写 —— 实时卡片与表达式都读那一份。
+        /// </para>
+        /// </summary>
+        public static void ApplyToMemory(
+            GlobalVariable target, WritePlan plan, ByteOrderSettings orders, int? elementIndex)
         {
             if (target == null)
             {
+                return;
+            }
+
+            if (elementIndex is int index && target.Type == DataType.Array)
+            {
+                if (plan.IsCoil)
+                {
+                    target.SetElementValue(
+                        index, ValueCodec.FormatCoil(plan.CoilValue), plan.CoilValue ? 1d : 0d);
+                    return;
+                }
+
+                ushort[] elementRegisters = plan.Registers ?? Array.Empty<ushort>();
+                target.SetElementValue(
+                    index,
+                    ValueCodec.FormatRegisters(
+                        target.ElementType, elementRegisters, DisplayFormat.Dec, orders, 0),
+                    ValueCodec.DecodeNumber(target.ElementType, elementRegisters, orders));
                 return;
             }
 

@@ -55,6 +55,9 @@
     <Compile Include="..\DSH_Modbus采集工具\Modeling\ArrayValueCodec.cs" Link="ArrayValueCodec.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Modeling\ArrayRules.cs" Link="ArrayRules.cs" />
     <Compile Include="..\DSH_Modbus采集工具\Modeling\DataTypeEnums.cs" Link="DataTypeEnums.cs" />
+    <!-- 变量引用解析（var1[0]）：读取/写入/来源/执行完成输出变量都要用 -->
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\VariableName.cs" Link="VariableName.cs" />
+    <Compile Include="..\DSH_Modbus采集工具\Modeling\VariableReference.cs" Link="VariableReference.cs" />
 </ItemGroup>
 
 </Project>

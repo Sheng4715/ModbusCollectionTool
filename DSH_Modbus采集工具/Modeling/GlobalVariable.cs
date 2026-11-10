@@ -64,9 +64,101 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>
         /// 当前值（显示格式下的文本）。**不持久化**：每次启动由
         /// <see cref="GlobalVariableSet.ResetValues"/> 重置为「0」/ 空串。
+        /// <para>⚠️ 数组**不使用**本字段（数组本身不能被引用），元素值见
+        /// <see cref="GetElementValue"/> / <see cref="SetElementValue"/>。</para>
         /// </summary>
         [JsonIgnore]
         public string Value { get; set; } = "0";
+
+        /// <summary>数组各元素的当前值文本（下标 0 基）。**不持久化**。</summary>
+        private string[] _elementValues = Array.Empty<string>();
+
+        /// <summary>数组各元素的数值形态（与 <see cref="Numeric"/> 同一用途）。**不持久化**。</summary>
+        private double?[] _elementNumerics = Array.Empty<double?>();
+
+        /// <summary>上次初始化元素缓存时的形状，形状一变就清空重来。</summary>
+        private int _elementShapeLength = -1;
+
+        private DataType _elementShapeType = DataType.Int;
+
+        /// <summary>
+        /// 取某个数组元素的当前值文本。
+        /// <para>越界返回空串（正常调用前已由 <see cref="VariableReference"/> 校验过）。</para>
+        /// </summary>
+        public string GetElementValue(int index)
+        {
+            EnsureElementValues();
+
+            return index >= 0 && index < _elementValues.Length
+                ? _elementValues[index]
+                : string.Empty;
+        }
+
+        /// <summary>取某个数组元素的数值形态；没有（例如从未赋值）返回 <c>null</c>。</summary>
+        public double? GetElementNumeric(int index)
+        {
+            EnsureElementValues();
+
+            return index >= 0 && index < _elementNumerics.Length
+                ? _elementNumerics[index]
+                : null;
+        }
+
+        /// <summary>
+        /// 写某个数组元素的当前值（同时更新数值形态）。
+        /// <para>元素值的文本一律是**十进制**（见 <see cref="ArrayValueCodec.FormatElement"/>）。</para>
+        /// </summary>
+        public void SetElementValue(int index, string? text, double? numeric = null)
+        {
+            EnsureElementValues();
+
+            if (index < 0 || index >= _elementValues.Length)
+            {
+                return;
+            }
+
+            _elementValues[index] = text ?? string.Empty;
+            _elementNumerics[index] = numeric;
+        }
+
+        /// <summary>把全部元素值重置为初始值（0 / 空串）。</summary>
+        public void ResetElementValues()
+        {
+            _elementShapeLength = -1;
+            EnsureElementValues();
+        }
+
+        private void EnsureElementValues()
+        {
+            // ⚠️ 元素个数要按声明上限夹取（2026-11-11）：`GlobalVar.json` 被手改成
+            // `Length = 100000000` 时，这里会直接分配巨型数组 → OOM；
+            // 而 ArrayRules 明明已经把合法范围定死在 1~128，非法声明不该分配。
+            int count = Type == DataType.Array
+                ? Math.Clamp(Length, 0, ArrayRules.MaxLength)
+                : 0;
+
+            if (_elementValues.Length == count
+                && _elementShapeLength == count
+                && _elementShapeType == ElementType)
+            {
+                return;
+            }
+
+            _elementValues = new string[count];
+            _elementNumerics = new double?[count];
+
+            // 元素不可能是 STRING（ArrayRules 禁止），故初始值一律 "0"、数值形态 0。
+            // ⚠️ 数值形态必须一起初始化：只给文本的话，实时卡片读 Numeric 得到 null 会显示「—」，
+            // 而同一元素的 CSV 却是 "0"，两处不一致（2026-11-11）。
+            for (int i = 0; i < count; i++)
+            {
+                _elementValues[i] = "0";
+                _elementNumerics[i] = 0d;
+            }
+
+            _elementShapeLength = count;
+            _elementShapeType = ElementType;
+        }
 
         /// <summary>
         /// 当前值的**数值形态**（P1.4 实时数据用）。**不持久化**。
@@ -548,6 +640,9 @@ namespace DSH_Modbus采集工具.Modeling
                 // 数值形态要一起清，否则「重置了但实时卡片还显示旧数」——
                 // 卡片读的是 Numeric，不是 Value
                 v.Numeric = null;
+
+                // 数组没有 Value 可用（不能被整组引用），元素值单独重置
+                v.ResetElementValues();
             }
         }
 
@@ -584,6 +679,7 @@ namespace DSH_Modbus采集工具.Modeling
             }
 
             v.Value = GlobalVariableRules.InitialValue(v.Type);
+            v.ResetElementValues();
             _items.Add(v);
             ResolveOnly(v);
             return v;

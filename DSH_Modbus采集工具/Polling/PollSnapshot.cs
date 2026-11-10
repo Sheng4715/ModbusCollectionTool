@@ -39,6 +39,13 @@ namespace DSH_Modbus采集工具.Polling;
 /// 采集任务不能跟着停 —— 停了记录里会凭空缺一段，事后完全看不出来。
 /// </para>
 /// </param>
+/// <param name="ScannerGlobals">
+/// 扫码器**触发表达式**引用到的全局变量 —— 同样**常驻读取**（2026-11-11 用户定案）。
+/// <para>
+/// 扫码器节拍本来就常驻（50ms 判定），触发条件里的全局变量若只在某个页面可见时才采，
+/// 用户切走页面后触发沿就永远等不到，而界面上没有任何提示。
+/// </para>
+/// </param>
 internal readonly record struct PollSnapshot(
     bool IoPageActive,
     bool FreeViewActive,
@@ -46,4 +53,5 @@ internal readonly record struct PollSnapshot(
     int PollIntervalMs,
     bool MachineViewActive,
     IReadOnlyList<GlobalVariable> MachineGlobals,
-    IReadOnlyList<GlobalVariable> AcquisitionGlobals);
+    IReadOnlyList<GlobalVariable> AcquisitionGlobals,
+    IReadOnlyList<GlobalVariable> ScannerGlobals);

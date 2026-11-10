@@ -36,7 +36,7 @@ namespace DSH_Modbus采集工具.Ui
         /// <summary>圆点直径候选（模型允许 6..28，这里取整数步长）。</summary>
         private static readonly double[] DotSizes = { 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28 };
 
-        private readonly Func<string, bool> _nameExists;
+        private readonly Func<string, string?> _nameError;
         private readonly Func<IReadOnlyList<CompletionCandidate>>? _completions;
         private readonly TextBox _textBox;
         private readonly TextBox _expressionBox;
@@ -60,11 +60,11 @@ namespace DSH_Modbus采集工具.Ui
 
         private MachineLampEditDialog(
             MachineStateLamp lamp,
-            Func<string, bool> nameExists,
+            Func<string, string?> nameError,
             Func<IReadOnlyList<CompletionCandidate>>? completions)
             : base("指示灯编辑", 442)
         {
-            _nameExists = nameExists;
+            _nameError = nameError;
             _completions = completions;
             _lastValidExpression = lamp.Expression;
             _lampColor = MachineStateLamp.NormalizeColor(lamp.Color);
@@ -255,10 +255,10 @@ namespace DSH_Modbus采集工具.Ui
         public static MachineLampEditDialog? Ask(
             Window owner,
             MachineStateLamp lamp,
-            Func<string, bool> nameExists,
+            Func<string, string?> nameError,
             Func<IReadOnlyList<CompletionCandidate>>? completions = null)
         {
-            var dlg = new MachineLampEditDialog(lamp, nameExists, completions);
+            var dlg = new MachineLampEditDialog(lamp, nameError, completions);
 
             dlg.AttachOwner(owner);
 
@@ -299,7 +299,7 @@ namespace DSH_Modbus采集工具.Ui
                 return false;
             }
 
-            return compiled!.TryValidateNames(_nameExists, out error);
+            return compiled!.TryValidateNames(_nameError, out error);
         }
 
         private void Ok_Click(object sender, RoutedEventArgs e)

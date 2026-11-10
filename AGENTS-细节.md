@@ -458,6 +458,41 @@
 - **变量行实测（2026-11-10）**：`var1` 声明为 `ARRAY<BOOL>[80]` → 监控行显示 **`BOOL[80]`**、
   类型框与格式框均 `IsEnabled=False`
 
+**数组只认元素（2026-11-10 用户定案，**所有引用框通用**）**：
+
+- **规则**：数组变量 `var1` **不能直接引用**，必须写成 `var1[0]`（下标 0 基、范围 `0 ~ Length-1`）。
+  适用于：表达式框（状态机 / 采集触发 / 扫码器触发）、采集的读取 / 写入 / 来源变量、
+  执行完成输出变量、扫码器接收缓冲区 / 执行结果输出变量、实时卡片、CSV 取值。
+- **唯一实现**：`Modeling/VariableName.cs`（**零依赖**，只拆写法：`var1` / `var1[0]` / 报错）
+  + `Modeling/VariableReference.cs`（查变量表：存在性 / 是否数组 / 下标范围 / **变量自身 `ResolveError`** / `Describe` / `ReadValue`）。
+  ⚠️ **不要在别处再写一遍 `[` 的解析**：改名、表达式词法、CSV、配置检查、扫码器全部走这两个类。
+- ⚠️ **引用校验要连带查变量自身的配置**（2026-11-11）：`ResolveError` 非空（地址解析失败）或数组声明非法时，
+  `GlobalReadPlan.Build` 会把变量整个过滤掉、一个报文都不发。若界面仍报「配置完整」，
+  用户会以为在采 —— 故 `VariableReference.TryResolve` 先把这两类拦住。
+- ⚠️ **`var1 [0]`（下标前有空格）一律无效**：表达式词法器要求 `[` 紧跟标识符，
+  变量框若放行，同一种写法会在两个入口得到不同结论。
+- **表达式里的 `var1[0]` 是一个标识符**：`ExpressionLexer` 把 `[数字]` 直接并入变量名，
+  `VariableNode.Name` / `CompiledExpression.UsedNames` 存的就是 `"var1[0]"`，
+  故求值/校验接口仍是 `string`，不必给语法树加下标节点。
+  ⚠️ 词法器对 `var1[]` / `var1[a]` / `var1[0` 各有专门报错，不要退回「无法识别的字符」。
+- **校验函数返回原因而不是 bool**：`CompiledExpression.TryValidateNames(Func<string,string?>, out error)`
+  （旧的 `Func<string,bool>` 重载只给「变量不存在」，**认不出数组**，仅为兼容断言工程保留）。
+  `MachineStateSet` / 两个状态机编辑对话框 / 采集任务对话框 / 扫码器全部改用它；
+  统一的名字校验出口是 `VariableReference.Describe(name, findGlobal, allowWholeArray: false)`。
+- **读**：`GlobalReadPlan.Apply` 遇到 `Type == Array` 时按元素切片回填
+  `GlobalVariable.SetElementValue(i, text, numeric)`（线圈数组走 `TryGetCoilElement`）。
+  **数组不写 `Value`**（整条不可引用），元素值/数值形态各存一份。
+- **写**：`AcquisitionWrite.TryBuild(..., int? elementIndex, ...)`：地址 = 基址 + `ArrayValueCodec.OffsetOf`，
+  编码用**元素类型**，元素一律 `DisplayFormat.Dec`；`ApplyToMemory(..., elementIndex)` 只回填该元素。
+  整条数组 / 非数组带下标 → `Failed` 且文案说清。
+- **改名**：`VariableRenamer.RenameReference` / `TryRenameExpression` 只换**基础名**、保留 `[下标]`。
+  例：`var1[0] == 1 && var10 == 1` → `v2[0] == 1 && var10 == 1`。
+- **补全**：数组变量的候选给 `var1[0]` 作样板，Detail 写「数组，请填元素下标（0 ~ N-1）」，
+  用户要别的下标自己改数字。
+- **扫码器缓冲区是例外**：接收内容输出变量**只能是 STRING**（用户 2026-11-10 补充），
+  而数组元素不能是 STRING（`ArrayRules` 禁止），所以缓冲区**拒绝元素写法**、
+  仍只接受整条 STRING 变量；执行结果输出变量可以是整数元素。
+
 ### 5.3 系统变量（P3.5，数据管理页第三分段）
 
 摆出一份**写死、只读**的预定义变量清单（17 项）。
@@ -718,9 +753,13 @@
 | # | 序号（1 起，**不落盘**） | 只读 |
 | 日志记录 | 任务组活动记不记运行日志（**默认开**；与下面「数据记录」是两件事） | 对话框 |
 | 数据记录 | 记录到文件的开关（与行内「启用」是**两件事**，默认关） | 对话框 |
+| 执行完成输出变量 | 跑完写 1（正常）/ 2（异常）的全局变量（**留空 = 不写**；只认 INT/UINT/DINT/UDINT） | 对话框 |
 
-> 任务选项对话框的七个表单行是**固定行高 40**（不是自动高度 + 下边距），
+> 任务选项对话框的**九个**表单行是**固定行高 40**（不是自动高度 + 下边距），
+> 第九行「执行完成输出变量」下面还有一行说明小字（**Auto 行**，不与 40 高的表单行混排）。
 > 详见 `AGENTS.md` §9.3 第 8 条 —— 改行距/加行前先读。
+> ⚠️ 标签列宽 **112**（不再是 68）：「执行完成输出变量」8 个字，68 会硬裁断；
+> 对话框宽度同步从 442 → 500，否则右列被压得放不下按钮行。
 | 数据项 | `共 N 项`（只报数量，**不放按钮**） | 只读 |
 | 操作 | … ↑↓ | 行内 |
 
@@ -1026,6 +1065,52 @@
   ② `AcquisitionWrite.TryBuild` 兜底拒写（给旧数据 / 手改 json 用）。
   行内也标：`AcquisitionTaskItem.HasVariableError` 与 `VariableHint` 都会报「属于只读区（输入元件）」。
   ⚠️ 判定只有 `GlobalVariableStore.IsReadOnlyElement` **一处来源**，写入侧只管读 `IsReadOnly` 标志
+
+**常驻轮询的三份清单（2026-11-11）**：
+
+| 清单 | 来源 | 何时采 |
+|---|---|---|
+| `_machineGlobals` | 状态机 9 框 + 2 灯表达式 | 总览页「PLC状态机」可见时 |
+| `_acquisitionGlobals` | 采集任务组的读取 / 写入 / 来源变量 + 触发表达式 | **常驻**（与页面无关） |
+| `_scannerGlobals` | 扫码器触发表达式 | **常驻**（与页面无关） |
+
+- ⚠️ **扫码器触发表达式必须有自己的清单**（2026-11-11 修）：原先只刷系统变量快照，
+  表达式里的**全局变量**没有任何地方采 → 触发条件写 `speed > 0` / `var1[0] == 1`
+  会永远拿初始值求值，界面上却显示「配置完整」，用户只会以为扫码器坏了。
+  入口 `RefreshScannerGlobals()`（`MainWindow.MachineState.cs`），
+  在**扫码器表达式提交 / 增删 / 启停 / 变量表变化 / 启动载入**时重算。
+- ⚠️ **变量表一变，两份常驻清单都要重算**：`RefreshAfterVariableChange()` 里
+  `_acquisitionGlobals` / `_scannerGlobals` 存的是 `GlobalVariable` **对象引用** ——
+  删掉变量后重建同名变量，清单里仍是旧对象，任务引用新对象、轮询读旧对象，值永远不更新。
+- ⚠️ **`RefreshScannerReferenceHints()` 只算「变量已被引用」的黄字，不算配置错误**：
+  变量删除 / 换类型后还要 `RefreshAllScannerItemStates()` 才能让行上的「配置错误」与红框跟上。
+- ⚠️ **新增变量也要 `RefreshAfterVariableChange()`**：新增可能让别处原本「变量不存在」的引用恢复，
+  只调 `RefreshGlobalVarView()` 的话任务组 / 扫码器不会自动变回可用。
+
+**执行完成输出变量（2026-11-10，口径照扫码器「执行结果输出变量」）**：
+
+- 任务组选项对话框最后一行，模型字段 `AcquisitionTask.CompletionVariableName`（空串 = 不写）。
+  写入值固定：**正常执行完成 `1`、异常执行完成 `2`**（`AcquisitionTaskRules.ResultSuccess` / `ResultFailure`），
+  框下一行小字 `ResultValueHint`，**不做可配**（与扫码器同口径）
+- **只认 INT / UINT / DINT / UDINT**；留空合法。校验只有一处
+  `AcquisitionTaskRules.TryValidateCompletionVariable`，**对话框与 `AcquisitionTaskCheck` 共用它** ——
+  填了查不到 / 类型不对就报「配置错误」、整组拦下（与扫码器校验、既有配置完整性同一套）
+- 「异常」的判据**复用现有执行日志的判据**：读取任务看 `AcquisitionCsv.Append` 的返回；
+  写入任务看 `DescribeFailure` 汇总出的 `reason`。即「日志写执行完成 → 写 1，日志写执行失败 → 写 2」，
+  不新增第二套成败判断
+- 下发链路 `QueueCompletionWrite`（`MainWindow.Acquisition.cs`）：**先 `ApplyToMemory` 无条件回填内存**
+  （无地址 / PLC 未连也能在界面看到结果）→ 有地址且已连接时再经 FC06 / FC16 写 PLC。
+  ⚠️ 编码格式**固定用 `DisplayFormat.Dec`**，不沿用变量自己的显示格式 ——
+  `Format=Hex` 的变量会把 `"1"` 当成 0x1 解析（碰巧对），但 Bin 变量会把 `"1"` 当二进制、
+  格式化回读时变成另一串文本；结果值只有十进制 1 / 2，格式由我们说了算
+- ⚠️ **不能 await**：读取任务的调用点是 50ms 定时器回调，写入任务也不该为结果变量再拖住一轮。
+  用 `AcquisitionTaskState.CompletionWriteInFlight` 挡重入 + `PendingCompletionValue`
+  **只保留最新一个**（周期 0.1s 时排队旧值只会越积越多，最后写进去的全是过期结果）
+- 未连接时**丢掉待写值**：重连后补写一个陈年结果比不写更危险，与采集「断线不补采」同口径
+- 改名连带改引用：`AcquisitionTaskItemSet.RenameVariableReferences` 里按
+  `VariableRenamer.RenameReference` 改这一格（与扫码器两个变量框同一手法）
+- 只读区（X 等）**不在配置检查里拦**：与扫码器同口径，运行期由 `AcquisitionWrite.TryBuild`
+  拒写并记一条 `执行完成输出变量：写入「X」失败：…` 日志
 
 ### 5.8 总览「数据采集」视图（P1.4，2026-10-31）
 
@@ -2292,6 +2377,8 @@ DSH_Modbus采集工具/
 │   ├── WritePlan.cs            # 一次写入的报文参数（FC05/06/16），两条写入路径共用
 │   ├── GlobalVariable.cs       # 全局变量模型 + 变量名规则 + GlobalVar.json（值不落盘）
 │   ├── VariableRenamer.cs      # 全局变量改名后同步各处引用（按标识符，禁子串替换，§5.2.2）
+│   ├── VariableName.cs         # 引用**写法**解析：`var1` / `var1[0]`（零依赖，§5.2.3）
+│   ├── VariableReference.cs    # 引用**查表**校验：存在性 / 是否数组 / 下标 / ResolveError
 │   ├── GlobalReadPlan.cs       # 读计划 + 回填（按可见页面采集）
 │   ├── CompletionSource.cs     # 变量名补全纯逻辑（取词 / 筛选 / 候选表）
 │   ├── SystemVariable.cs / SystemVariableValues.cs   # 17 项清单 / 取值（脉冲·时钟·运行时长）

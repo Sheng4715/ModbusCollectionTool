@@ -183,6 +183,14 @@ public static class GlobalReadPlan
                         continue;
                     }
 
+                    if (e.Variable.Type == DataType.Array)
+                    {
+                        ApplyCoilArray(
+                            e.Variable,
+                            coils.AsSpan(e.Offset, Math.Min(e.Units, coils.Length - e.Offset)));
+                        continue;
+                    }
+
                     bool on = coils[e.Offset];
                     e.Variable.Value = ValueCodec.FormatCoil(on);
 
@@ -197,6 +205,13 @@ public static class GlobalReadPlan
                     }
 
                     ReadOnlySpan<ushort> slice = registers.AsSpan(e.Offset, e.Units);
+
+                    if (e.Variable.Type == DataType.Array)
+                    {
+                        ApplyRegisterArray(e.Variable, slice, orders);
+                        continue;
+                    }
+
                     e.Variable.Value = ValueCodec.FormatRegisters(
                         e.Variable.Type, slice, e.Variable.Format, orders, e.Variable.Length);
 
@@ -207,6 +222,53 @@ public static class GlobalReadPlan
             catch (Exception)
             {
                 // 解码失败保留上次值（见方法注释）
+            }
+        }
+    }
+
+    /// <summary>
+    /// 把一段**线圈**按元素切开、逐元素回填（<c>ARRAY&lt;BOOL&gt;</c>，2026-11-10）。
+    /// <para>数组不能被整组引用，故只写各元素的文本与数值，不写 <c>Value</c>。</para>
+    /// </summary>
+    private static void ApplyCoilArray(GlobalVariable variable, ReadOnlySpan<bool> raw)
+    {
+        for (int i = 0; i < variable.Length; i++)
+        {
+            if (!ArrayValueCodec.TryGetCoilElement(raw, i, out bool on))
+            {
+                continue;
+            }
+
+            variable.SetElementValue(i, ValueCodec.FormatCoil(on), on ? 1d : 0d);
+        }
+    }
+
+    /// <summary>同上，但数据来自寄存器区（<c>ARRAY&lt;INT&gt;</c> 等）。</summary>
+    private static void ApplyRegisterArray(
+        GlobalVariable variable, ReadOnlySpan<ushort> raw, ByteOrderSettings orders)
+    {
+        DataType elementType = variable.ElementType;
+
+        for (int i = 0; i < variable.Length; i++)
+        {
+            // ⚠️ **逐元素 try/catch**：某个元素解码失败只跳过它、保留旧值，
+            // 不能让异常中止整个数组 —— 那会让「前几个更新了、后面不更新」，
+            // 与本方法外层「单项失败保留上次值」的口径不一致（2026-11-11）。
+            try
+            {
+                if (!ArrayValueCodec.TrySliceElement(elementType, raw, i, out ReadOnlySpan<ushort> slice))
+                {
+                    continue;
+                }
+
+                variable.SetElementValue(
+                    i,
+                    ArrayValueCodec.FormatElement(elementType, slice, orders),
+                    ValueCodec.DecodeNumber(elementType, slice, orders));
+            }
+            catch (Exception)
+            {
+                // 保留该元素上一次的值
             }
         }
     }

@@ -79,6 +79,9 @@ namespace DSH_Modbus采集工具
             // 载入的那些行也要先算一遍「还缺什么」，否则展开后红字要等第一次失焦才出现
             RefreshAllScannerItemStates();
 
+            // 触发表达式引用的全局变量要立刻上总线（常驻轮询，2026-11-11）
+            RefreshScannerGlobals();
+
             _scannerTimer.Tick += (_, _) => RunScannerTick();
             _scannerTimer.Start();
         }
@@ -206,6 +209,7 @@ namespace DSH_Modbus采集工具
             item.IsExpanded = true;
             RefreshScannerItemState(item);
             RefreshScannerView();
+            RefreshScannerGlobals();
 
             ScannerItemsControl?.UpdateLayout();
             FocusScannerName(item);
@@ -229,6 +233,7 @@ namespace DSH_Modbus采集工具
 
             _scannerSet.Remove(item);
             RefreshScannerView();
+            RefreshScannerGlobals();
         }
 
         private void ScannerRow_Loaded(object sender, RoutedEventArgs e)
@@ -387,7 +392,9 @@ namespace DSH_Modbus采集工具
                 AddScannerButton.IsEnabled = n < ScannerRules.MaxScanners;
             }
 
-            // 表单早已搬进每行的展开块，这里只剩「空提示 + 还能不能加」两件事
+            // 表单早已搬进每行的展开块，这里只剩「空提示 + 还能不能加」两件事。
+            // ⚠️ 只刷「变量已被引用」的黄字；**配置错误**要 RefreshAllScannerItemStates()
+            // （两者职责分开，见 RefreshAfterVariableChange 的注释）。
             RefreshScannerReferenceHints();
         }
 
@@ -550,7 +557,7 @@ namespace DSH_Modbus采集工具
                 return parseError;
             }
 
-            if (compiled != null && !compiled.TryValidateNames(ExpressionNameExists, out string nameError))
+            if (compiled != null && !compiled.TryValidateNames(ExpressionNameError, out string nameError))
             {
                 field = ScannerField.TriggerExpression;
                 return nameError;
@@ -594,19 +601,29 @@ namespace DSH_Modbus采集工具
                 return null;
             }
 
-            GlobalVariable? variable = _globalVarSet.FindByName(name.Trim());
-            if (variable == null)
+            // ⚠️ STRING 是**标量**，不适用「数组必须带下标」那条规则（用户 2026-11-10 补充）：
+            // 接收缓冲区只能是整条 STRING 变量；数组元素不可能是 STRING（ArrayRules 禁止），
+            // 所以数组元素引用在这里一律拒掉，不能去比元素类型。
+            if (!VariableReference.TryResolve(
+                    name, _globalVarSet.FindByName, allowWholeArray: false,
+                    out GlobalVariable? variable, out int? elementIndex, out string resolveError))
             {
-                return $"接收缓冲区变量「{name.Trim()}」不存在";
+                return "接收缓冲区变量" + resolveError;
             }
 
-            return variable.Type == DataType.String
+            if (elementIndex != null)
+            {
+                return "接收缓冲区变量只能是 STRING，数组元素不能作为接收缓冲区";
+            }
+
+            return variable!.Type == DataType.String
                 ? null
                 : $"接收缓冲区变量只能是 STRING，当前是 {variable.TypeDisplayName}";
         }
 
         /// <summary>
         /// 执行结果输出变量的校验：只能是整数类型（写入值固定为 1 / 2，非整数类型装不下）。
+        /// <para>数组可以取元素（元素类型是整数即可）；整条数组仍被拒。</para>
         /// </summary>
         private string? ValidateScannerNotifyVariable(string? name, out GlobalVariable? variable)
         {
@@ -617,15 +634,19 @@ namespace DSH_Modbus采集工具
                 return null;
             }
 
-            GlobalVariable? found = _globalVarSet.FindByName(name.Trim());
-            if (found == null)
+            if (!VariableReference.TryResolve(
+                    name, _globalVarSet.FindByName, allowWholeArray: false,
+                    out GlobalVariable? found, out int? elementIndex, out string resolveError))
             {
-                return $"执行结果输出变量「{name.Trim()}」不存在";
+                return "执行结果输出变量" + resolveError;
             }
 
-            if (found.Type is not (DataType.Int or DataType.UInt or DataType.DInt or DataType.UDInt))
+            DataType type = elementIndex is int ? found!.ElementType : found!.Type;
+
+            if (type is not (DataType.Int or DataType.UInt or DataType.DInt or DataType.UDInt))
             {
-                return $"执行结果输出变量只能是 INT / UINT / DINT / UDINT，当前是 {found.TypeDisplayName}";
+                return "执行结果输出变量只能是 INT / UINT / DINT / UDINT，当前是 "
+                    + DataTypes.Get(type).DisplayName;
             }
 
             variable = found;
@@ -633,7 +654,6 @@ namespace DSH_Modbus采集工具
         }
 
         // ---------- P3.5：变量名补全 ----------
-
         /// <summary>
         /// 触发条件表达式框：挂表达式补全（系统变量 + 全局变量），
         /// 与状态机 / 采集任务的表达式框同一份候选表。
@@ -656,20 +676,25 @@ namespace DSH_Modbus采集工具
         /// 系统变量写不进去 —— 用 <c>ForMonitorName</c> 而不是 <c>ForExpression</c>）。
         /// </summary>
         private void ScannerBufferVariableBox_Loaded(object sender, RoutedEventArgs e) =>
-            AttachScannerVariableCompletion(sender);
+            AttachScannerVariableCompletion(
+                sender, CompletionSource.CompletionFilter.StringScalarOnly);
 
         private void ScannerNotifyVariableBox_Loaded(object sender, RoutedEventArgs e) =>
-            AttachScannerVariableCompletion(sender);
+            AttachScannerVariableCompletion(
+                sender, CompletionSource.CompletionFilter.IntegerScalarOrElement);
 
-        private void AttachScannerVariableCompletion(object sender)
+        private void AttachScannerVariableCompletion(
+            object sender, CompletionSource.CompletionFilter filter)
         {
             if (sender is not TextBox box || _nameCompletions.TryGetValue(box, out _))
             {
                 return;
             }
 
+            // 候选按字段能力过滤（2026-11-11）：缓冲区只收整条 STRING、
+            // 结果变量只收整数（整条或元素），避免联想到选了必然报错的变量。
             Ui.CompletionPopup popup = Ui.CompletionPopup.Attach(
-                box, () => CompletionSource.ForMonitorName(GlobalVarModels));
+                box, () => CompletionSource.ForMonitorName(GlobalVarModels, filter));
 
             _nameCompletions.Add(box, popup);
         }
@@ -726,6 +751,9 @@ namespace DSH_Modbus采集工具
                 // 打开：立刻连一次（无须等下一拍；下一拍的 EnsureScannerConnecting 也会兜底）
                 EnsureScannerConnecting(item);
             }
+
+            // 启停改变「这台的触发表达式要不要上总线」
+            RefreshScannerGlobals();
         }
 
         // ---------- P3.5：交互参数提交（失焦 / 回车） ----------
@@ -753,7 +781,7 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            if (compiled != null && !compiled.TryValidateNames(ExpressionNameExists, out string nameError))
+            if (compiled != null && !compiled.TryValidateNames(ExpressionNameError, out string nameError))
             {
                 RejectScannerField(item, box, def.TriggerExpression, nameError, ScannerField.TriggerExpression);
                 return;
@@ -766,6 +794,11 @@ namespace DSH_Modbus采集工具
             }
 
             RefreshScannerItemState(item);
+
+            // 表达式换了 = 引用的全局变量可能换了，常驻轮询清单要跟着重算。
+            // ⚠️ 必须在 RefreshScannerItemState 之后：RefreshScannerGlobals 按
+            // EffectiveEnabled 过滤，刚算出「配置错误」的这台上总线没有意义。
+            RefreshScannerGlobals();
         }
 
         private void ScannerTriggerText_LostFocus(object sender, RoutedEventArgs e)
@@ -1314,12 +1347,12 @@ namespace DSH_Modbus采集工具
             ScannerDefinition def = item.Model;
 
             await ApplyScannerVariableAsync(
-                FindScannerVariable(def.BufferVariableName),
+                def.BufferVariableName,
                 result,
                 "接收缓冲区").ConfigureAwait(true);
 
             await ApplyScannerVariableAsync(
-                FindScannerVariable(def.NotifyVariableName),
+                def.NotifyVariableName,
                 ScannerRules.ResultSuccess,
                 "执行结果输出变量").ConfigureAwait(true);
         }
@@ -1337,52 +1370,64 @@ namespace DSH_Modbus采集工具
             ScannerDefinition def = item.Model;
 
             await ApplyScannerVariableAsync(
-                FindScannerVariable(def.NotifyVariableName),
+                def.NotifyVariableName,
                 ScannerRules.ResultFailure,
                 "执行结果输出变量").ConfigureAwait(true);
         }
 
-        private GlobalVariable? FindScannerVariable(string? name) =>
-            string.IsNullOrWhiteSpace(name) ? null : _globalVarSet.FindByName(name.Trim());
-
         /// <summary>
         /// 一次「写变量」：内存值无条件更新（PLC 未连时结果照样进内存），
         /// 有映射地址且 PLC 已连时才下发 FC06 / FC16。
+        /// <para>
+        /// 支持数组元素（<c>var1[0]</c>）：元素值写进 <see cref="GlobalVariable.SetElementValue"/>，
+        /// 地址 = 基址 + 元素偏移；整条数组会被 <see cref="VariableReference"/> / TryBuild 拒掉。
+        /// </para>
         /// </summary>
-        private async Task ApplyScannerVariableAsync(GlobalVariable? variable, string? text, string label)
+        private async Task ApplyScannerVariableAsync(string? name, string? text, string label)
         {
-            if (variable == null || text == null)
+            if (string.IsNullOrWhiteSpace(name) || text == null)
             {
+                return;
+            }
+
+            if (!VariableReference.TryResolve(
+                    name, _globalVarSet.FindByName, allowWholeArray: false,
+                    out GlobalVariable? variable, out int? elementIndex, out string resolveError)
+                || variable == null)
+            {
+                AppendDeviceLog($"{label}：写入「{name.Trim()}」失败：{resolveError}", DeviceLogLevel.Warning);
+                return;
+            }
+
+            // ⚠️ **必须先 TryBuild 再回填内存**（2026-11-11 修）：
+            // 原实现先写内存、后判 Build，结果是「只读区 / 地址解析失败」时
+            // 界面已经显示新值、PLC 却从未收到 —— 内存与设备不一致，且没有任何提示。
+            AcquisitionWriteStatus status = AcquisitionWrite.TryBuild(
+                variable, text, variable.Format, _byteOrders, elementIndex,
+                out WritePlan plan, out string buildError);
+
+            if (status == AcquisitionWriteStatus.Failed)
+            {
+                AppendDeviceLog(
+                    $"{label}：写入「{name.Trim()}」失败：{buildError}", DeviceLogLevel.Warning);
                 return;
             }
 
             try
             {
-                // 先编码：同时得到「按声明长度截断后的规范文本」与数值形态
-                if (!ValueCodec.TryEncodeRegisters(
-                        variable.Type, variable.Format, text, variable.Length, _byteOrders,
-                        out ushort[] registers, out string encodeError))
-                {
-                    AppendDeviceLog(
-                        $"{label}：写入「{variable.Name}」失败：{encodeError}", DeviceLogLevel.Warning);
-                    return;
-                }
-
-                variable.Value = ValueCodec.FormatRegisters(
-                    variable.Type, registers, variable.Format, _byteOrders, variable.Length);
-
-                // 实时卡片一律十进制显示，不能从 Value 反解（见 GlobalReadPlan.Apply 的注释）
-                variable.Numeric = ValueCodec.DecodeNumber(variable.Type, registers, _byteOrders);
-
-                if (!variable.HasAddress)
-                {
-                    // 内存变量：没有寄存器可写，也不需要连接
-                    return;
-                }
+                // 内存无条件回填（PLC 未连时结果只进内存，见 Brief P4.5 口径 B）。
+                // 元素写入只更新该元素，整条标量更新 Value + Numeric。
+                AcquisitionWrite.ApplyToMemory(variable, plan, _byteOrders, elementIndex);
             }
             catch (Exception ex)
             {
-                AppendDeviceLog($"{label}：写入「{variable.Name}」失败：{ex.Message}", DeviceLogLevel.Warning);
+                AppendDeviceLog($"{label}：写入「{name.Trim()}」失败：{ex.Message}", DeviceLogLevel.Warning);
+                return;
+            }
+
+            if (status == AcquisitionWriteStatus.CannotAddress)
+            {
+                // 没有映射地址：内存已回填，没有寄存器可发。不算失败、不记日志。
                 return;
             }
 
@@ -1390,23 +1435,6 @@ namespace DSH_Modbus采集工具
             if (modbus == null || !_session.IsConnected)
             {
                 // 口径 B：PLC 未连时只进内存、不报错（Brief P4.5）
-                return;
-            }
-
-            AcquisitionWriteStatus status = AcquisitionWrite.TryBuild(
-                variable, text, variable.Format, _byteOrders, out WritePlan plan, out string buildError);
-
-            if (status == AcquisitionWriteStatus.CannotAddress)
-            {
-                // 没有映射地址：上面的内存回填已经做过了（Value + Numeric 都设了），
-                // 到此为止 —— 没有寄存器可发。沿用原口径：不算失败、不记日志。
-                return;
-            }
-
-            if (status == AcquisitionWriteStatus.Failed)
-            {
-                AppendDeviceLog(
-                    $"{label}：写入「{variable.Name}」失败：{buildError}", DeviceLogLevel.Warning);
                 return;
             }
 
@@ -1421,7 +1449,7 @@ namespace DSH_Modbus采集工具
             catch (Exception ex)
             {
                 AppendDeviceLog(
-                    $"{label}：写入「{variable.Name}」失败：{ClassifyWriteError(ex)}", DeviceLogLevel.Warning);
+                    $"{label}：写入「{name.Trim()}」失败：{ClassifyWriteError(ex)}", DeviceLogLevel.Warning);
             }
         }
 

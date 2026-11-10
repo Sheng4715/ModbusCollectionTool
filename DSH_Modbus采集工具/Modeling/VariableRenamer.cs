@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using DSH_Modbus采集工具.Expressions;
 
 namespace DSH_Modbus采集工具.Modeling
@@ -45,6 +46,20 @@ namespace DSH_Modbus采集工具.Modeling
                 return reference ?? string.Empty;
             }
 
+            // 数组元素引用 `var1[0]`：只换**基础变量名**，下标原样保留（2026-11-10）。
+            // 否则改名后会把 `var1[0]` 当成一个整体去比，永远匹配不上。
+            if (VariableName.TrySplit(reference, out string baseName, out int? index, out _))
+            {
+                if (!string.Equals(baseName, oldName, StringComparison.Ordinal))
+                {
+                    return reference;
+                }
+
+                return index is int i
+                    ? newName + "[" + i.ToString(CultureInfo.InvariantCulture) + "]"
+                    : newName;
+            }
+
             return string.Equals(reference, oldName, StringComparison.Ordinal) ? newName : reference;
         }
 
@@ -82,13 +97,30 @@ namespace DSH_Modbus采集工具.Modeling
             }
 
             // 从后往前替换：前面的位置不受后面长度变化影响，不必记偏移补偿
-            var edits = new List<ExpressionToken>();
+            var edits = new List<(ExpressionToken Token, string Replacement)>();
             foreach (ExpressionToken token in tokens)
             {
-                if (token.Kind == ExpressionTokenKind.Identifier
-                    && string.Equals(token.Text, oldName, StringComparison.Ordinal))
+                if (token.Kind != ExpressionTokenKind.Identifier)
                 {
-                    edits.Add(token);
+                    continue;
+                }
+
+                // 数组元素引用只换基础变量名，`[下标]` 原样保留
+                string baseName = token.Text;
+                string suffix = string.Empty;
+
+                if (VariableName.TrySplit(token.Text, out string parsed, out int? index, out _))
+                {
+                    baseName = parsed;
+                    if (index is int i)
+                    {
+                        suffix = "[" + i.ToString(CultureInfo.InvariantCulture) + "]";
+                    }
+                }
+
+                if (string.Equals(baseName, oldName, StringComparison.Ordinal))
+                {
+                    edits.Add((token, newName + suffix));
                 }
             }
 
@@ -100,10 +132,11 @@ namespace DSH_Modbus采集工具.Modeling
             string text = expression;
             for (int i = edits.Count - 1; i >= 0; i--)
             {
-                ExpressionToken token = edits[i];
+                ExpressionToken token = edits[i].Token;
                 int start = token.Position - 1;   // 词法器给的是 1 基位置
 
-                text = text.Substring(0, start) + newName + text.Substring(start + token.Text.Length);
+                text = text.Substring(0, start) + edits[i].Replacement
+                    + text.Substring(start + token.Text.Length);
             }
 
             result = text;

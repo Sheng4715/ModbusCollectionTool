@@ -110,6 +110,13 @@ internal sealed class ModbusPoller
             await PollAcquisitionGlobalsAsync(modbus, snap.AcquisitionGlobals, token);
         }
 
+        // 扫码器触发表达式引用的变量：同样**不看可见性**
+        // （扫码器节拍常驻，触发沿不能因为切页面而停）。2026-11-11 用户定案。
+        if (snap.ScannerGlobals.Count > 0)
+        {
+            await PollScannerGlobalsAsync(modbus, snap.ScannerGlobals, token);
+        }
+
         // 离开设备监控页仅停采；独立心跳继续工作，各分段保留上次采集数据。
         if (!snap.IoPageActive)
         {
@@ -407,8 +414,47 @@ internal sealed class ModbusPoller
     }
 
     /// <summary>
-    /// 逐块读报文。两个「按可见性采全局变量」的入口共用，差异只在
-    /// <paramref name="stillWanted"/>：状态机那路要每块复查页面，采集那路不用。
+    /// 读扫码器**触发表达式**引用的全局变量，写回 <c>GlobalVariable.Value</c>（2026-11-11）。
+    /// <para>
+    /// 与 <see cref="PollAcquisitionGlobalsAsync"/> 同一口径：**不看页面可见性、每拍都读**。
+    /// 扫码器判定节拍常驻，触发条件里的全局变量若跟着页面停采，
+    /// 表达式会一直拿初始值求值，触发沿永远等不到，而界面不报任何错。
+    /// </para>
+    /// <para>
+    /// 单块失败不断线、保留上次值 —— 与另外两个入口一致（见 <see cref="ReadGlobalBlocksAsync"/>）。
+    /// </para>
+    /// </summary>
+    public async Task PollScannerGlobalsAsync(
+        ModbusTcpClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
+    {
+        List<GlobalReadBlock> plan = GlobalReadPlan.Build(variables);
+        if (plan.Count == 0)
+        {
+            return;
+        }
+
+        // stillWanted 恒为 true：唯一退出条件是外层 token 取消
+        var results = await ReadGlobalBlocksAsync(modbus, plan, token, () => true);
+
+        if (results.Count == 0)
+        {
+            return;
+        }
+
+        await _host.RunOnUiAsync(() =>
+        {
+            if (!_host.IsCurrentConnection(modbus, token))
+            {
+                return;
+            }
+
+            ApplyGlobalBlocks(results);
+        });
+    }
+
+    /// <summary>
+    /// 逐块读报文。三个「采全局变量」的入口共用，差异只在
+    /// <paramref name="stillWanted"/>：状态机那路要每块复查页面，另外两路不用。
     /// </summary>
     private async Task<List<(GlobalReadBlock Block, bool[]? Coils, ushort[]? Registers, string? Error)>>
         ReadGlobalBlocksAsync(

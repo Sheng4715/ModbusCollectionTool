@@ -30,6 +30,18 @@ namespace DSH_Modbus采集工具.Modeling
         public string Comment { get; init; } = string.Empty;
 
         /// <summary>
+        /// 这个来源是不是**数组元素**（<c>var1[0]</c>，2026-11-10）。
+        /// <para>元素的值从 <see cref="BaseVariable"/> 的对应下标取，不是 <c>Value</c>。</para>
+        /// </summary>
+        public bool IsArrayElement { get; init; }
+
+        /// <summary>数组元素引用的**基础变量**（<c>var1</c>）；非元素时为 <c>null</c>。</summary>
+        public GlobalVariable? BaseVariable { get; init; }
+
+        /// <summary>元素下标（0 基）；非元素时为 −1。</summary>
+        public int ElementIndex { get; init; } = -1;
+
+        /// <summary>
         /// 值的**显示格式**（决定文本怎么读回数值）。
         /// <para>
         /// 全局变量用它自己配的格式（可能是 Hex / Bin），系统变量没有格式配置，
@@ -37,6 +49,7 @@ namespace DSH_Modbus采集工具.Modeling
         /// 解析文本 —— 一个 INT/Hex 的变量，它的值是 <c>"2A"</c> 而不是 <c>42</c>，
         /// 按十进制读会解析失败。
         /// </para>
+        /// <para>数组元素一律按十进制（<see cref="ArrayValueCodec.FormatElement"/> 的口径）。</para>
         /// </summary>
         public DisplayFormat Format { get; init; } = DisplayFormat.Dec;
 
@@ -115,10 +128,34 @@ namespace DSH_Modbus采集工具.Modeling
                 };
             }
 
-            GlobalVariable? variable = findGlobal?.Invoke(name);
+            // 数组元素（var1[0]）：类型 / 值都按**元素**取，不能按整条数组。
+            // 整条数组在 VariableReference 里已被拒（用户定案：只能对元素读写）。
+            if (!VariableReference.TryResolve(
+                    name, findGlobal, allowWholeArray: false,
+                    out GlobalVariable? variable, out int? elementIndex, out _))
+            {
+                return null;
+            }
+
             if (variable == null)
             {
                 return null;
+            }
+
+            if (elementIndex is int index)
+            {
+                return new AcquisitionSource
+                {
+                    Name = name.Trim(),
+                    Type = variable.ElementType,
+                    TypeDisplayName = DataTypes.Get(variable.ElementType).DisplayName,
+                    Comment = variable.Comment,
+                    Format = DisplayFormat.Dec,
+                    IsSystemVariable = false,
+                    IsArrayElement = true,
+                    BaseVariable = variable,
+                    ElementIndex = index,
+                };
             }
 
             return new AcquisitionSource
@@ -166,7 +203,39 @@ namespace DSH_Modbus采集工具.Modeling
                     : null;
             }
 
-            return findGlobal?.Invoke(name)?.Value;
+            if (!VariableReference.TryResolve(
+                    name, findGlobal, allowWholeArray: false,
+                    out GlobalVariable? variable, out int? elementIndex, out _))
+            {
+                return null;
+            }
+
+            return elementIndex is int index
+                ? variable!.GetElementValue(index)
+                : variable!.Value;
+        }
+
+        /// <summary>
+        /// 来源解析失败时给用户看的原因。
+        /// <para>常量与变量名必须分开措辞：常量写错时若也报「变量不存在」，
+        /// 用户会去变量表里找一个根本不存在的东西。</para>
+        /// <para>数组同理：<c>var1</c>（整条数组）要报「只能对元素读写」，
+        /// 不能报成「不存在」。</para>
+        /// </summary>
+        public static string DescribeResolveError(
+            string? name, Func<string, GlobalVariable?>? findGlobal)
+        {
+            string trimmed = (name ?? string.Empty).Trim();
+
+            if (AcquisitionConstant.IsConstant(trimmed))
+            {
+                return AcquisitionConstant.TryParse(trimmed, out _, out _, out _, out string constantError)
+                    ? $"来源常量「{trimmed}」无法解析"
+                    : "来源常量无效：" + constantError;
+            }
+
+            string? error = VariableReference.Describe(trimmed, findGlobal, allowWholeArray: false);
+            return error ?? $"来源变量「{trimmed}」无法解析";
         }
     }
 }

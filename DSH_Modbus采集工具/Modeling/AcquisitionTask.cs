@@ -157,6 +157,25 @@ namespace DSH_Modbus采集工具.Modeling
         public string Expression { get; set; } = string.Empty;
 
         /// <summary>
+        /// 执行完成输出变量名（2026-11-10）。
+        /// <para>
+        /// 口径照扫码器的「执行结果输出变量」：**正常执行完成写 1、异常执行完成写 2**
+        /// （<see cref="AcquisitionTaskRules.ResultSuccess"/> / <see cref="AcquisitionTaskRules.ResultFailure"/>），
+        /// 两个值固定不可配。空串 = 不写结果。
+        /// </para>
+        /// <para>
+        /// ⚠️ 只接受 INT / UINT / DINT / UDINT（写入值 1 / 2 不需要更大范围，非整数类型装不下）。
+        /// 填了不存在或类型不对的名字算**配置错误**，整组拦下（判据在
+        /// <see cref="AcquisitionTaskCheck"/>，对话框与它共用
+        /// <see cref="AcquisitionTaskRules.TryValidateCompletionVariable"/>）。
+        /// </para>
+        /// <para>
+        /// 有映射地址时经 FC06 / FC16 回写 PLC；无地址只改内存（与扫码器、写入任务同一口径）。
+        /// </para>
+        /// </summary>
+        public string CompletionVariableName { get; set; } = string.Empty;
+
+        /// <summary>
         /// 是否启用（**任务跑不跑**）。
         /// <para>⚠️ 与 <see cref="RecordEnabled"/> 是两件事：这个管「采不采 / 写不写」，
         /// 那个管「采到之后记不记文件」。停采集不影响已有记录文件。</para>
@@ -463,6 +482,103 @@ namespace DSH_Modbus采集工具.Modeling
         public static string DescribeLogFailure(AcquisitionTask task, int index, string reason) =>
             DescribeLogPrefix(task, index) + "执行失败：" + (reason ?? string.Empty);
 
+        // ---------- 执行完成输出变量（2026-11-10） ----------
+
+        /// <summary>
+        /// 「正常执行完成」写进执行完成输出变量的值。
+        /// <para>与扫码器的 <c>ScannerRules.ResultSuccess</c> 刻意同值：同一套 1 / 2 口径。</para>
+        /// </summary>
+        public const string ResultSuccess = "1";
+
+        /// <summary>「异常执行完成」写进执行完成输出变量的值（超时以外的执行失败同样写它）。</summary>
+        public const string ResultFailure = "2";
+
+        /// <summary>执行完成输出变量框下的说明文字（界面上那一行小字）。</summary>
+        public const string ResultValueHint = "正常执行完成：1   异常执行完成：2";
+
+        /// <summary>
+        /// 执行完成输出变量允许的数据类型：只认四种整数。
+        /// <para>写入值固定为 1 / 2，BOOL / REAL / STRING 要么装不下、要么语义不对。</para>
+        /// </summary>
+        public static bool IsCompletionVariableType(DataType type) =>
+            type is DataType.Int or DataType.UInt or DataType.DInt or DataType.UDInt;
+
+        /// <summary>
+        /// 校验「执行完成输出变量」：留空合法；填了必须是存在的全局变量，
+        /// 且类型是 <see cref="IsCompletionVariableType"/> 认可的四类整数。
+        /// <para>
+        /// ⚠️ **对话框与配置检查必须共用这一处**（<see cref="AcquisitionTaskCheck"/> 也调它）：
+        /// 两边各写一套迟早出现「对话框放行、整组配置错误」的自相矛盾。
+        /// </para>
+        /// <para>
+        /// 只读区（X / 离散输入 / 输入寄存器）**不在这里拦**：与扫码器同口径，
+        /// 运行期由 <c>AcquisitionWrite.TryBuild</c> 拒写并记一条日志。
+        /// </para>
+        /// </summary>
+        /// <param name="name">用户填的变量名（允许空）。</param>
+        /// <param name="findVariable">全局变量查表；<c>null</c> 时非空名字一律算查不到。</param>
+        /// <param name="variable">校验通过时解析出的变量；留空或失败时为 <c>null</c>。</param>
+        /// <param name="error">失败原因（可直接显示 / 拼进配置问题清单）。</param>
+        public static bool TryValidateCompletionVariable(
+            string? name,
+            Func<string, GlobalVariable?>? findVariable,
+            out GlobalVariable? variable,
+            out string error) =>
+            TryValidateCompletionVariable(name, findVariable, out variable, out _, out error);
+
+        /// <summary>
+        /// 同上，额外给出**元素下标**（数组元素时非空）—— 配置检查要比对「是不是同一个引用」。
+        /// </summary>
+        public static bool TryValidateCompletionVariable(
+            string? name,
+            Func<string, GlobalVariable?>? findVariable,
+            out GlobalVariable? variable,
+            out int? elementIndex,
+            out string error)
+        {
+            variable = null;
+            elementIndex = null;
+            error = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return true;
+            }
+
+            // 数组只能对元素操作：var1 整条被引用时由 VariableReference 明确报错，
+            // 不能退化成「不存在」（用户定案 2026-11-10）。
+            if (!VariableReference.TryResolve(
+                    name, findVariable, allowWholeArray: false,
+                    out GlobalVariable? found, out int? index, out string resolveError))
+            {
+                error = "执行完成输出变量" + resolveError;
+                return false;
+            }
+
+            // 元素看**元素类型**，整条标量看变量类型
+            DataType type = index is int ? found!.ElementType : found!.Type;
+
+            if (!IsCompletionVariableType(type))
+            {
+                error = "执行完成输出变量只能是 INT / UINT / DINT / UDINT，当前是 "
+                    + DataTypes.Get(type).DisplayName;
+                return false;
+            }
+
+            // 只读区（X / 离散输入 / 输入寄存器）写不进去 —— 与写入任务同一口径，
+            // 在这里就报配置错误，而不是等到运行期写失败只留一条日志（2026-11-11）。
+            if (found.IsReadOnly)
+            {
+                error = "执行完成输出变量「" + name.Trim() + "」映射到 " + found.Address
+                    + "，属于只读区（输入元件），不能写入";
+                return false;
+            }
+
+            variable = found;
+            elementIndex = index;
+            return true;
+        }
+
         /// <summary>秒数格式化：整数不带小数点（5 而不是 5.0），小数最多三位。</summary>
         public static string FormatSeconds(double seconds) =>
             seconds.ToString("0.###", CultureInfo.InvariantCulture);
@@ -754,11 +870,45 @@ namespace DSH_Modbus采集工具.Modeling
         /// 浮点小数位数（2026-11-06 新增）。**只对 <see cref="DataType.Real"/> 生效**；
         /// 传 <c>null</c> 或越界值按 <see cref="AcquisitionTaskRules.DefaultLiveFloatDecimals"/> 处理。
         /// </param>
-        public static string Format(GlobalVariable? variable, int? floatDecimals = null)
+        public static string Format(GlobalVariable? variable, int? floatDecimals = null) =>
+            Format(variable, null, floatDecimals);
+
+        /// <summary>
+        /// 渲染**数组元素**（<c>var1[0]</c>）的值；<paramref name="elementIndex"/> 为空时按整条变量。
+        /// <para>元素值的文本一律十进制，数值形态来自 <see cref="GlobalVariable.GetElementNumeric"/>。</para>
+        /// </summary>
+        public static string Format(
+            GlobalVariable? variable, int? elementIndex, int? floatDecimals = null)
         {
             if (variable == null)
             {
                 return Placeholder;
+            }
+
+            if (elementIndex is int index)
+            {
+                if (variable.Type != DataType.Array || index < 0 || index >= variable.Length)
+                {
+                    return Placeholder;
+                }
+
+                DataType elementType = variable.ElementType;
+
+                if (elementType == DataType.Bool)
+                {
+                    return variable.GetElementNumeric(index) is { } flag
+                        ? (flag != 0 ? "TRUE" : "FALSE")
+                        : Placeholder;
+                }
+
+                if (variable.GetElementNumeric(index) is not { } elementNumber)
+                {
+                    return Placeholder;
+                }
+
+                return elementType == DataType.Real
+                    ? FormatFloat(elementNumber, floatDecimals)
+                    : FormatInteger(elementNumber);
             }
 
             if (variable.Type == DataType.Bool)

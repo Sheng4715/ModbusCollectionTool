@@ -141,7 +141,9 @@ namespace DSH_Modbus采集工具.Modeling
         /// 表达式框的候选：**系统变量 + 全局变量**。
         /// <para>与 <c>MainWindow.ExpressionNameExists</c> 的口径一致 —— 那里认什么，这里就该联想什么。</para>
         /// </summary>
-        public static List<CompletionCandidate> ForExpression(IEnumerable<GlobalVariable>? globals)
+        public static List<CompletionCandidate> ForExpression(
+            IEnumerable<GlobalVariable>? globals,
+            CompletionFilter filter = CompletionFilter.Any)
         {
             var list = new List<CompletionCandidate>();
 
@@ -155,7 +157,7 @@ namespace DSH_Modbus采集工具.Modeling
                 });
             }
 
-            AppendGlobals(list, globals);
+            AppendGlobals(list, globals, filter);
             return list;
         }
 
@@ -202,6 +204,30 @@ namespace DSH_Modbus采集工具.Modeling
             return list;
         }
 
+        /// <summary>候选过滤：只保留**能装进该字段**的变量（2026-11-11）。</summary>
+        /// <remarks>
+        /// 原先所有全局变量框共用一份候选，于是「接收内容输出变量」（只收整条 STRING）、
+        /// 「执行完成输出变量」（只收整数）也会联想出 BOOL / REAL / 数组元素 ——
+        /// 选了才报错，等于让用户先做一遍注定要改的选择。
+        /// </remarks>
+        public enum CompletionFilter
+        {
+            /// <summary>什么都可以（表达式 / 来源变量框）。</summary>
+            Any,
+
+            /// <summary>只要**整条 STRING**（扫码器接收内容输出变量）。</summary>
+            StringScalarOnly,
+
+            /// <summary>
+            /// 只要能装下 1 / 2 的**整数**：整条整数变量或整数元素
+            /// （执行完成输出变量、扫码器执行结果输出变量）。
+            /// </summary>
+            IntegerScalarOrElement,
+
+            /// <summary>只要**全局变量**、且允许数组元素（采集读取 / 写入变量）。</summary>
+            AnyGlobal,
+        }
+
         /// <summary>
         /// 自由监控「元件名称」框的候选：**只有全局变量**。
         /// <para>
@@ -210,14 +236,67 @@ namespace DSH_Modbus采集工具.Modeling
         /// </para>
         /// <para>⚠️ 按用户要求（2026-10-21）**不做元件地址联想**（不补 <c>HD100</c> 这类），只补变量名。</para>
         /// </summary>
-        public static List<CompletionCandidate> ForMonitorName(IEnumerable<GlobalVariable>? globals)
+        public static List<CompletionCandidate> ForMonitorName(
+            IEnumerable<GlobalVariable>? globals, CompletionFilter filter = CompletionFilter.AnyGlobal)
         {
             var list = new List<CompletionCandidate>();
-            AppendGlobals(list, globals);
+            AppendGlobals(list, globals, filter);
             return list;
         }
 
-        private static void AppendGlobals(List<CompletionCandidate> list, IEnumerable<GlobalVariable>? globals)
+        /// <summary>按过滤器给出一条变量该进候选的形式；<c>null</c> = 这个字段用不上它。</summary>
+        private static CompletionCandidate? BuildCandidate(GlobalVariable v, CompletionFilter filter)
+        {
+            bool isArray = v.Type == DataType.Array;
+            DataType valueType = isArray ? v.ElementType : v.Type;
+
+            switch (filter)
+            {
+                case CompletionFilter.StringScalarOnly:
+                    // 接收内容输出变量只能是整条 STRING；数组元素不可能是 STRING（ArrayRules 禁止）
+                    return v.Type == DataType.String
+                        ? new CompletionCandidate
+                        {
+                            Text = v.Name,
+                            Detail = BuildGlobalDetail(v),
+                            Kind = "全局变量",
+                        }
+                        : null;
+
+                case CompletionFilter.IntegerScalarOrElement:
+                    if (!AcquisitionTaskRules.IsCompletionVariableType(valueType))
+                    {
+                        return null;
+                    }
+
+                    break;
+            }
+
+            // 数组不能被整条引用（用户定案 2026-11-10：只能对元素读写）。
+            // 候选里给一个 `var1[0]` 作样板，用户要别的下标自己改数字。
+            if (isArray)
+            {
+                return new CompletionCandidate
+                {
+                    Text = v.Name + "[0]",
+                    Detail = v.TypeDisplayName + "  ·  数组，请填元素下标（0 ~ "
+                        + Math.Max(0, v.Length - 1) + "）",
+                    Kind = "全局变量",
+                };
+            }
+
+            return new CompletionCandidate
+            {
+                Text = v.Name,
+                Detail = BuildGlobalDetail(v),
+                Kind = "全局变量",
+            };
+        }
+
+        private static void AppendGlobals(
+            List<CompletionCandidate> list,
+            IEnumerable<GlobalVariable>? globals,
+            CompletionFilter filter = CompletionFilter.AnyGlobal)
         {
             if (globals == null)
             {
@@ -226,12 +305,11 @@ namespace DSH_Modbus采集工具.Modeling
 
             foreach (GlobalVariable v in globals)
             {
-                list.Add(new CompletionCandidate
+                CompletionCandidate? candidate = BuildCandidate(v, filter);
+                if (candidate != null)
                 {
-                    Text = v.Name,
-                    Detail = BuildGlobalDetail(v),
-                    Kind = "全局变量",
-                });
+                    list.Add(candidate);
+                }
             }
         }
 

@@ -73,6 +73,7 @@ namespace DSH_Modbus采集工具
                 }
 
                 Model.VariableName = value ?? string.Empty;
+                InvalidateResolved();
                 Raise();
                 Raise(nameof(TypeDisplayName));
                 Raise(nameof(HasVariableError));
@@ -106,9 +107,87 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        /// <summary>被引用的全局变量定义；未填或找不到时为 <c>null</c>。</summary>
-        public GlobalVariable? Variable =>
-            Model.VariableName.Length == 0 ? null : _findVariable(Model.VariableName);
+        /// <summary>
+        /// 被引用的全局变量定义；未填或找不到时为 <c>null</c>。
+        /// <para>数组元素引用（<c>var1[0]</c>）返回的是**基础变量** var1，元素下标见
+        /// <see cref="VariableElementIndex"/>。</para>
+        /// </summary>
+        public GlobalVariable? Variable
+        {
+            get
+            {
+                EnsureResolved();
+                return _resolvedVariable;
+            }
+        }
+
+        /// <summary>元素下标；整条标量引用时为 <c>null</c>（数组整条已被拒）。</summary>
+        public int? VariableElementIndex
+        {
+            get
+            {
+                EnsureResolved();
+                return _resolvedIndex;
+            }
+        }
+
+        /// <summary>引用解析失败的原因（合法时为空串）。</summary>
+        public string VariableResolveError
+        {
+            get
+            {
+                EnsureResolved();
+                return _resolvedError;
+            }
+        }
+
+        /// <summary>
+        /// 这一格引用的**值类型**：数组元素取元素类型，整条标量取变量类型。
+        /// <para>解析失败时返回 <see cref="DataType.Int"/> 占位（调用方应先看
+        /// <see cref="HasVariableError"/>）。</para>
+        /// </summary>
+        public DataType VariableType
+        {
+            get
+            {
+                EnsureResolved();
+
+                if (_resolvedVariable == null)
+                {
+                    return DataType.Int;
+                }
+
+                return _resolvedIndex is int ? _resolvedVariable.ElementType : _resolvedVariable.Type;
+            }
+        }
+
+        // ---- 引用解析缓存（2026-11-11）----
+        // 一次「刷新只读列」会连读 Variable / ElementIndex / ResolveError / Type，
+        // 每次 get 都重新 TrySplit + 查表纯属浪费；逐字符编辑时行一多就有可感知开销。
+        // 变量表变化由 RefreshVariable() 失效，变量名变化由 VariableName setter 失效。
+        private string _resolvedName = "\0";
+        private bool _resolvedCached;
+        private GlobalVariable? _resolvedVariable;
+        private int? _resolvedIndex;
+        private string _resolvedError = string.Empty;
+
+        private void EnsureResolved()
+        {
+            if (_resolvedCached
+                && string.Equals(_resolvedName, Model.VariableName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _resolvedName = Model.VariableName;
+            _resolvedCached = true;
+            VariableReference.TryResolve(
+                Model.VariableName, _findVariable, allowWholeArray: false,
+                out _resolvedVariable, out _resolvedIndex, out string error);
+            _resolvedError = _resolvedVariable == null ? error : string.Empty;
+        }
+
+        private void InvalidateResolved() => _resolvedCached = false;
 
         /// <summary>
         /// 来源变量的解析结果：**系统变量或全局变量**都算数。
@@ -155,7 +234,7 @@ namespace DSH_Modbus采集工具
 
         /// <summary>来源变量填了、但系统变量表与全局变量表里都没有 → 标红提示。</summary>
         public bool HasSourceError =>
-            Model.SourceVariableName.Length > 0 && SourceVariable == null;
+            !string.IsNullOrEmpty(Model.SourceVariableName) && SourceVariable == null;
 
         /// <summary>来源变量红字提示文案（悬停可见）</summary>
         public string SourceHint
@@ -174,11 +253,12 @@ namespace DSH_Modbus采集工具
                 }
 
                 return HasSourceError
-                    ? "系统变量表和全局变量表里都没有“" + raw + "”"
+                    ? AcquisitionSource.DescribeResolveError(raw, _findVariable)
                     : SourceVariable switch
                     {
                         null => "尚未选择来源变量（可填系统变量、全局变量，或 # 开头的常量）",
                         { IsSystemVariable: true } s => "系统变量 · " + s.TypeDisplayName + " · " + s.Comment,
+                        { IsArrayElement: true } s => s.Comment + " · [" + s.ElementIndex + "] · " + s.TypeDisplayName,
                         { } s => s.Comment,
                     };
             }
@@ -186,10 +266,32 @@ namespace DSH_Modbus采集工具
 
         /// <summary>
         /// 数据类型列（**只读**，由变量反推）。
-        /// <para>没填变量、或变量名不存在时给一个短横占位 —— 留空白会让人以为这列坏了。</para>
+        /// <para>数组元素显示**元素类型**（如 <c>INT</c>）—— 这一格的值就是一个元素。
+        /// 没填变量、或变量名不存在时给一个短横占位 —— 留空白会让人以为这列坏了。</para>
         /// </summary>
-        public string TypeDisplayName =>
-            Variable?.TypeDisplayName ?? "—";
+        public string TypeDisplayName
+        {
+            get
+            {
+                if (!VariableReference.TryResolve(
+                        Model.VariableName, _findVariable, allowWholeArray: false,
+                        out GlobalVariable? variable, out int? elementIndex, out _)
+                    || variable == null)
+                {
+                    // 整条数组：显示它的完整类型（INT[5]），让用户看出「这是数组」
+                    GlobalVariable? whole = string.IsNullOrEmpty(Model.VariableName)
+                        ? null
+                        : _findVariable(VariableReference.TrySplit(
+                            Model.VariableName, out string baseName, out _, out _) ? baseName : Model.VariableName);
+
+                    return whole?.TypeDisplayName ?? "—";
+                }
+
+                return elementIndex is int
+                    ? DataTypes.Get(variable.ElementType).DisplayName
+                    : variable.TypeDisplayName;
+            }
+        }
 
         /// <summary>
         /// 写入变量这一格有问题 → 标红（输入框与数据类型列共用这一条）。
@@ -206,7 +308,7 @@ namespace DSH_Modbus采集工具
         {
             get
             {
-                if (Model.VariableName.Length == 0)
+                if (string.IsNullOrEmpty(Model.VariableName))
                 {
                     return false;
                 }
@@ -221,7 +323,7 @@ namespace DSH_Modbus采集工具
                 if (_isWriteTask
                     && source != null
                     && !source.IsConstant
-                    && !AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type))
+                    && !AcquisitionTaskRules.WriteTypesMatch(source.Type, VariableType))
                 {
                     return true;
                 }
@@ -238,7 +340,7 @@ namespace DSH_Modbus采集工具
         {
             get
             {
-                string name = Model.VariableName;
+                string name = Model.VariableName ?? string.Empty;
 
                 if (name.Length == 0)
                 {
@@ -252,17 +354,23 @@ namespace DSH_Modbus采集工具
                 GlobalVariable? variable = Variable;
                 if (variable == null)
                 {
-                    return "全局变量表里没有“" + name + "”";
+                    // 普通「查不到」沿用旧措辞（用户已经熟悉）；数组 / 配置问题才原样转达，
+                    // 因为那种情况说「全局变量表里没有」是误导（2026-11-11）。
+                    string resolveError = VariableResolveError;
+                    return resolveError.Length > 0
+                        && resolveError != $"「{name}」不存在"
+                        ? resolveError
+                        : "全局变量表里没有“" + name + "”";
                 }
 
                 AcquisitionSource? source = SourceVariable;
                 if (_isWriteTask
                     && source != null
                     && !source.IsConstant
-                    && !AcquisitionTaskRules.WriteTypesMatch(source.Type, variable.Type))
+                    && !AcquisitionTaskRules.WriteTypesMatch(source.Type, VariableType))
                 {
                     return AcquisitionTaskRules.DescribeTypeMismatch(
-                        source.Name, source.Type, name, variable.Type);
+                        source.Name, source.Type, name, VariableType);
                 }
 
                 if (_isWriteTask && variable.IsReadOnly)
@@ -271,6 +379,12 @@ namespace DSH_Modbus采集工具
                 }
 
                 string hint = string.IsNullOrWhiteSpace(variable.Comment) ? name : variable.Comment;
+
+                if (VariableElementIndex is int elementIndex)
+                {
+                    hint += " · [" + elementIndex + "] · "
+                        + DataTypes.Get(variable.ElementType).DisplayName;
+                }
 
                 // 无地址的写入变量：值照样会写（写进内存），只是不下发到设备。
                 // ⚠️ 措辞别说成「不会写入」—— 2026-11-05 起它是会写的，只是不落 PLC。
@@ -281,6 +395,8 @@ namespace DSH_Modbus采集工具
         /// <summary>变量定义变化（改名 / 改类型）后刷新只读列。</summary>
         public void RefreshVariable()
         {
+            // 变量表本身变了（类型 / 数组声明 / 地址解析）：缓存必须失效
+            InvalidateResolved();
             Raise(nameof(TypeDisplayName));
             Raise(nameof(HasVariableError));
             Raise(nameof(VariableHint));
@@ -619,7 +735,8 @@ namespace DSH_Modbus采集工具
             bool logEnabled,
             bool recordEnabled,
             string? savePath,
-            string? liveImagePath = null)
+            string? liveImagePath = null,
+            string? completionVariableName = null)
         {
             Model.Kind = kind;
             Model.Trigger = trigger;
@@ -629,6 +746,7 @@ namespace DSH_Modbus采集工具
             Model.RecordEnabled = recordEnabled;
             Model.SavePath = savePath ?? string.Empty;
             Model.LiveImagePath = liveImagePath ?? string.Empty;
+            Model.CompletionVariableName = completionVariableName ?? string.Empty;
 
             // 从写入切回读取时，「来源变量」不再有意义。留着不清的话，切回写入会
             // 冒出上次的残留值，而用户中途早改过别的项了，看见只会困惑。
@@ -837,6 +955,16 @@ namespace DSH_Modbus采集工具
                         task.Model.Expression, oldName, newName, out string expression))
                 {
                     task.Model.Expression = expression;
+                    changed++;
+                }
+
+                // 执行完成输出变量（2026-11-10）—— 也是变量名引用，改名必须一起跟
+                string completion = VariableRenamer.RenameReference(
+                    task.Model.CompletionVariableName, oldName, newName);
+
+                if (!string.Equals(completion, task.Model.CompletionVariableName, StringComparison.Ordinal))
+                {
+                    task.Model.CompletionVariableName = completion;
                     changed++;
                 }
 

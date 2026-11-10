@@ -97,13 +97,19 @@ namespace DSH_Modbus采集工具.Expressions
         /// 校验表达式里用到的变量**都存在**。
         /// <para>同名变量只报一次，且报第一次出现的位置。</para>
         /// </summary>
-        public bool TryValidateNames(Func<string, bool> exists, out string error)
+        /// <param name="nameError">
+        /// 名字校验器：合法返回 <c>null</c>，否则返回给用户看的原因（如「是数组，只能对元素读写」）。
+        /// <para>⚠️ 用返回原因而不是 <c>bool</c>：数组的下标越界、整条数组被引用、
+        /// 变量不存在，这三种的改法完全不同，笼统报「不存在」会把人引向错误方向。</para>
+        /// </param>
+        public bool TryValidateNames(Func<string, string?> nameError, out string error)
         {
             foreach ((string name, int position) in _usedNames)
             {
-                if (!exists(name))
+                string? reason = nameError(name);
+                if (!string.IsNullOrEmpty(reason))
                 {
-                    error = $"第 {position} 个字符：变量“{name}”不存在";
+                    error = $"第 {position} 个字符：{reason}";
                     return false;
                 }
             }
@@ -111,6 +117,17 @@ namespace DSH_Modbus采集工具.Expressions
             error = string.Empty;
             return true;
         }
+
+        /// <summary>
+        /// 兼容旧调用点：只判存在性，报「变量不存在」。
+        /// <para>⚠️ **不能用于数组**：它不知道变量是不是数组，整条数组引用会被放行。
+        /// 新代码一律用 <see cref="TryValidateNames(Func{string,string?},out string)"/>。</para>
+        /// </summary>
+        [Obsolete("只判存在性，认不出数组（var1 会被放行）。业务侧请用 TryValidateNames(Func<string,string?>)")]
+        public bool TryValidateNames(Func<string, bool> exists, out string error) =>
+            TryValidateNames(
+                name => exists(name) ? null : $"变量“{name}”不存在",
+                out error);
 
         /// <summary>
         /// 求值。
