@@ -45,6 +45,9 @@ namespace DSH_Modbus采集工具.Scanners
                 cts.CancelAfter(timeout);
                 await tcp.ConnectAsync(ip, port, cts.Token).ConfigureAwait(false);
                 _tcp = tcp;
+
+                // 新连接 = 全新的链路，历史超时计数不该带过来
+                _zeroByteTimeouts = 0;
             }
             catch
             {
@@ -176,11 +179,13 @@ namespace DSH_Modbus采集工具.Scanners
                     }
                 }
 
+                // 成功收到一帧 → 链路是活的，零字节超时计数清零
+                _zeroByteTimeouts = 0;
                 return payload.ToArray();
             }
             catch
             {
-                // ⚠️ **只有「已经收到半帧」才关连接**（2026-11-11 修正）。
+                // ⚠️ **只有「已经收到半帧」才无条件关连接**（2026-11-11 修正）。
                 //
                 // 关的理由只有一个：流里剩着不完整的字节，下一轮会把旧帧的尾巴当成新帧开头
                 // （失步）。**一个字节都没收到时流是干净的**，那只是一轮「对端没回话」。
@@ -196,6 +201,10 @@ namespace DSH_Modbus采集工具.Scanners
                 {
                     Dispose();
                 }
+                else
+                {
+                    CountZeroByteTimeout();
+                }
 
                 throw;
             }
@@ -207,6 +216,42 @@ namespace DSH_Modbus采集工具.Scanners
 
         /// <summary>静默模式下轮询是否有新数据的间隔（够短以免漏帧，够长以免空转）。</summary>
         private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(5);
+
+        /// <summary>
+        /// 连续多少次「一个字节都没收到就超时」才强制断开重连。
+        /// <para>
+        /// ⚠️ 这是对「超时不断连」的**兜底**（2026-11-11）。单次零字节超时不断开是对的
+        /// （对端可能只是这一轮不回话），但如果对端已经半开 —— 拔网线 / 断电 / 老交换机
+        /// 没发 RST —— 那么 TCP 层不会报错：`DataAvailable` 恒为 false、`WriteAsync`
+        /// 照样成功（数据进了内核缓冲），于是**每一轮都白等一个超时，永不自愈**。
+        /// </para>
+        /// <para>
+        /// 取 3：现场触发是人工动作，连错 3 次基本可以断定链路死了；
+        /// 而联调时「服务端故意不回包」一般也是零星几次，不会连着 3 次。
+        /// </para>
+        /// </summary>
+        private const int ZeroByteTimeoutLimit = 3;
+
+        /// <summary>连续零字节超时的计数；**成功收到一帧就清零**。</summary>
+        private int _zeroByteTimeouts;
+
+        /// <summary>
+        /// 记一次零字节超时；累计到 <see cref="ZeroByteTimeoutLimit"/> 次就主动断开，
+        /// 让上层的退避重连把连接重建起来。
+        /// </summary>
+        private void CountZeroByteTimeout()
+        {
+            _zeroByteTimeouts++;
+
+            if (_zeroByteTimeouts >= ZeroByteTimeoutLimit)
+            {
+                // 断开而不是只清计数：半开的连接没法通过「再等一轮」救回来，
+                // 必须重建。上层（MainWindow.Scanner）看到 IsConnected=false 会起退避重连，
+                // 那时若对端真的没了，会在连接阶段失败、按既有规则记一条日志。
+                _zeroByteTimeouts = 0;
+                Dispose();
+            }
+        }
 
         private static bool EndsWith(List<byte> data, byte[] suffix)
         {
