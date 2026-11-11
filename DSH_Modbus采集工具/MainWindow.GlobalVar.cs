@@ -457,7 +457,7 @@ namespace DSH_Modbus采集工具
             // Compiled（按旧名字编译的），光改 Expression 文本不会让缓存跟着变，
             // 不重编译就是「文本看着对、求值仍报变量不存在」。
             _machineSet.RenameVariableReferences(oldName, newName);
-            _machineSet.RecompileAll(ExpressionNameError);
+            _machineSet.RecompileAll(ExpressionNameError, ExpressionVariableTypeOf);
 
             // 扫码器：两个变量框 + 触发表达式
             _scannerSet.RenameVariableReferences(oldName, newName);
@@ -509,6 +509,11 @@ namespace DSH_Modbus采集工具
         {
             // 放在下面的早退之前：没有监控行时也要更新状态机的清单与采集项的类型列
             RefreshMachineGlobals();
+
+            // ⚠️ 变量**换了类型**（BOOL ↔ INT）时，状态机那条表达式可能从合法变非法：
+            // `flag` 本来可以直接当条件，改成 INT 后就必须写成 `flag != 0`，
+            // 否则求值恒失败、框永远不亮。故这里连同结果类型一起重编译（2026-11-11）。
+            _machineSet.RecompileAll(ExpressionNameError, ExpressionVariableTypeOf);
 
             // ⚠️ 采集 / 扫码器的常驻清单必须在这里重算（2026-11-11）：
             // 两份清单里存的是 `GlobalVariable` 的**对象引用**。删掉变量后重建同名变量，

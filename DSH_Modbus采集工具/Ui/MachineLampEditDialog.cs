@@ -37,6 +37,7 @@ namespace DSH_Modbus采集工具.Ui
         private static readonly double[] DotSizes = { 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28 };
 
         private readonly Func<string, string?> _nameError;
+        private readonly Func<string, ExpressionVariableType>? _typeOf;
         private readonly Func<IReadOnlyList<CompletionCandidate>>? _completions;
         private readonly TextBox _textBox;
         private readonly TextBox _expressionBox;
@@ -61,10 +62,12 @@ namespace DSH_Modbus采集工具.Ui
         private MachineLampEditDialog(
             MachineStateLamp lamp,
             Func<string, string?> nameError,
-            Func<IReadOnlyList<CompletionCandidate>>? completions)
+            Func<IReadOnlyList<CompletionCandidate>>? completions,
+            Func<string, ExpressionVariableType>? typeOf)
             : base("指示灯编辑", 442)
         {
             _nameError = nameError;
+            _typeOf = typeOf;
             _completions = completions;
             _lastValidExpression = lamp.Expression;
             _lampColor = MachineStateLamp.NormalizeColor(lamp.Color);
@@ -256,9 +259,10 @@ namespace DSH_Modbus采集工具.Ui
             Window owner,
             MachineStateLamp lamp,
             Func<string, string?> nameError,
-            Func<IReadOnlyList<CompletionCandidate>>? completions = null)
+            Func<IReadOnlyList<CompletionCandidate>>? completions = null,
+            Func<string, ExpressionVariableType>? typeOf = null)
         {
-            var dlg = new MachineLampEditDialog(lamp, nameError, completions);
+            var dlg = new MachineLampEditDialog(lamp, nameError, completions, typeOf);
 
             dlg.AttachOwner(owner);
 
@@ -292,6 +296,7 @@ namespace DSH_Modbus采集工具.Ui
         }
 
         /// <summary>编译 + 变量存在性检查，一次做完（口径与状态框完全一致）。</summary>
+        /// <summary>编译 + 变量存在性检查，一次做完（口径与状态编辑窗完全一致）。</summary>
         private bool TryValidateExpression(string text, out string error)
         {
             if (!CompiledExpression.TryParse(text, out CompiledExpression? compiled, out error))
@@ -299,7 +304,13 @@ namespace DSH_Modbus采集工具.Ui
                 return false;
             }
 
-            return compiled!.TryValidateNames(_nameError, out error);
+            if (!compiled!.TryValidateNames(_nameError, out error))
+            {
+                return false;
+            }
+
+            // 2026-11-11：结果类型也必须能推成 BOOL（详见 CompiledExpression.TryValidateResultType）
+            return _typeOf == null || compiled.TryValidateResultType(_typeOf, out error);
         }
 
         private void Ok_Click(object sender, RoutedEventArgs e)

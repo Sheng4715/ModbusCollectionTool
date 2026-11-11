@@ -507,8 +507,8 @@ namespace DSH_Modbus采集工具
             // PLC 状态机（P1.2）：从 machine-state.json 读 9 个状态的文字/颜色/表达式，
             // 再把固定布局画出来。求值由 _machineTimer 驱动，这里只负责首次绑定。
             _machineVariables.AttachGlobals(_globalVarSet);
-            _machineSet.Load(ExpressionNameError);
-            _machineSet.RecompileAll(ExpressionNameError);
+            _machineSet.Load(ExpressionNameError, ExpressionVariableTypeOf);
+            _machineSet.RecompileAll(ExpressionNameError, ExpressionVariableTypeOf);
             RefreshMachineGlobals();
             MachineStateViewControl.Bind(_machineSet.Items, _machineSet.EdgeLabels, _machineSet.Lamps);
             MachineStateViewControl.StateDoubleClicked += MachineStateView_StateDoubleClicked;

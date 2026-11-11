@@ -36,9 +36,17 @@ namespace DSH_Modbus采集工具.Modeling
         /// </summary>
         /// <param name="task">待检查的任务组；<c>null</c> 视为配置错误。</param>
         /// <param name="findVariable">全局变量查表；<c>null</c> 时所有变量都算查不到。</param>
+        /// <param name="describeType">
+        /// 变量静态类型查询；<c>null</c> = 不校验触发表达式的结果类型。
+        /// <para>
+        /// 传了才能拦下「触发表达式算出来是数值」这种**永远不触发、还不报配置错误**的写法
+        /// （详见 <see cref="CompiledExpression.TryValidateResultType"/>）。
+        /// </para>
+        /// </param>
         public static List<string> Describe(
             AcquisitionTask? task,
-            Func<string, GlobalVariable?>? findVariable)
+            Func<string, GlobalVariable?>? findVariable,
+            Func<string, ExpressionVariableType>? describeType = null)
         {
             var issues = new List<string>();
 
@@ -57,7 +65,7 @@ namespace DSH_Modbus采集工具.Modeling
             }
 
             // 组级问题先报：表达式坏了的组，逐项查完也跑不起来
-            DescribeTrigger(task, findVariable, issues);
+            DescribeTrigger(task, findVariable, describeType, issues);
 
             // 执行完成输出变量（2026-11-10）：填了就必须是能装下 1 / 2 的整数全局变量。
             // 与任务选项对话框共用 AcquisitionTaskRules.TryValidateCompletionVariable，
@@ -125,6 +133,7 @@ namespace DSH_Modbus采集工具.Modeling
         private static void DescribeTrigger(
             AcquisitionTask task,
             Func<string, GlobalVariable?>? findVariable,
+            Func<string, ExpressionVariableType>? describeType,
             List<string> issues)
         {
             if (task.Trigger != AcquisitionTriggerMode.Edge)
@@ -150,6 +159,15 @@ namespace DSH_Modbus采集工具.Modeling
             if (!compiled.TryValidateNames(NameError, out error))
             {
                 // error 自带「第 N 个字符」与变量名，直接转达
+                issues.Add("触发表达式无效（" + error + "）");
+                return;
+            }
+
+            // 结果类型必须是 BOOL（2026-11-11）：写成 `var`（INT 变量）时语法与名字都过，
+            // 但求值每拍都失败 → 恒不触发、不采集、不存文件、日志里一个字都没有。
+            // 不拦就属于「配置看着完整、实际永远不跑」那一类静默失效。
+            if (describeType != null && !compiled.TryValidateResultType(describeType, out error))
+            {
                 issues.Add("触发表达式无效（" + error + "）");
             }
 

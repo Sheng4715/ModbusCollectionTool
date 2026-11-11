@@ -29,6 +29,7 @@ namespace DSH_Modbus采集工具.Ui
         };
 
         private readonly Func<string, string?> _nameError;
+        private readonly Func<string, ExpressionVariableType>? _typeOf;
         private readonly Func<IReadOnlyList<CompletionCandidate>>? _completions;
         private readonly TextBox _textBox;
         private readonly ComboBox _styleCombo;
@@ -57,10 +58,12 @@ namespace DSH_Modbus采集工具.Ui
         private MachineStateEditDialog(
             MachineStateItem item,
             Func<string, string?> nameError,
-            Func<IReadOnlyList<CompletionCandidate>>? completions)
+            Func<IReadOnlyList<CompletionCandidate>>? completions,
+            Func<string, ExpressionVariableType>? typeOf)
             : base("状态编辑", 442)
         {
             _nameError = nameError;
+            _typeOf = typeOf;
             _completions = completions;
             _colorHex = MachineStateItem.NormalizeColor(item.Color);
             _lastValidExpression = item.Expression;
@@ -246,9 +249,10 @@ namespace DSH_Modbus采集工具.Ui
             Window owner,
             MachineStateItem item,
             Func<string, string?> nameError,
-            Func<IReadOnlyList<CompletionCandidate>>? completions = null)
+            Func<IReadOnlyList<CompletionCandidate>>? completions = null,
+            Func<string, ExpressionVariableType>? typeOf = null)
         {
-            var dlg = new MachineStateEditDialog(item, nameError, completions);
+            var dlg = new MachineStateEditDialog(item, nameError, completions, typeOf);
 
             dlg.AttachOwner(owner);
 
@@ -286,7 +290,13 @@ namespace DSH_Modbus采集工具.Ui
             _lastValidExpression = text;
         }
 
-        /// <summary>编译 + 变量存在性检查，一次做完。</summary>
+        /// <summary>
+        /// 编译 + 变量存在性检查，一次做完。
+        /// <para>
+        /// ⚠️ 顺序不能反：先语法、再名字、最后结果类型。变量不存在时类型也推不出来，
+        /// 先报「不存在」才指向正确的改法。
+        /// </para>
+        /// </summary>
         private bool TryValidateExpression(string text, out string error)
         {
             if (!CompiledExpression.TryParse(text, out CompiledExpression? compiled, out error))
@@ -294,7 +304,14 @@ namespace DSH_Modbus采集工具.Ui
                 return false;
             }
 
-            return compiled!.TryValidateNames(_nameError, out error);
+            if (!compiled!.TryValidateNames(_nameError, out error))
+            {
+                return false;
+            }
+
+            // 2026-11-11：拦住「把 INT 变量当条件」这种存得进去、永远不亮的写法。
+            // 没接类型表时（typeOf 为 null）跳过，行为与改动前一致。
+            return _typeOf == null || compiled.TryValidateResultType(_typeOf, out error);
         }
 
         private void Ok_Click(object sender, RoutedEventArgs e)

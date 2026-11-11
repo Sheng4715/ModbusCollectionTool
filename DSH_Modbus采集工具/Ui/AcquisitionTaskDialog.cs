@@ -650,7 +650,13 @@ namespace DSH_Modbus采集工具.Ui
             }
         }
 
-        /// <summary>编译 + 变量存在性检查（口径与 PLC 状态机一致）。</summary>
+        /// <summary>
+        /// 编译 + 变量存在性检查 + 结果类型检查（口径与 PLC 状态机一致）。
+        /// <para>
+        /// ⚠️ 顺序：语法 → 名字 → 结果类型。变量不存在时类型也推不出来，
+        /// 先报「不存在」才指向正确的改法。
+        /// </para>
+        /// </summary>
         private bool TryValidateExpression(string text, out string error)
         {
             if (!CompiledExpression.TryParse(text, out CompiledExpression? compiled, out error))
@@ -664,7 +670,14 @@ namespace DSH_Modbus采集工具.Ui
                 return true;
             }
 
-            return compiled.TryValidateNames(_nameErrorOfVariable, out error);
+            if (!compiled.TryValidateNames(_nameErrorOfVariable, out error))
+            {
+                return false;
+            }
+
+            // 2026-11-11：`var`（INT 变量）当触发条件时恒不触发、且原先一个字都不报
+            return compiled.TryValidateResultType(
+                name => VariableReference.DescribeType(name, _findVariable), out error);
         }
 
         /// <summary>

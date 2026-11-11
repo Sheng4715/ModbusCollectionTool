@@ -52,6 +52,17 @@ namespace DSH_Modbus采集工具
             VariableReference.Describe(name, _globalVarSet.FindByName, allowWholeArray: false);
 
         /// <summary>
+        /// 表达式里变量的**静态类型**（2026-11-11）：供编译期推断「结果是不是 BOOL」。
+        /// <para>
+        /// 与 <see cref="ExpressionNameError"/> 分工不同：那个说「能不能用」，这个说「是什么类型」。
+        /// 查不到一律回 <see cref="ExpressionVariableType.UnknownType"/>（**放行**）——
+        /// 名字不存在由前者报，这里再报一遍就变成了两条互相矛盾的说法。
+        /// </para>
+        /// </summary>
+        private ExpressionVariableType ExpressionVariableTypeOf(string name) =>
+            VariableReference.DescribeType(name, _globalVarSet.FindByName);
+
+        /// <summary>
         /// 全局变量模型列表，供补全用（P7.1）。
         /// <para>
         /// 走 <c>Items.Select(Model)</c> 而不是把 <c>GlobalVarItemSet</c> 直接传下去：
@@ -396,7 +407,9 @@ namespace DSH_Modbus采集工具
         {
             Ui.MachineStateEditDialog? dialog =
                 Ui.MachineStateEditDialog.Ask(
-                this, item, ExpressionNameError, () => CompletionSource.ForExpression(GlobalVarModels));
+                this, item, ExpressionNameError,
+                () => CompletionSource.ForExpression(GlobalVarModels),
+                ExpressionVariableTypeOf);
 
             if (dialog != null)
             {
@@ -406,7 +419,8 @@ namespace DSH_Modbus采集工具
                 item.Color = dialog.ColorHex;
 
                 // 走集合的唯一入口：编译 + 变量存在性校验 + 清掉旧的错误态
-                _machineSet.TrySetExpression(item, dialog.ExpressionText, ExpressionNameError, out _);
+                _machineSet.TrySetExpression(
+                    item, dialog.ExpressionText, ExpressionNameError, ExpressionVariableTypeOf, out _);
                 _machineSet.Save();
 
                 // 表达式换了 = 引用的变量可能换了，采集清单要跟着重算
@@ -428,7 +442,9 @@ namespace DSH_Modbus采集工具
         {
             Ui.MachineLampEditDialog? dialog =
                 Ui.MachineLampEditDialog.Ask(
-                this, lamp, ExpressionNameError, () => CompletionSource.ForExpression(GlobalVarModels));
+                this, lamp, ExpressionNameError,
+                () => CompletionSource.ForExpression(GlobalVarModels),
+                ExpressionVariableTypeOf);
 
             if (dialog != null)
             {
@@ -438,7 +454,8 @@ namespace DSH_Modbus采集工具
                 lamp.Color = dialog.LampColor;
 
                 // 走集合的唯一入口：编译 + 变量存在性校验 + 清掉旧的错误态
-                _machineSet.TrySetExpression(lamp, dialog.ExpressionText, ExpressionNameError, out _);
+                _machineSet.TrySetExpression(
+                    lamp, dialog.ExpressionText, ExpressionNameError, ExpressionVariableTypeOf, out _);
                 _machineSet.Save();
 
                 // 表达式换了 = 引用的变量可能换了，采集清单要跟着重算
