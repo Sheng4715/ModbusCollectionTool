@@ -166,6 +166,64 @@ namespace DSH_Modbus采集工具.Expressions
             }
         }
 
+        /// <summary>
+        /// 校验表达式的**结果类型是 BOOL**（2026-11-11）。
+        /// <para>
+        /// 补的是一条静默失效的路：只看语法与名字时，把 <c>INT</c> 变量单独当条件（<c>var</c>）
+        /// 是能存进 json 的，可运行期求值必然失败 —— 状态框永远不亮、触发式任务永远不触发，
+        /// 而错误被吞掉，界面上一个字都没有。这里按**变量声明的类型**静态推一遍，保存时就能说清。
+        /// </para>
+        /// <para>
+        /// ⚠️ 顺序必须在 <see cref="TryValidateNames(Func{string,string?},out string)"/> **之后**：
+        /// 变量不存在时类型也推不出来，先报「不存在」才指向正确方向。
+        /// </para>
+        /// <para>
+        /// ⚠️ 推不出来的（<see cref="ExpressionValueKind.Unknown"/>）**一律放行**，不越权。
+        /// </para>
+        /// </summary>
+        /// <param name="typeOf">名字 → 静态类型；不认识的返回 <see cref="ExpressionVariableType.UnknownType"/></param>
+        /// <param name="error">失败原因，已带「第 N 个字符」前缀</param>
+        public bool TryValidateResultType(
+            Func<string, ExpressionVariableType> typeOf, out string error)
+        {
+            // 空表达式恒为 FALSE，天然是 BOOL
+            if (_root == null)
+            {
+                error = string.Empty;
+                return true;
+            }
+
+            ExpressionValueKind kind = _root.InferKind(typeOf, out error);
+            if (error.Length > 0)
+            {
+                return false;
+            }
+
+            switch (kind)
+            {
+                case ExpressionValueKind.Bool:
+                case ExpressionValueKind.Unknown:
+                    error = string.Empty;
+                    return true;
+
+                default:
+                    // 2026-11-11 用户定案：一句话即可，不再拼变量名 / 类型 / 改法示例。
+                    error = NotBoolean;
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// 「结果不是 BOOL」的统一文案（2026-11-11 用户定案）。
+        /// <para>
+        /// ⚠️ 原文案会拼成「表达式的结果必须是 BOOL，但「SysState」是 INT 变量
+        /// （可写成「SysState != 0」或「SysState == 1」）」，在对话框里折成两行、盖住按钮区。
+        /// 用户要求直接一句「表达式不合法」—— **不要**再往里加变量名、类型或位置，
+        /// 那三样都是「已经知道是哪个框错了」之后才需要的细节，而红字出现在正是那个框旁边。
+        /// </para>
+        /// </summary>
+        public const string NotBoolean = "表达式不合法";
+
         private static List<(string Name, int Position)> Deduplicate(
             List<(string Name, int Position)> names)
         {

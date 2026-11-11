@@ -1,4 +1,5 @@
 using System;
+using DSH_Modbus采集工具.Expressions;
 
 namespace DSH_Modbus采集工具.Modeling
 {
@@ -158,6 +159,79 @@ namespace DSH_Modbus采集工具.Modeling
             variable = found;
             return true;
         }
+
+        /// <summary>
+        /// 一个引用的**静态类型**，供表达式编译期推断（2026-11-11）。
+        /// <para>
+        /// 与 <see cref="TryResolve"/> 同一套拆写法规则（<c>var1[0]</c> 取元素类型），
+        /// 但**只回答类型、不做校验**：查不到 / 不是数组 / 下标越界一律回
+        /// <see cref="ExpressionVariableType.UnknownType"/>。
+        /// </para>
+        /// <para>
+        /// ⚠️ 「查不到」**不能在这里报错**：变量不存在的正确说法由
+        /// <see cref="Describe"/> 出口，两处都报会让用户看到两条互斥的提示。
+        /// </para>
+        /// </summary>
+        /// <param name="text">表达式里的名字（可能带下标）</param>
+        /// <param name="findVariable">全局变量查表</param>
+        public static ExpressionVariableType DescribeType(
+            string? text, Func<string, GlobalVariable?>? findVariable)
+        {
+            if (!TrySplit(text, out string baseName, out int? elementIndex, out _))
+            {
+                return ExpressionVariableType.UnknownType;
+            }
+
+            // 系统变量：全是 BOOL 或 INT，且都不是数组（写成 sys_X[0] 由 Describe 报错）
+            if (SystemVariable.Find(baseName) is { } system)
+            {
+                if (elementIndex != null)
+                {
+                    return ExpressionVariableType.UnknownType;
+                }
+
+                return ToVariableType(system.Type);
+            }
+
+            GlobalVariable? found = findVariable?.Invoke(baseName);
+            if (found == null)
+            {
+                return ExpressionVariableType.UnknownType;
+            }
+
+            if (elementIndex is int index)
+            {
+                // 元素类型：数组才谈得上「元素」，且下标要在范围内 ——
+                // 越界属于另一个错误，这里只负责说类型。
+                if (found.Type != DataType.Array || index < 0 || index >= found.Length)
+                {
+                    return ExpressionVariableType.UnknownType;
+                }
+
+                return ToVariableType(found.ElementType);
+            }
+
+            return ToVariableType(found.Type);
+        }
+
+        /// <summary>
+        /// 数据类型 → 表达式的静态类型。
+        /// <para>
+        /// <c>BOOL</c> → Bool；四个整数与 <c>REAL</c> → Number；<c>STRING</c> → Text；
+        /// <c>ARRAY</c> 与其余 → Unknown（整条数组在表达式里本就被拒，轮不到这里表态）。
+        /// </para>
+        /// </summary>
+        private static ExpressionVariableType ToVariableType(DataType type) => type switch
+        {
+            DataType.Bool => new ExpressionVariableType(ExpressionValueKind.Bool, "BOOL"),
+            DataType.Int => new ExpressionVariableType(ExpressionValueKind.Number, "INT"),
+            DataType.UInt => new ExpressionVariableType(ExpressionValueKind.Number, "UINT"),
+            DataType.DInt => new ExpressionVariableType(ExpressionValueKind.Number, "DINT"),
+            DataType.UDInt => new ExpressionVariableType(ExpressionValueKind.Number, "UDINT"),
+            DataType.Real => new ExpressionVariableType(ExpressionValueKind.Number, "REAL"),
+            DataType.String => new ExpressionVariableType(ExpressionValueKind.Text, "STRING"),
+            _ => ExpressionVariableType.UnknownType,
+        };
 
         /// <summary>业务侧常用的默认重载：**不允许整条数组**。</summary>
         public static bool TryResolve(

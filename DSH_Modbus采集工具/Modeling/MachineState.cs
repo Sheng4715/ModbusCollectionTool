@@ -955,7 +955,14 @@ namespace DSH_Modbus采集工具.Modeling
         public IReadOnlyList<MachineStateLamp> Lamps => _lamps;
 
         /// <summary>从磁盘读，并把每条表达式编译好。</summary>
-        public void Load(Func<string, string?> nameError)
+        /// <param name="nameError">变量名校验器</param>
+        /// <param name="typeOf">
+        /// 变量静态类型查询；<c>null</c> = 不校验结果类型。
+        /// 传了才能拦下「拿 INT 变量当条件」这种**存得进去、永远不亮**的写法。
+        /// </param>
+        public void Load(
+            Func<string, string?> nameError,
+            Func<string, ExpressionVariableType>? typeOf = null)
         {
             (List<MachineStateItem> states, List<MachineEdgeLabel> edges, List<MachineStateLamp> lamps) =
                 MachineStateStore.LoadAll();
@@ -971,12 +978,12 @@ namespace DSH_Modbus采集工具.Modeling
 
             foreach (MachineStateItem item in _items)
             {
-                CompileQuietly(item, nameError);
+                CompileQuietly(item, nameError, typeOf);
             }
 
             foreach (MachineStateLamp lamp in _lamps)
             {
-                CompileQuietly(lamp, nameError);
+                CompileQuietly(lamp, nameError, typeOf);
             }
         }
 
@@ -991,9 +998,13 @@ namespace DSH_Modbus采集工具.Modeling
         /// <para>失败时**不动模型**（调用方负责把输入框退回旧值），与自由监控改名同一套规矩。</para>
         /// </summary>
         public bool TrySetExpression(
-            MachineStateItem item, string? text, Func<string, string?> nameError, out string error)
+            MachineStateItem item,
+            string? text,
+            Func<string, string?> nameError,
+            Func<string, ExpressionVariableType>? typeOf,
+            out string error)
         {
-            if (!TryCompile(text, nameError, out CompiledExpression? compiled, out error))
+            if (!TryCompile(text, nameError, typeOf, out CompiledExpression? compiled, out error))
             {
                 return false;
             }
@@ -1004,6 +1015,11 @@ namespace DSH_Modbus采集工具.Modeling
             return true;
         }
 
+        /// <summary>不带类型校验的重载（旧调用点）。</summary>
+        public bool TrySetExpression(
+            MachineStateItem item, string? text, Func<string, string?> nameError, out string error) =>
+            TrySetExpression(item, text, nameError, null, out error);
+
         /// <summary>兼容只判存在性的旧调用点（⚠️ 不认识数组）。</summary>
         [Obsolete("只判存在性，认不出数组。请传 Func<string,string?> 返回原因")]
         public bool TrySetExpression(
@@ -1012,9 +1028,13 @@ namespace DSH_Modbus采集工具.Modeling
 
         /// <summary>改一个指示灯的表达式（规则与状态框完全一致）。</summary>
         public bool TrySetExpression(
-            MachineStateLamp lamp, string? text, Func<string, string?> nameError, out string error)
+            MachineStateLamp lamp,
+            string? text,
+            Func<string, string?> nameError,
+            Func<string, ExpressionVariableType>? typeOf,
+            out string error)
         {
-            if (!TryCompile(text, nameError, out CompiledExpression? compiled, out error))
+            if (!TryCompile(text, nameError, typeOf, out CompiledExpression? compiled, out error))
             {
                 return false;
             }
@@ -1025,6 +1045,11 @@ namespace DSH_Modbus采集工具.Modeling
             return true;
         }
 
+        /// <summary>不带类型校验的重载（旧调用点）。</summary>
+        public bool TrySetExpression(
+            MachineStateLamp lamp, string? text, Func<string, string?> nameError, out string error) =>
+            TrySetExpression(lamp, text, nameError, null, out error);
+
         /// <summary>兼容只判存在性的旧调用点（⚠️ 不认识数组）。</summary>
         [Obsolete("只判存在性，认不出数组。请传 Func<string,string?> 返回原因")]
         public bool TrySetExpression(
@@ -1032,16 +1057,20 @@ namespace DSH_Modbus采集工具.Modeling
             TrySetExpression(lamp, text, Wrap(nameExists), out error);
 
         /// <summary>启动 / 变量表变动时重建全部表达式缓存（失败的不报错，标红留给界面）。</summary>
-        public void RecompileAll(Func<string, string?> nameError)
+        /// <param name="nameError">变量名校验器</param>
+        /// <param name="typeOf">变量静态类型查询；<c>null</c> = 不校验结果类型（见 <see cref="Load"/>）</param>
+        public void RecompileAll(
+            Func<string, string?> nameError,
+            Func<string, ExpressionVariableType>? typeOf = null)
         {
             foreach (MachineStateItem item in _items)
             {
-                CompileQuietly(item, nameError);
+                CompileQuietly(item, nameError, typeOf);
             }
 
             foreach (MachineStateLamp lamp in _lamps)
             {
-                CompileQuietly(lamp, nameError);
+                CompileQuietly(lamp, nameError, typeOf);
             }
         }
 
@@ -1139,9 +1168,14 @@ namespace DSH_Modbus采集工具.Modeling
         }
 
         /// <summary>编译 + 变量存在性校验（成功返回 true，且 <paramref name="compiled"/> 非空）。</summary>
+        /// <param name="typeOf">
+        /// 变量静态类型查询；**<c>null</c> = 不校验结果类型**（旧调用点与只判存在性的断言）。
+        /// 传了就在名字校验之后多查一道「结果必须是 BOOL」。
+        /// </param>
         private static bool TryCompile(
             string? text,
             Func<string, string?> nameError,
+            Func<string, ExpressionVariableType>? typeOf,
             out CompiledExpression? compiled,
             out string error)
         {
@@ -1150,12 +1184,22 @@ namespace DSH_Modbus采集工具.Modeling
                 return false;
             }
 
-            return compiled!.TryValidateNames(nameError, out error);
+            if (!compiled!.TryValidateNames(nameError, out error))
+            {
+                return false;
+            }
+
+            // ⚠️ 必须排在名字校验**之后**：变量不存在时类型也推不出来，
+            // 先报「不存在」才指向正确的方向。
+            return typeOf == null || compiled.TryValidateResultType(typeOf, out error);
         }
 
-        private static void CompileQuietly(MachineStateItem item, Func<string, string?> nameError)
+        private static void CompileQuietly(
+            MachineStateItem item,
+            Func<string, string?> nameError,
+            Func<string, ExpressionVariableType>? typeOf)
         {
-            bool ok = TryCompile(item.Expression, nameError, out CompiledExpression? compiled, out string error);
+            bool ok = TryCompile(item.Expression, nameError, typeOf, out CompiledExpression? compiled, out string error);
             item.Compiled = compiled;
             item.ExpressionError = ok ? string.Empty : error;
 
@@ -1163,9 +1207,12 @@ namespace DSH_Modbus采集工具.Modeling
             // 语义与「编译失败」一样是灭，但界面能拿到更具体的错误
         }
 
-        private static void CompileQuietly(MachineStateLamp lamp, Func<string, string?> nameError)
+        private static void CompileQuietly(
+            MachineStateLamp lamp,
+            Func<string, string?> nameError,
+            Func<string, ExpressionVariableType>? typeOf)
         {
-            bool ok = TryCompile(lamp.Expression, nameError, out CompiledExpression? compiled, out string error);
+            bool ok = TryCompile(lamp.Expression, nameError, typeOf, out CompiledExpression? compiled, out string error);
             lamp.Compiled = compiled;
             lamp.ExpressionError = ok ? string.Empty : error;
         }
