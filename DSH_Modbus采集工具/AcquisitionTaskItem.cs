@@ -19,6 +19,7 @@ namespace DSH_Modbus采集工具
     {
         private readonly Func<string, GlobalVariable?> _findVariable;
         private bool _isWriteTask;
+        private bool _isSelected;
         private int _index;
 
         public AcquisitionItemRow(AcquisitionItem model, Func<string, GlobalVariable?> findVariable)
@@ -28,6 +29,28 @@ namespace DSH_Modbus采集工具
         }
 
         public AcquisitionItem Model { get; }
+
+        /// <summary>
+        /// 是否被选中（**界面态，不落盘**）。数据项手动排序的 ↑↓ 作用于选中的那一项。
+        /// <para>
+        /// 行底色由模板里的 <c>DataTrigger</c> 绑它 —— 行里有输入框，选中时底色要变、
+        /// 但不能影响编辑（与 <c>GlobalVarItem.IsSelected</c> 同一套）。
+        /// </para>
+        /// </summary>
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected == value)
+                {
+                    return;
+                }
+
+                _isSelected = value;
+                Raise();
+            }
+        }
 
         /// <summary>序号（1 起，由所属任务组统一重排）</summary>
         public int Index
@@ -564,9 +587,15 @@ namespace DSH_Modbus采集工具
         /// 判据在 <see cref="AcquisitionTaskCheck"/>，界面与执行侧共用同一份 ——
         /// 否则迟早出现「界面标着配置错误、执行却在照跑」这种自相矛盾。
         /// </para>
+        /// <para>
+        /// 触发表达式的结果类型也在这里校验（2026-11-11）：写成 `var`（INT 变量）时
+        /// 语法与名字都过、却每拍求值失败 —— 那组会「永不触发、不采集、不存文件、不记日志」。
+        /// </para>
         /// </summary>
         public IReadOnlyList<string> ConfigIssues =>
-            AcquisitionTaskCheck.Describe(Model, _findVariable);
+            AcquisitionTaskCheck.Describe(
+                Model, _findVariable,
+                name => VariableReference.DescribeType(name, _findVariable));
 
         /// <summary>
         /// 配置不完整 → 任务组行的启用开关被关掉并锁住、右侧显示琥珀色「配置错误」，整组不执行（用户定案 2026-10-27）。
@@ -718,6 +747,65 @@ namespace DSH_Modbus采集工具
             Model.Items.Clear();
             Items.Clear();
             RaiseCount();
+        }
+
+        /// <summary>
+        /// 数据项手动排序（2026-11-11）：把 <paramref name="row"/> 移到 <paramref name="newIndex"/>。
+        /// <para>
+        /// ⚠️ 必须**同时**改两边 —— 界面的 <see cref="Items"/>（ObservableCollection，
+        /// 决定画面顺序）与模型的 <c>Model.Items</c>（List，决定落盘顺序）。
+        /// 只改一边就是「画面动了重启变回去」或「存对了但界面不刷」。
+        /// </para>
+        /// <para>
+        /// ⚠️ 移完要 <see cref="ReindexItems"/>：子表 # 列显示的是集合位置，
+        /// 不重编号就会出现「1, 2, 4, 3」这种跳号。
+        /// </para>
+        /// <para>
+        /// ⚠️ **顺序会影响 CSV 的列序**：表头是按数据项顺序拼的，所以移完要让调用方
+        /// 落盘并让总览的历史表格重读（见 <c>MoveSelectedAcquisitionItem</c>）。
+        /// </para>
+        /// </summary>
+        public void MoveItem(AcquisitionItemRow row, int newIndex)
+        {
+            if (row == null)
+            {
+                return;
+            }
+
+            int oldIndex = Items.IndexOf(row);
+            if (oldIndex < 0)
+            {
+                return;
+            }
+
+            if (newIndex < 0)
+            {
+                newIndex = 0;
+            }
+
+            if (newIndex > Items.Count - 1)
+            {
+                newIndex = Items.Count - 1;
+            }
+
+            if (newIndex == oldIndex)
+            {
+                return;
+            }
+
+            // 界面集合
+            Items.Move(oldIndex, newIndex);
+
+            // 模型集合：按对象重新定位后同样搬一次（两边的下标此时一致，
+            // 但仍用 IndexOf 而不是复用 oldIndex —— 防止将来某处只改了其中一边）
+            int modelIndex = Model.Items.IndexOf(row.Model);
+            if (modelIndex >= 0)
+            {
+                Model.Items.RemoveAt(modelIndex);
+                Model.Items.Insert(newIndex, row.Model);
+            }
+
+            ReindexItems();
         }
 
         /// <summary>

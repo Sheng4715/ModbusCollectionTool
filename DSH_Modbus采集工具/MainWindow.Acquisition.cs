@@ -91,6 +91,11 @@ namespace DSH_Modbus采集工具
                 ClearAcquisitionTasksButton.IsEnabled = n > 0;
             }
 
+            // 数据项 ↑↓ 的可用性也要在这里刷（2026-11-11）：XAML 里默认 IsEnabled 是 true，
+            // 列表载入 / 增删后不重算就会「没选任何项、两个箭头却都亮着」（实测踩过）。
+            // 选中项已被删掉时 OwnerOfSelectedItem 找不到它，两个箭头自然变灰，不必特判。
+            UpdateAcquisitionItemMoveButtons();
+
             // 任务组增删后要重算「哪些变量需要常驻采集」—— 漏掉这里的话，
             // 新加的组要等到下次改表达式才真正开始采
             RefreshAcquisitionGlobals();
@@ -133,6 +138,205 @@ namespace DSH_Modbus采集工具
             RefreshAcquisitionView();
         }
 
+        // ---------- 数据项手动排序（2026-11-11）：子表头 ↑↓ 作用于选中项 ----------
+        // 口径与「全局变量」表完全一致：选中态只是界面态、不落盘；顺序即时落盘
+        // （json 数组次序就是顺序本身，不需要额外排序字段）。
+        // ⚠️ 排的是**任务组展开后的数据项**，不是任务组本身。
+
+        /// <summary>当前选中的数据项行（null = 没有选中）。</summary>
+        private AcquisitionItemRow? _selectedAcquisitionItem;
+
+        /// <summary>点击数据项行 → 选中它（行底色由模板里的 DataTrigger 绑 IsSelected）。</summary>
+        private void AcquisitionItemRow_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement fe && fe.DataContext is AcquisitionItemRow row)
+            {
+                SelectAcquisitionItem(row);
+            }
+        }
+
+        /// <summary>
+        /// 设置选中数据项并刷新 ↑↓ 可用性。
+        /// <para>
+        /// ⚠️ 选中不能影响行内的编辑框与删除按钮：只改 <c>IsSelected</c>，
+        /// 不拦事件、不设 <c>e.Handled</c>。
+        /// </para>
+        /// </summary>
+        private void SelectAcquisitionItem(AcquisitionItemRow? row)
+        {
+            if (ReferenceEquals(_selectedAcquisitionItem, row))
+            {
+                return;
+            }
+
+            _selectedAcquisitionItem = row;
+
+            // 行底色绑 IsSelected，故把所有组的所有子行重算一遍（切换任务组时旧组的行也要清掉）
+            if (_acqTaskSet?.Items != null)
+            {
+                foreach (AcquisitionTaskItem task in _acqTaskSet.Items)
+                {
+                    foreach (AcquisitionItemRow child in task.Items)
+                    {
+                        child.IsSelected = ReferenceEquals(child, row);
+                    }
+                }
+            }
+
+            UpdateAcquisitionItemMoveButtons();
+        }
+
+        /// <summary>
+        /// 刷新 ↑↓ 可用性：没选中 → 都灰；首项 → ↑ 灰；末项 → ↓ 灰。
+        /// <para>
+        /// ⚠️ 按钮在 <c>DataTemplate</c> 里（**每展开一个任务组就有一对**），
+        /// 所以没有窗口级字段可用，只能遍历已生成的行容器去找那一对
+        /// （见 <see cref="UpdateMoveButtonsForTask"/>）。
+        /// ⚠️ 容器未必已生成（组没展开、或行被虚拟化掉）—— 那种情况找不到按钮，
+        /// 靠 XAML 里的 <c>IsEnabled="False"</c> 默认值兜住（见 MainWindow.xaml）。
+        /// </para>
+        /// </summary>
+        private void UpdateAcquisitionItemMoveButtons() =>
+            UpdateMoveButtonsForTask(OwnerOfSelectedItem(out _, out _));
+
+        /// <summary>刷新某个任务组子表表头上那一对 ↑↓ 的可用性。</summary>
+        private void UpdateMoveButtonsForTask(AcquisitionTaskItem? owner)
+        {
+            if (AcquisitionTaskItemsControl == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < AcquisitionTaskItemsControl.Items.Count; i++)
+            {
+                if (AcquisitionTaskItemsControl.ItemContainerGenerator.ContainerFromIndex(i)
+                        is not DependencyObject container
+                    || container is not FrameworkElement fe
+                    || fe.DataContext is not AcquisitionTaskItem task)
+                {
+                    continue;
+                }
+
+                Button? up = FindItemHeaderButton(fe, "MoveAcquisitionItemUpButton");
+                Button? down = FindItemHeaderButton(fe, "MoveAcquisitionItemDownButton");
+                if (up == null && down == null)
+                {
+                    continue;
+                }
+
+                bool isOwner = ReferenceEquals(task, owner);
+                int index = isOwner ? task.Items.IndexOf(_selectedAcquisitionItem!) : -1;
+                int count = task.Items.Count;
+
+                if (up != null)
+                {
+                    up.IsEnabled = isOwner && index > 0;
+                }
+
+                if (down != null)
+                {
+                    down.IsEnabled = isOwner && index >= 0 && index < count - 1;
+                }
+            }
+        }
+
+        /// <summary>在一个任务组的模板实例里按名字找控件（子表表头上的 ↑↓）。</summary>
+        private static Button? FindItemHeaderButton(DependencyObject root, string name) =>
+            FindByName(root, name) as Button;
+
+        /// <summary>按 <c>x:Name</c> 在模板实例的视觉树里向下找（模板不是命名作用域，只能遍历）。</summary>
+        private static FrameworkElement? FindByName(DependencyObject root, string name)
+        {
+            int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                DependencyObject child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+                if (child is FrameworkElement fe && fe.Name == name)
+                {
+                    return fe;
+                }
+
+                FrameworkElement? found = child is DependencyObject d ? FindByName(d, name) : null;
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 找到选中数据项所属的任务组，并给出它在那个组里的下标与该组总项数。
+        /// <para>
+        /// 选中项可能已经被删 / 所属组已经被删 —— 那时返回 <c>null</c>，两个箭头随之变灰。
+        /// </para>
+        /// </summary>
+        private AcquisitionTaskItem? OwnerOfSelectedItem(out int index, out int count)
+        {
+            index = -1;
+            count = 0;
+
+            if (_selectedAcquisitionItem == null || _acqTaskSet?.Items == null)
+            {
+                return null;
+            }
+
+            foreach (AcquisitionTaskItem task in _acqTaskSet.Items)
+            {
+                int i = task.Items.IndexOf(_selectedAcquisitionItem);
+                if (i >= 0)
+                {
+                    index = i;
+                    count = task.Items.Count;
+                    return task;
+                }
+            }
+
+            return null;
+        }
+
+        private void MoveAcquisitionItemUp_Click(object sender, RoutedEventArgs e) =>
+            MoveSelectedAcquisitionItem(-1);
+
+        private void MoveAcquisitionItemDown_Click(object sender, RoutedEventArgs e) =>
+            MoveSelectedAcquisitionItem(+1);
+
+        /// <summary>
+        /// 把选中的数据项上移 / 下移一格，移完保持选中。
+        /// <para>
+        /// 按钮在模板里，所属任务组从**当前选中项**反查（而不是从发送者）：
+        /// ↑↓ 只会作用于选中项，而选中项一定属于某个组，比沿视觉树往上找更直接。
+        /// </para>
+        /// </summary>
+        private void MoveSelectedAcquisitionItem(int delta)
+        {
+            AcquisitionTaskItem? owner = OwnerOfSelectedItem(out int from, out int count);
+            if (owner == null || from < 0)
+            {
+                return;
+            }
+
+            int to = from + delta;
+            if (to < 0 || to > count - 1)
+            {
+                return;
+            }
+
+            AcquisitionItemRow moving = _selectedAcquisitionItem!;
+
+            // Move 同时改 ObservableCollection（画面重排）与模型 List（落盘顺序）并重排 # 号
+            owner.MoveItem(moving, to);
+
+            _acqTaskSet.Save();
+
+            // 顺序变了 = CSV 的列顺序也变了（表头按数据项顺序拼），
+            // 让总览「实时 / 历史」按新列序重读。
+            RefreshAcquisitionView();
+
+            UpdateAcquisitionItemMoveButtons();
+        }
+
         /// <summary>
         /// 删除单个任务组（行内 ×，在「…」与「↑↓」之间）。
         /// <para>
@@ -162,6 +366,17 @@ namespace DSH_Modbus采集工具
 
             // Remove 内部已重排序号并落盘
             _acqTaskSet.Remove(task);
+
+            // 删掉的组里若有过选中项，选中对象已随组消失 —— 清掉，
+            // 免得 ↑↓ 作用在一个不在任何组里的对象上。
+            // 判据用「还在不在任何组里」，而不是「在不在刚删的这组里」：
+            // 删除一个组不影响别的组的选中项，那种情况必须保留。
+            if (_selectedAcquisitionItem != null
+                && OwnerOfSelectedItem(out _, out _) == null)
+            {
+                _selectedAcquisitionItem = null;
+            }
+
             RefreshAcquisitionView();
         }
 
@@ -227,6 +442,11 @@ namespace DSH_Modbus采集工具
             }
 
             task.IsExpanded = !task.IsExpanded;
+
+            // 展开后才生成子表表头（含 ↑↓），此刻必须按当前选中项重算一次，
+            // 否则箭头会停在 XAML 的默认「灰」（2026-11-11）。
+            // 用 Loaded 优先级排到布局之后 —— 展开当下容器还没建好，立刻找必然找不到。
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(UpdateAcquisitionItemMoveButtons));
         }
 
         private void AcquisitionTaskEnable_Click(object sender, RoutedEventArgs e)
@@ -958,7 +1178,13 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            var popup = Ui.CompletionPopup.Attach(tb, () => CompletionSource.ForMonitorName(GlobalVarModels));
+            // ⚠️ 这里用默认档 **AnyGlobal**（数组给元素写法 `var1[0]`，2026-11-11 显式写出来）：
+            // 采集的读取 / 写入变量引用的是**元素**（用户定案 2026-11-10：整条数组一律被拒）。
+            // 与自由监控「元件或变量名称」相反 —— 那一栏要整条名字，用的是 WholeArrayGlobal。
+            var popup = Ui.CompletionPopup.Attach(
+                tb,
+                () => CompletionSource.ForMonitorName(
+                    GlobalVarModels, CompletionSource.CompletionFilter.AnyGlobal));
             _nameCompletions.Add(tb, popup);
         }
 

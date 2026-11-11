@@ -1287,15 +1287,21 @@
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Control.Hover}"/>
                             </Trigger>
                             <!--
-                                禁用态（变量行 / 数组行）：只改 Foreground。
-                                与 FormComboBox 完全一致 —— 模板里的文字与 chevron 都
-                                TemplateBinding Foreground，改这一处两处都跟着变灰。
-                                以前的写法是在模板里给控件写死画刷颜色，那样
-                                IsEnabled=False 不会产生任何视觉变化：
-                                控件实际不可点、看着却和可编辑时一模一样（用户 2026-11-10 报的）。
+                                禁用态（变量行 / 数组行）：**字色 + 底色一起改**（2026-11-11 修正）。
+                                · 字色 → Brush.Text.Disabled，模板里的文字与 chevron 都
+                                  TemplateBinding Foreground，改这一处两处都跟着变灰；
+                                · 底色 → Brush.Input.Background.Disabled（#F3F3F3，比可用态的
+                                  #EDEDED 更浅）。
+
+                                ⚠️ **底色必须一起改**：只改字色时，浅灰字（#B0B0B0）压在
+                                灰底（#EDEDED）上糊成一片，胶囊的边界看不出来 ——
+                                实测表现为「这一行的类型框像是没有边框了」。
+                                与 MonitorInlineTextBox / FormComboBox 的禁用态同一套做法。
                             -->
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Foreground" Value="{DynamicResource Brush.Text.Disabled}"/>
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{DynamicResource Brush.Input.Background.Disabled}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -1662,8 +1668,20 @@
                 在 0 与 150 之间切。用 Visibility 的话列宽仍占着，读取类型下会凭空空出一截。 -->
         <DataTemplate x:Key="AcquisitionItemRowTemplate">
             <Border Height="30" Margin="0,0,0,2"
-                    Background="Transparent"
-                    BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1">
+                    BorderBrush="{DynamicResource Brush.Divider}" BorderThickness="0,0,0,1"
+                    PreviewMouseLeftButtonDown="AcquisitionItemRow_PreviewMouseLeftButtonDown">
+                <!-- 选中态走 Style.Triggers 而不是直接绑 Background（与 GlobalVarItemTemplate 同款）：
+                     行里有输入框与删除按钮，选中整行时底色要变、但不能影响它们操作。 -->
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="Background" Value="{DynamicResource Brush.Accent.Subtle}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <Grid>
                     <!-- 列定义必须与子表表头完全一致 -->
                     <Grid.ColumnDefinitions>
@@ -1929,7 +1947,10 @@
 
                             <!--
                                 表头操作区：靠右**叠放**，不参与上面的列布局（同自由监控表头）。
-                                顺序按阅读方向：清空 → 新增。
+                                顺序按阅读方向：↑↓ 排序 → 清空 → 新增。
+                                排序作用于**选中的那个数据项**（2026-11-11，口径照搬全局变量表）：
+                                没选中 → 两个都灰。⚠️ 图标用 E74A / E74B（带竖杆的箭头），
+                                不要用 E70E / E70D（chevron，那是展开/收起符号）。
                                 ⚠️ 右外边距 2 是算出来的，不是随手写的：行尾 × 那列宽 30、居中，
                                 中心在「右边缘 −15」；按钮 26 宽，右距 2 时中心也在「右边缘 −15」，
                                 于是 + 正好压在 × 的正上方（实测偏差 0.5px）。
@@ -1938,9 +1959,25 @@
                                         HorizontalAlignment="Right"
                                         VerticalAlignment="Center"
                                         Margin="0,0,2,0">
+                                <Button x:Name="MoveAcquisitionItemUpButton"
+                                        Content="&#xE74A;"
+                                        AutomationProperties.Name="上移选中数据项"
+                                        ToolTip="上移选中数据项"
+                                        IsEnabled="False"
+                                        Style="{StaticResource GlobalVarMoveButton}"
+                                        Click="MoveAcquisitionItemUp_Click"/>
+                                <Button x:Name="MoveAcquisitionItemDownButton"
+                                        Content="&#xE74B;"
+                                        AutomationProperties.Name="下移选中数据项"
+                                        ToolTip="下移选中数据项"
+                                        IsEnabled="False"
+                                        Margin="2,0,0,0"
+                                        Style="{StaticResource GlobalVarMoveButton}"
+                                        Click="MoveAcquisitionItemDown_Click"/>
                                 <Button Content="&#xE74D;"
                                         AutomationProperties.Name="清空本组数据项"
                                         ToolTip="清空本组数据项"
+                                        Margin="8,0,0,0"
                                         Style="{StaticResource MonitorClearAllButton}"
                                         Click="ClearAcquisitionItems_Click"/>
                                 <Button Content="&#xE710;"
@@ -3065,9 +3102,11 @@
                                                     <TextBlock Grid.Column="5" Text="数据项" FontSize="12" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                                 </Grid>
 
-                                                <!-- 页面级操作：任务组计数 + 全部删除 + 新增。
+                                                <!-- 页面级操作：全部删除 + 新增。
                                                      与全局变量表同款放在表头最右，**不能**塞进「数据项」列 ——
-                                                     那一列是行内的「共N项」，两套东西挨着会分不清是给谁的。 -->
+                                                     那一列是行内的「共N项」，两套东西挨着会分不清是给谁的。
+                                                     ⚠️ 手动排序的 ↑↓ **不在这里**：它管的是任务组**展开后的数据项**，
+                                                     故放在子表表头右端（见 AcquisitionTaskRowTemplate）。 -->
                                                 <StackPanel Orientation="Horizontal"
                                                             HorizontalAlignment="Right"
                                                             Margin="0,0,7,0"
@@ -4044,7 +4083,7 @@
                                         <TextBlock Text="开机自启动"
                                                    FontSize="14" FontWeight="SemiBold"
                                                    Foreground="{DynamicResource Brush.Text.Primary}"/>
-                                        <TextBlock Text="登录 Windows 后自动启动本程序，无需手动双击。"
+                                        <TextBlock Text="登录 Windows 后自动启动本程序"
                                                    FontSize="12"
                                                    Foreground="{DynamicResource Brush.Text.Muted}"
                                                    Margin="0,4,0,0"/>
