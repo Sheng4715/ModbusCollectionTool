@@ -116,6 +116,10 @@ namespace DSH_Modbus采集工具.Scanners
         /// </summary>
         public async Task<byte[]> ReadFrameAsync(byte[] terminator, TimeSpan timeout, CancellationToken ct = default)
         {
+            // ⚠️ 声明在 try 之外：catch 里要靠 payload.Count 判断「有没有收到半帧」，
+            // 决定这次失败该不该关连接（见下方 catch 的注释）。
+            var payload = new List<byte>();
+
             await _gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
@@ -127,7 +131,6 @@ namespace DSH_Modbus采集工具.Scanners
                 overall.CancelAfter(timeout);
 
                 bool silenceMode = terminator.Length == 0;
-                var payload = new List<byte>();
                 var one = new byte[1];
                 var silenceElapsed = System.Diagnostics.Stopwatch.StartNew();
 
@@ -177,8 +180,23 @@ namespace DSH_Modbus采集工具.Scanners
             }
             catch
             {
-                // 超时/取消可能留下半帧，关闭连接阻止后续请求使用失步的流
-                Dispose();
+                // ⚠️ **只有「已经收到半帧」才关连接**（2026-11-11 修正）。
+                //
+                // 关的理由只有一个：流里剩着不完整的字节，下一轮会把旧帧的尾巴当成新帧开头
+                // （失步）。**一个字节都没收到时流是干净的**，那只是一轮「对端没回话」。
+                //
+                // 旧写法无条件 Dispose()，后果是：TCP 明明一直是通的，只因为服务端这一轮
+                // 没回包，就被判成断线 → 1 秒退避重连 → 日志里紧跟一条「已连接」。
+                // 实测场景：服务端接受连接但故意不回包（联调时常见），日志看着像连接不稳，
+                // 实际链路完好，纯属自找麻烦。
+                //
+                // 与上面那条「绝不取消在途 ReadAsync」是同一个道理的两面：
+                // **超时 ≠ 断开**。链路真断会抛 IOException / 读到 0 字节，走的是另外两条路径。
+                if (payload.Count > 0)
+                {
+                    Dispose();
+                }
+
                 throw;
             }
             finally

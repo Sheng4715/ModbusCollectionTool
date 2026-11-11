@@ -563,6 +563,14 @@ namespace DSH_Modbus采集工具
                 return nameError;
             }
 
+            // 结果类型必须是 BOOL（2026-11-11）：写成 `var`（INT 变量）时语法与名字都过，
+            // 但每拍求值失败 → 这台永远不触发。不拦就属于「配置看着完整、实际不跑」。
+            if (compiled != null && !compiled.TryValidateResultType(ExpressionVariableTypeOf, out string typeError))
+            {
+                field = ScannerField.TriggerExpression;
+                return typeError;
+            }
+
             if (!ScannerRules.TryValidateTriggerText(def.TriggerText, out string triggerError))
             {
                 field = ScannerField.TriggerText;
@@ -784,6 +792,13 @@ namespace DSH_Modbus采集工具
             if (compiled != null && !compiled.TryValidateNames(ExpressionNameError, out string nameError))
             {
                 RejectScannerField(item, box, def.TriggerExpression, nameError, ScannerField.TriggerExpression);
+                return;
+            }
+
+            // 结果类型必须是 BOOL（2026-11-11），口径与配置校验那处一致
+            if (compiled != null && !compiled.TryValidateResultType(ExpressionVariableTypeOf, out string typeError))
+            {
+                RejectScannerField(item, box, def.TriggerExpression, typeError, ScannerField.TriggerExpression);
                 return;
             }
 
@@ -1294,9 +1309,10 @@ namespace DSH_Modbus采集工具
 
                     await ApplyScannerTimeoutAsync(item).ConfigureAwait(true);
 
-                    // 超时那一刻 ReadFrameAsync 已 Dispose 掉连接（防半帧失步）。
-                    // 只有客户端此刻确实断了才通知断线 → 起退避重连；若只是外部取消
-                    // （关窗），连接可能还活着，不要误断。
+                    // 超时**不一定**断线（2026-11-11 改）：ReadFrameAsync 只在「已收到半帧、
+                    // 流已失步」时才 Dispose；一个字节都没收到时连接保持不变，IsConnected 仍为
+                    // true，于是这里不会重连 —— 对端只是这一轮没回话，链路是好的。
+                    // 关窗引起的取消同理不误断（连接可能还活着）。
                     if (!_windowClosed && !client.IsConnected)
                     {
                         NotifyScannerLost(item, client);
