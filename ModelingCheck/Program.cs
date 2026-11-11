@@ -356,6 +356,58 @@ Check("表达式候选里能找到用户变量", expressionCandidates.Any(c => c
 Check("用户变量带注释时说明里有注释", expressionCandidates.First(c => c.Text == "StartButton").Detail.Contains("启动信号"), true);
 Check("用户变量无注释时说明里只有类型", expressionCandidates.First(c => c.Text == "sys_Custom").Detail.Contains("·"), false);
 
+// 候选行上屏的是四栏（2026-11-11 用户定案：变量名 / 数据类型 / 注释 / 全局或系统变量）。
+// ⚠️ Detail 不再上屏，真实渲染取 TypeName + Comment —— 这里校的正是那两个字段都有值且分开。
+var startButton = expressionCandidates.First(c => c.Text == "StartButton");
+Check("候选带数据类型（上屏）", startButton.TypeName, "BOOL");
+Check("候选带注释（上屏）", startButton.Comment, "启动信号");
+Check("来源标签是全局变量", startButton.Kind, "全局变量");
+
+var customVar = expressionCandidates.First(c => c.Text == "sys_Custom");
+Check("无注释时候选注释栏为空（不留占位）", customVar.Comment, string.Empty);
+Check("无注释仍带数据类型", customVar.TypeName, "INT");
+
+var systemVar = expressionCandidates.First(c => c.Text == "sys_Pulse1s");
+Check("系统变量带数据类型", systemVar.TypeName, "BOOL");
+Check("系统变量来源标签", systemVar.Kind, "系统变量");
+Check("系统变量带注释", systemVar.Comment.Length > 0, true);
+
+// 数组候选：Text 给「整名[0]」样板，TypeName 给 `INT[5]`（元素类型 + 个数），注释照旧带
+var arrayVar = new GlobalVariable
+{
+    Name = "vec", Type = DataType.Array, ElementType = DataType.Int, Length = 5, Comment = "采样缓冲",
+};
+var arrayCandidates = CompletionSource.ForMonitorName(new[] { arrayVar });
+Check("数组候选插入元素写法", arrayCandidates[0].Text, "vec[0]");
+Check("数组候选类型栏是 INT[5]", arrayCandidates[0].TypeName, "INT[5]");
+Check("数组候选注释栏保留", arrayCandidates[0].Comment, "采样缓冲");
+Check("数组候选 Detail 仍带下标提示（不上屏）",
+    arrayCandidates[0].Detail.Contains("元素下标"), true);
+
+// ---- 整条 vs 元素：同一条数组，两个档位必须给出**相反**的写法（2026-11-11）----
+// 背景：ForMonitorName 被两类语义相反的框共用。自由监控「元件或变量名称」按整名查变量表
+// （数组是「占一行、展开成 N 个元素子行」），填 vec[0] 会查不到并退回元件解析；
+// 采集 / 扫码器那几栏只要元素。原先共用一个默认档，等于自由监控的补全给出必然报错的写法。
+var wholeForMonitor = CompletionSource.ForMonitorName(
+    new[] { arrayVar }, CompletionSource.CompletionFilter.WholeArrayGlobal);
+Check("自由监控档：数组给整条名字", wholeForMonitor[0].Text, "vec");
+Check("自由监控档：不带方括号", wholeForMonitor[0].Text.Contains('['), false);
+Check("自由监控档：类型仍是 INT[5]", wholeForMonitor[0].TypeName, "INT[5]");
+Check("自由监控档：注释保留", wholeForMonitor[0].Comment, "采样缓冲");
+
+// 自由监控档对**标量**必须与默认档一致 —— 它只改数组的写法，不该影响别的
+var scalarWhole = CompletionSource.ForMonitorName(
+    new[] { globalA }, CompletionSource.CompletionFilter.WholeArrayGlobal);
+Check("自由监控档：标量照旧给整名", scalarWhole[0].Text, "StartButton");
+
+// 采集档（AnyGlobal）仍是元素写法，别被这次改动带偏
+var elementForAcq = CompletionSource.ForMonitorName(
+    new[] { arrayVar }, CompletionSource.CompletionFilter.AnyGlobal);
+Check("采集档：数组仍给元素写法", elementForAcq[0].Text, "vec[0]");
+
+// 两档必须真的不同（否则这次修的就是个空操作）
+Check("两档对数组的写法确实不同", wholeForMonitor[0].Text != elementForAcq[0].Text, true);
+
 // 自由监控只认全局变量：系统变量不映射 PLC 地址，写进监控行读不出东西
 List<CompletionCandidate> monitorCandidates = CompletionSource.ForMonitorName(globals);
 Check("监控候选不含系统变量", monitorCandidates.Count(c => c.Kind == "系统变量"), 0);

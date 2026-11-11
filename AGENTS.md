@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **51475 B / 余量约 13.7 KB**（2026-11-09 精简后）；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **53943 B / 余量约 11 KB**（2026-11-11 校）；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 > 📦 **已搬到细节档的查阅型大表**：§15 完整目录树、§16 样式键全表（51 个 `x:Key`）。
@@ -360,6 +360,7 @@ public sealed class MyDialog : DialogWindow
 | **采集任务「配置错误」关开关/拦截** | 判据 `Modeling/AcquisitionTaskCheck.cs` + 行属性 `HasConfigError` / `EffectiveEnabled`（**必须可写**）/ `CanToggleEnabled`；执行侧只判 `EffectiveEnabled`（§5.7） |
 | **采集「执行完成输出变量」** | 模型 `AcquisitionTask.CompletionVariableName` + 规则 `AcquisitionTaskRules.TryValidateCompletionVariable`（对话框与配置检查共用）；执行侧 `QueueCompletionWrite` / `DrainCompletionWritesAsync`（先回填内存、有地址再 FC06/FC16；**固定 `DisplayFormat.Dec`**）；1=正常、2=异常，固定不可配（§5.7） |
 | **数组只能引用元素（带下标）** | 统一出口 `Modeling/VariableName.cs`（拆写法）+ `VariableReference.cs`（查变量表 / 下标范围 / **变量自身 `ResolveError`** / `Describe` / `ReadValue`）。数组整条（`var1`）在**所有**引用框一律被拒；正确写法 `var1[0]`（0 基）。词法器把 `[数字]` 并入变量名；`TryValidateNames` 改收「返回原因」的委托；`GlobalReadPlan.Apply` 逐元素回填；`AcquisitionWrite.TryBuild(..., elementIndex, ...)` 按元素类型编码（§5.2.3） |
+| **表达式结果必须是 BOOL** | 三个表达式入口保存时多一道静态校验：`CompiledExpression.TryValidateResultType`（类型表来自 `VariableReference.DescribeType`）。`INT var` 单独当条件原先**存得进、永远不生效**（框不亮 / 任务不触发），现在当场拦下，文案统一 `表达式不合法`（`CompiledExpression.NotBoolean`，不带位置/变量名）。顺序 **语法 → 名字 → 类型**；推不出的放行（§5.2.3） |
 | **常驻轮询三清单** | `_machineGlobals`（状态机，跟可见性）/ `_acquisitionGlobals`（采集，常驻）/ `_scannerGlobals`（扫码器触发表达式，常驻，2026-11-11）。`RefreshScannerGlobals` 在扫码器表达式提交 / 增删 / 启停 / 变量表变化 / 启动时重算；`RefreshAfterVariableChange` 必须重算后两份（存的是对象引用，删后同名重建会读旧对象）并 `RefreshAllScannerItemStates()`（§5.7） |
 | **采集「写入任务」真正下发** | `Modeling/AcquisitionWrite.cs`（TryBuild / **ApplyToMemory** / DescribeFailure）+ `RunWriteTaskAsync`；**`CannotAddress`=无地址 → 只回填内存、不发报文**（2026-11-05，早期是静默跳过导致变量永不更新）、失败不短路；CSV 只记写入变量回读值。**只读区只拦「写」不拦「映射」** —— 判定唯一来源 `GlobalVariableStore.IsReadOnlyElement`（§5.7） |
 | **扫码器（P4.5 + P3.5 合并一页）** | `Scanners/`（定义+规则+`scanner.json` / 裸 TCP 收帧 / 连接身份 / 上升沿）+ `MainWindow.Scanner.cs`（`Scanner*` 全部处理器 + 50ms 判定节拍 + 每台独立重连）（§5.9）。⚠️ **触发测试**（§5.9.9）：按钮在「触发请求内容」右边，`ScannerTestTrigger_Click` + `Scanners/ScannerTestResult.cs`（文案纯逻辑）；**不写变量、不写日志**，弹框看完即走 |

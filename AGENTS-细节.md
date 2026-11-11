@@ -479,6 +479,32 @@
   （旧的 `Func<string,bool>` 重载只给「变量不存在」，**认不出数组**，仅为兼容断言工程保留）。
   `MachineStateSet` / 两个状态机编辑对话框 / 采集任务对话框 / 扫码器全部改用它；
   统一的名字校验出口是 `VariableReference.Describe(name, findGlobal, allowWholeArray: false)`。
+- ⚠️ **表达式还多一道「结果必须是 BOOL」的静态校验**（2026-11-11，方案 1）：
+  `CompiledExpression.TryValidateResultType(Func<string, ExpressionVariableType>, out error)`。
+  名字校验**认不出类型**，故 `INT var` 单独当条件（`var`）原先语法、名字全过，存进 json 后
+  运行期每拍求值失败 —— 状态框永远不亮、触发式任务与扫码器永远不触发，错误还被 `out _` 吞掉。
+  - **文案统一是一句 `表达式不合法`**（`CompiledExpression.NotBoolean`，2026-11-11 用户定案）：
+    **不带位置、不带变量名、不带类型、不给改法示例**。原稿是「表达式的结果必须是 BOOL，
+    但「SysState」是 INT 变量（可写成…）」，在对话框里折成两行、把按钮区顶下去。
+    红字就贴在出错的那个框下面，用户已经知道是哪个框。⚠️ 改文案前先看断言 §26 第 ⑨ 条
+    （它守的就是「就是这一句、不带位置前缀」）。
+  - **推断规则**（`ExpressionNode.InferKind`，纯逻辑、无新源文件）：`BOOL` → Bool；
+    四个整数与 `REAL` → Number；`STRING` → **在 `VariableNode` 处直接报错**（表达式里无合法用法）；
+    比较运算恒 Bool；`&&`/`||`/`!` 两侧必须是 Bool。四处报错**共用同一个常量**，不要各写一份。
+  - ⚠️ **`Unknown` 一律放行**：变量不存在时类型也推不出来，那条由 `TryValidateNames` 报。
+    两处都报会给出互斥说法。
+  - ⚠️ **顺序必须是 语法 → 名字 → 结果类型**：名字查不到时先报「不存在」才指向正确改法。
+  - 类型查询出口 `VariableReference.DescribeType(name, findGlobal)`：复用同一套拆写法
+    （`var1[0]` 取**元素类型**），查不到/越界一律回 `UnknownType`（放行，不报错）。
+  - **接线点**（`typeOf` 为 `null` 时跳过，行为与改动前一致 —— 断言工程靠这条保持原状）：
+    `MachineStateSet.Load` / `RecompileAll` / `TrySetExpression`（都加了可选参数）、
+    两个状态机编辑对话框（`Ask(..., typeOf:)`）、`AcquisitionTaskCheck.Describe`、
+    采集任务对话框、扫码器的配置校验与失焦提交。
+  - ⚠️ **全局变量换类型后必须重编译**：`RefreshAfterVariableChange` 里补了
+    `_machineSet.RecompileAll` —— `flag` 从 BOOL 改成 INT 后，原来合法的 `flag` 就非法了。
+  - ⚠️ **`VariableReference.Describe` 的文案没跟着改**：它同时给采集的读取 / 写入 / 来源变量框
+    与扫码器缓冲区用，那些**不是表达式**，报「表达式不合法」会指错方向。两套文案分开维护。
+  - 断言：`.tmp/ExpressionCheck` §26（**211 项**）。
 - **读**：`GlobalReadPlan.Apply` 遇到 `Type == Array` 时按元素切片回填
   `GlobalVariable.SetElementValue(i, text, numeric)`（线圈数组走 `TryGetCoilElement`）。
   **数组不写 `Value`**（整条不可引用），元素值/数值形态各存一份。
@@ -487,8 +513,26 @@
   整条数组 / 非数组带下标 → `Failed` 且文案说清。
 - **改名**：`VariableRenamer.RenameReference` / `TryRenameExpression` 只换**基础名**、保留 `[下标]`。
   例：`var1[0] == 1 && var10 == 1` → `v2[0] == 1 && var10 == 1`。
-- **补全**：数组变量的候选给 `var1[0]` 作样板，Detail 写「数组，请填元素下标（0 ~ N-1）」，
-  用户要别的下标自己改数字。
+- **补全**：数组变量的候选给 `var1[0]` 作样板，`Detail` 写「数组，请填元素下标（0 ~ N-1）」。
+  - **候选行显示四栏**（2026-11-11 用户定案）：**变量名 · 数据类型 · 注释 · 来源**。
+    字段分别是 `CompletionCandidate.Text` / `TypeName` / `Comment` / `Kind`。
+    - ⚠️ **`Detail` 不上屏**：它是「类型 + 数组下标提示 + 注释」合并成的一串，既长又把行挤乱，
+      数组那句提示在自由监控框里还是错的。`ModelingCheck` 仍有断言在校 `Detail`，**字段别删**。
+    - ⚠️ **列宽四列全 `Auto` + 全进 `SharedSizeGroup`**：`Auto` 让宽度按内容走，
+      共享组让「没有注释的那行也占住注释列」—— 少了共享组，空注释行的右侧列会**左移**
+      （实测症状：`SysError` / `SySFault` 的「全局变量」比 `SysState` 那行靠左，看着没对齐）。
+    - ⚠️ **不要用 `*` 按比例分宽度**（曾试 1:1 与 2:1）：零和的，拉宽一边必然压窄另一边。
+    - ⚠️ **不要在 `Show()` 里手工 `Measure` 再赋 `Width`**：共享尺寸要等整个 `ListBox`
+      布局过一遍才成立，手工量只算到**第一行**，固化下来就是实测的「右侧被截成『全局3』」。
+      正解是 `Width = NaN` + `MinWidth`(240) / `MaxWidth`(560，屏幕宽 ×0.8 取小)。
+  - ⚠️ **同一个 `ForMonitorName` 被两类语义相反的框共用，靠档位区分**（2026-11-11 已修）：
+    - 自由监控「元件或变量名称」→ **`WholeArrayGlobal`**：数组给**整条名字** `var1`
+      （`SetName` 按整名查变量表，数组在本页是「占一行、展开成 N 个元素子行」）；
+    - 采集的读取 / 写入变量、扫码器结果变量 → **`AnyGlobal`**：数组给**元素** `var1[0]`。
+    - ⚠️ 修之前两边共用默认档，自由监控的补全会给出 `var1[0]` —— 填进去查不到变量、
+      退回元件解析直接报错，**补全给了一个填了必然错的写法**。
+    - 今后给 `ForMonitorName` 加调用点，**必须显式写出档位**，别再依赖默认值。
+  - 用户要别的下标**自己改数字**（不自动定位光标到方括号内）。
 - **扫码器缓冲区是例外**：接收内容输出变量**只能是 STRING**（用户 2026-11-10 补充），
   而数组元素不能是 STRING（`ArrayRules` 禁止），所以缓冲区**拒绝元素写法**、
   仍只接受整条 STRING 变量；执行结果输出变量可以是整数元素。
@@ -712,9 +756,16 @@
 
 | 位置 | 挂载点 | 候选来源 |
 |---|---|---|
-| 自由监控「元件名称」框 | `MonitorName_Loaded`（模板里每行一个，走 `ConditionalWeakTable` 防重复挂载） | `CompletionSource.ForMonitorName` → **全局变量** |
-| 状态机编辑窗「表达式」框 | `MachineStateEditDialog` 构造时 | `CompletionSource.ForExpression` → **系统变量 + 全局变量** |
-| 采集数据「变量名称」框 | `AcquisitionItemVariableBox_Loaded`（同样每行一个，共用 `_nameCompletions` 弱表去重） | `CompletionSource.ForMonitorName` → **全局变量** |
+| 自由监控「元件名称」框 | `MonitorName_Loaded`（模板里每行一个，走 `ConditionalWeakTable` 防重复挂载） | `ForMonitorName(..., WholeArrayGlobal)` → **全局变量**；⚠️ **数组给整条名 `var1`** |
+| 状态机编辑窗「表达式」框 | `MachineStateEditDialog` 构造时 | `CompletionSource.ForExpression` → **系统变量 + 全局变量**；数组给元素 |
+| 采集数据「变量名称」框 | `AcquisitionItemVariableBox_Loaded`（同样每行一个，共用 `_nameCompletions` 弱表去重） | `ForMonitorName(..., AnyGlobal)` → **全局变量**；⚠️ **数组给元素 `var1[0]`** |
+| 采集「来源变量」框 | `AcquisitionSourceBox_Loaded` | `ForSourceVariable` → 系统变量 + 全局变量 + 常量示例 |
+| 扫码器 缓冲区 / 结果变量 | `ScannerBufferVariableBox_Loaded` / `ScannerNotifyVariableBox_Loaded` | `ForMonitorName(..., StringScalarOnly / IntegerScalarOrElement)` |
+
+> ⚠️ **数组的两种写法取决于框要整条还是元素**（2026-11-11）：自由监控那一栏按**整名**
+> 查变量表（数组是「占一行、展开成 N 个元素子行」），其余框只要**元素**。
+> 新增 `ForMonitorName` 调用点**必须显式写档位**，别依赖默认值 —— 2026-11-11 之前
+> 就是因为共用默认档，自由监控的补全给出了 `var1[0]` 这种填了必然报错的写法。
 
 **分层**（照 `ValueCodec` 的老规矩）：
 
@@ -791,6 +842,30 @@
 - **序号列的表头写 `#`**（任务组与数据项两处都是），不写「序号」：列宽只有 34，两个字放不下。
   序号是**位置**不是数据：`Index` 不落盘，每次增删都调 `Reindex()` 重排 ——
   否则删掉中间一组，界面会出现 1、2、4、5 这样的跳号
+- **手动排序：子表表头 ↑↓ 作用于选中的【数据项】**（2026-11-11，口径照搬全局变量表）。
+  ⚠️ 排的是**任务组展开后的数据项**，不是任务组本身 —— 任务组的序不影响任何行为，
+  而数据项的序**决定 CSV 的列序**。三层缺一不可：
+  - `AcquisitionItemRow.IsSelected`（界面态、不落盘）+ `AcquisitionItemRowTemplate` 里
+    `<Border.Style>` 的 `DataTrigger` 绑它换底色 `Brush.Accent.Subtle`，点击走
+    `AcquisitionItemRow_PreviewMouseLeftButtonDown` → `SelectAcquisitionItem`；
+  - `AcquisitionTaskItem.MoveItem`：**同时**改界面的 `Items`（ObservableCollection）与
+    模型的 `Model.Items`，然后 `ReindexItems`。⚠️ 只改一边就是「画面动了重启变回去」
+    或「存对了但界面不刷」；不重排 # 号则出现跳号；
+  - `UpdateAcquisitionItemMoveButtons` / `UpdateMoveButtonsForTask`：没选中 → 两个都灰；
+    首项 → ↑ 灰；末项 → ↓ 灰。**置灰与点击拦截必须同源**。
+  - ⚠️ **按钮在 `DataTemplate` 里**（每个展开的任务组各有一对），**没有窗口级字段**：
+    只能遍历已生成的行容器、按 `x:Name` 在视觉树里找（`FindByName`）。
+    故 `MoveAcquisitionItemUpButton` 这类名字**不能**在 code-behind 里直接引用。
+  - ⚠️ **XAML 里必须写 `IsEnabled="False"` 作默认值**：`RefreshAcquisitionView` 在初始化期
+    跑时容器还没生成、找不到按钮，不写默认值就会「一行没选、两个箭头都亮着」（实测踩过）。
+  - ⚠️ **展开的那一刻容器还没建好**，`ToggleAcquisitionExpand` 里要用
+    `Dispatcher.BeginInvoke(DispatcherPriority.Loaded, ...)` 排到布局之后再刷一次。
+  - ⚠️ **移完要 `Save()` + `RefreshAcquisitionView()`**：列序变了，总览的实时 / 历史要按新列序重读。
+  - ⚠️ **当天已写过 CSV 时改序 → 换新文件**（`2026-11-11.csv` → `2026-11-11_2.csv`）：
+    表头签名变了就换文件，这是既有设计（防列错位）。后果是**历史页签只显示序号最大的那个**，
+    改序前那半天的行在 `_1` 里、界面上看不到。跨天会自然恢复。见 Brief P3.1 / P1.4。
+  - 与扫码器页面的差别：**扫码器刻意没有选中行与上下移**（§5.9，用户 2026-11-04 定案
+    「去掉选中焦点」）。别看到这里就顺手给扫码器也补一套。
 - **展开后的子表整块套浅底 + 1px 边框 + 圆角**，底色比卡片深一档（深色主题更深一档），
   让「这些行属于哪个任务组」一眼可见 —— 只靠缩进只能说明「不在最左」，说不清是哪一组。
   底色块左边与「任务名称」表头**齐平**（容器对容器），序号列由 `Padding` 让开
@@ -1132,6 +1207,21 @@
 代码全在 `MainWindow.AcquisitionView.cs`（新 partial），CSV 解析在
 `Modeling/AcquisitionCsv.cs` 的 `ParseLine` / `FindLatestRecordFile`（纯逻辑，可离线断言）。
 
+**下拉框只列「能用」的组**（`RefreshAcqGroupCombo`）。判据三条，**缺一不可**：
+
+1. `EffectiveEnabled`（= 用户启用 **且** 无配置错误，见 `AcquisitionTaskItem`）；
+2. **`Model.RecordEnabled`**（2026-11-11 用户要求）—— 本视图展示的是**落盘的 CSV**，
+   不开数据记录的组在这里既没有历史文件、也不该占一个下拉项，选中它只会得到
+   「该任务组还没有保存的数据」这种等于没说的空状态；
+3. 一个数据项都没有的组本来就会被 `AcquisitionTaskCheck` 判成配置错误，含在第 1 条里。
+
+⚠️ **空状态提示必须区分三种情况**（`DescribeNoUsableGroup`）：一个组都没建 / 建了但停用或
+配置错误 / **能跑但没开数据记录**。只写「没有可用的任务组」会让用户去翻启用开关，
+而真实原因那个开关在**任务选项对话框**里、根本不在这一页。
+
+⚠️ 实时与历史两个页签**共用**这一个下拉框，所以筛选条件对两者同时生效
+（当前一套判据，没有「实时能看、但不记录」这种中间态）。
+
 ### 5.8.1 实时数据子页签（2026-10-31）
 
 代码在 **`MainWindow.AcquisitionLive.cs`**（又一个 partial，与上面那个分开：
@@ -1472,7 +1562,17 @@ ScrollViewer                        ← 画布放不下就滚
   ```
 - 表达式按字符串缓存（`CompiledSource` vs `TriggerExpression` 比对），解析失败退化到 `CompiledExpression.Empty`（恒 false），不每拍重解析
 - 收发：`DiscardPendingAsync()` 先扔掉非响应期的主动数据 → `SendAsync(ASCII(TriggerText))` **原样发、不补结束符** → `ReadFrameAsync(TerminatorBytes, timeout)` → `ApplyScannerSuccessAsync`
-- ⚠️ **`ReadFrameAsync` 超时会关掉连接**（`catch` 里 `Dispose()` 再抛）：超时那一刻可能留了半帧，不断开的话下一个请求会把残帧当响应头，之后一路错位
+- ⚠️ **`ReadFrameAsync` 只在「已收到半帧」时才关连接**（2026-11-11 修正）：
+  `catch` 里判 `payload.Count > 0` 才 `Dispose()`，**一个字节都没收到就不关**。
+  - 为什么：**超时 ≠ 断开**。对端只是这一轮没回话（联调时故意不回包很常见），
+    TCP 明明是通的，旧写法却把它判成断线 → 1 秒退避重连 → 日志紧跟一条「已连接」，
+    看着像连接不稳。实测：连续 3 轮超时，连接全程保持。
+  - 半帧仍然必须断：流里剩着不完整字节，下一轮会把旧帧尾巴当新帧开头（失步）。
+    实测半帧场景仍能正确断开。
+  - 与「**收帧绝不取消在途 `ReadAsync`**」是同一条道理的两面（见 §5.9.5）：
+    取消 `ReadAsync` 会让套接字进入断开态，同样会造成「连上 → 收一次 → 断开 → 重连」。
+  - 调用侧 `MainWindow.Scanner.cs` 的 `!client.IsConnected` 判据**不用改** ——
+    它现在正好对应「只有真断才重连」。
 - ⚠️ **空结束符走 100ms 静默窗口**（`ScannerTcpClient.SilenceInterval`），且 `payload.Count > 0` 才起静默计时 —— 否则连上后对方一个字都没发时，第一个 100ms 就把空帧当结果交付了
 - ⚠️⚠️ **静默收帧绝不能用「取消在途 `ReadAsync`」来判帧结尾**（2026-11-05 真机实测，代价极大）：
   取消 `NetworkStream.ReadAsync` 会让**套接字进入断开态** —— 每成功收帧一次，`client.Connected` 立刻变 `false`，
