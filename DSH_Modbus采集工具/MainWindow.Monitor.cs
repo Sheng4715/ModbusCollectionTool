@@ -470,19 +470,29 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 候选现算：变量表随时可变，挂载时抓快照会联想出已删掉的变量
-            var popup = Ui.CompletionPopup.Attach(tb, () => CompletionSource.ForMonitorName(GlobalVarModels));
+            // 候选现算：变量表随时可变，挂载时抓快照会联想出已删掉的变量。
+            // ⚠️ 必须用 **WholeArrayGlobal**（2026-11-11）：这一栏填的是**整条数组名**
+            // `var1`（`MonitorItem.SetName` 按整名查变量表，数组在本页是「占一行、
+            // 展开成 N 个元素子行」）。默认档给的是元素写法 `var1[0]`，那个写法
+            // 在这里查不到变量、会退回元件解析并报错 —— 等于补全给出一个填了必然错的写法。
+            var popup = Ui.CompletionPopup.Attach(
+                tb,
+                () => CompletionSource.ForMonitorName(
+                    GlobalVarModels, CompletionSource.CompletionFilter.WholeArrayGlobal));
             _nameCompletions.Add(tb, popup);
         }
 
         /// <summary>元件名称框失焦：交给唯一的提交点。</summary>
         private void MonitorName_LostFocus(object sender, RoutedEventArgs e)
         {
-            // 补全列表开着时的失焦，是「用户正在点候选」，不是「输入结束」——
-            // 此刻提交会把半截名字（如 "sys_"）当成错误弹窗。
-            // 弹窗本身用 WS_EX_NOACTIVATE 不抢焦点，正常情况走不到这里；
-            // 这一句是兜底：万一某些输入法/主题下焦点还是丢了，也不至于误报。
-            if (sender is TextBox tb && _nameCompletions.TryGetValue(tb, out Ui.CompletionPopup? popup) && popup.IsOpen)
+            // ⚠️ 判据是 **IsSelecting**，不是 **IsOpen**（2026-11-11 修正）：
+            // 弹窗是 `StaysOpen = true`，鼠标点到窗口别处时它仍开着 —— 用 IsOpen 判断，
+            // 「输一半点到别处」会被误当成「用户正在点候选」而**跳过校验**，
+            // 表现就是「失焦后什么提示都没有，要切页面或按回车才弹」。
+            // IsSelecting 只在鼠标真的按在候选列表里那一刻为真。
+            if (sender is TextBox tb
+                && _nameCompletions.TryGetValue(tb, out Ui.CompletionPopup? popup)
+                && popup.IsSelecting)
             {
                 return;
             }

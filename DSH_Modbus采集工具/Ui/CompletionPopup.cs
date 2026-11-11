@@ -76,6 +76,12 @@ namespace DSH_Modbus采集工具.Ui
             ScrollViewer.SetHorizontalScrollBarVisibility(_list, ScrollBarVisibility.Disabled);
             ScrollViewer.SetVerticalScrollBarVisibility(_list, ScrollBarVisibility.Auto);
 
+            // 四栏的列宽要**跨行对齐**（类型、注释、来源各成一列），但那只有在对所有行
+            // 做同一次测量时才成立 —— SharedSizeGroup 需要关掉虚拟化，否则滚出视野的行
+            // 不参与测量，列宽会随滚动跳变。这里最多 50 条、行高固定，关掉没有代价。
+            VirtualizingStackPanel.SetIsVirtualizing(_list, false);
+            Grid.SetIsSharedSizeScope(_list, true);
+
             _border = new Border
             {
                 BorderThickness = new Thickness(1),
@@ -127,8 +133,24 @@ namespace DSH_Modbus采集工具.Ui
             return new CompletionPopup(box, source);
         }
 
-        /// <summary>列表当前是否展开（供宿主判断「这次失焦该不该校验」）。</summary>
+        /// <summary>列表当前是否展开（作参考用；宿主判断「该不该提交」请看 <see cref="IsSelecting"/>）。</summary>
         public bool IsOpen => _popup.IsOpen;
+
+        /// <summary>
+        /// 失焦这一刻，用户是不是**正在点候选**（而不是点到别处去了）。
+        /// <para>
+        /// ⚠️ **宿主必须用这个、不要用 <see cref="IsOpen"/> 判断该不该跳过提交**（2026-11-11）：
+        /// 弹窗是 `StaysOpen = true`，鼠标点到窗口别处、点到别的页签时它**还开着**，
+        /// 于是 `IsOpen` 依旧为 true —— 拿它当判据，那些真实失焦会被当成
+        /// 「用户正在点候选」而**跳过校验**，表现就是「输一半点到别处，什么提示都没有，
+        /// 要切页面或按回车才弹」。全局变量表没有补全，所以它一直是对的，两边行为才对不上。
+        /// </para>
+        /// <para>
+        /// 实现：只有在**鼠标按在候选列表里**（<c>List_PreviewMouseLeftButtonDown</c>）那一刻
+        /// 才置真。其余任何失焦（点到表格、点到导航、点标题栏、Alt+Tab）都为假 → 正常提交。
+        /// </para>
+        /// </summary>
+        public bool IsSelecting { get; private set; }
 
         public void Dispose()
         {
@@ -216,6 +238,37 @@ namespace DSH_Modbus采集工具.Ui
             Show();
         }
 
+        /// <summary>
+        /// 弹窗最大宽度（DIP）—— **唯一会触发截断的地方**。
+        /// <para>
+        /// 取 560：典型一行是「名字 ≤ 22 字符 + 类型 + 注释 ≤ 12 汉字 + 来源」，
+        /// 12 号字下约 500 DIP，560 留了余量又不至于把主窗口顶满。
+        /// 屏幕更窄时由 <see cref="Show"/> 再乘 0.8 收一次。
+        /// </para>
+        /// </summary>
+        private const double MaxPopupWidth = 560;
+
+        /// <summary>弹窗最小宽度（DIP）：太窄时四栏会挤在一起、看不出哪列是哪列。</summary>
+        private const double MinPopupWidth = 240;
+
+        /// <summary>
+        /// 弹出候选列表并按内容定宽。
+        /// <para>
+        /// **宽度策略（2026-11-11 用户定案，四轮调出来的最终版）**：
+        /// </para>
+        /// <list type="number">
+        /// <item>四栏**全部 `Auto`** + 全部进 `SharedSizeGroup`（见 <see cref="BuildRow"/>）；</item>
+        /// <item>宽度**交回 WPF 自己量**：`Width = NaN` + `MinWidth` / `MaxWidth` 夹住；</item>
+        /// <item>内容短 → 弹窗收窄，不留空转的列宽；内容长 → 变宽；**只有超过 MaxWidth 才截断**。</item>
+        /// </list>
+        /// <para>
+        /// ⚠️ **两条已经踩过的弯路，不要再走**：
+        /// ① **不要用 `*` 分宽度**（曾按 2:1 分给名字 / 注释）—— 那是零和的，拉宽名字就压窄注释，
+        /// 怎么调都是拆东墙补西墙；② **不要在这里手工 `Measure` 一次再把结果赋给 `Width`** ——
+        /// 共享尺寸要等整个 `ListBox` 布局过一遍才成立，手工量的那一刻只算到**第一行**，
+        /// 把它固化下来就是实测到的「右侧『全局变量』被截成『全局3』」。
+        /// </para>
+        /// </summary>
         private void Show()
         {
             ApplyTheme();
@@ -233,9 +286,35 @@ namespace DSH_Modbus采集工具.Ui
 
             _list.SelectedIndex = 0;
 
-            // 宽度跟随输入框，但给一个下限：太窄的话「名字 + 说明」挤成一团
-            _border.Width = Math.Max(_box.ActualWidth, 240);
             _popup.IsOpen = true;
+
+            // NaN = 不指定宽度（Auto），交给布局系统按内容量；上下限夹住即可。
+            // 顺序无所谓，但 IsOpen 必须先于这里 —— 否则量出来的 DesiredSize 是 0。
+            _border.Width = double.NaN;
+            _border.MinWidth = MinPopupWidth;
+            _border.MaxWidth = Math.Min(MaxPopupWidth, AvailableScreenWidth() * 0.8);
+        }
+
+        /// <summary>
+        /// 弹窗所在屏幕的可用宽度（DIP）。
+        /// <para>
+        /// 用 <see cref="SystemParameters.WorkArea"/>（主显示器工作区，已是 DIP），
+        /// **不引 WinForms 的 Screen**（本项目零第三方依赖，也不该为量个屏幕宽度引 WinForms）。
+        /// 多显示器时取的是主屏；候选窗只在这一个应用里弹，够用。
+        /// 量不到就退回 <see cref="MaxPopupWidth"/>，不因为量不到屏幕尺寸就放弃渲染。
+        /// </para>
+        /// </summary>
+        private static double AvailableScreenWidth()
+        {
+            try
+            {
+                double width = SystemParameters.WorkArea.Width;
+                return width > 0 ? width : MaxPopupWidth;
+            }
+            catch
+            {
+                return MaxPopupWidth;
+            }
         }
 
         private void Hide()
@@ -252,44 +331,99 @@ namespace DSH_Modbus采集工具.Ui
             _border.SetResourceReference(Border.BorderBrushProperty, "Brush.Popup.Border");
         }
 
+        /// <summary>
+        /// 一行候选：**变量名 · 数据类型 · 注释 · 来源**（2026-11-11 用户定案）。
+        /// <para>
+        /// 四栏用 `Grid` 的列排（不是 StackPanel 顺排），**左缘各自对齐成一列**，
+        /// 扫一眼就能横向比较「哪个是 INT、哪条有注释」。
+        /// </para>
+        /// <para>
+        /// **列宽规则（最终版，别再改）**：
+        /// </para>
+        /// <list type="bullet">
+        /// <item>四列**全部 `Auto`** —— 按内容定宽，不设比例；</item>
+        /// <item>四列**全部进 `SharedSizeGroup`** —— 列宽取「组内所有行该列的最大值」，
+        /// 于是没有注释的那行**也照样占住注释列的宽度**（详见下面那条 ⚠️）；</item>
+        /// <item>整体宽度由 `Show()` 用 `MinWidth` / `MaxWidth` 夹住，只有超上限才截断。</item>
+        /// </list>
+        /// <para>
+        /// ⚠️ **为什么每列都必须进共享组**：`Auto` 列的宽度是「这**一行**内容多宽」，
+        /// 没有内容的那一格就是 0。实测症状 —— `SysError` / `SySFault` 没有注释，
+        /// 它们的「全局变量」就相对有注释的 `SysState` 那行**左移**，看着完全没对齐。
+        /// 进共享组后「空行也占位」，四列的左缘才真正是一条竖线。
+        /// </para>
+        /// <para>
+        /// ⚠️ **不要用 `*` 按比例分宽度**（曾按 2:1 分给名字 / 注释）：那是**零和**的，
+        /// 拉宽名字就压窄注释，怎么调都是拆东墙补西墙 —— 内容多长就给多宽才是正解。
+        /// </para>
+        /// <para>
+        /// ⚠️ **`Candidate.Detail` 不上屏**：它是「类型 + 数组下标提示 + 注释」合并成的一串，
+        /// 既长又把行挤乱，数组那句提示在自由监控框里还是错的。上屏用 `TypeName` / `Comment` 两栏。
+        /// </para>
+        /// </summary>
         private FrameworkElement BuildRow(CompletionCandidate candidate)
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var left = new StackPanel
+            grid.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Left,
-            };
+                Width = GridLength.Auto,
+                SharedSizeGroup = "CompletionName",
+            });
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            {
+                Width = GridLength.Auto,
+                SharedSizeGroup = "CompletionType",
+            });
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            {
+                Width = GridLength.Auto,
+                SharedSizeGroup = "CompletionComment",
+            });
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            {
+                Width = GridLength.Auto,
+                SharedSizeGroup = "CompletionKind",
+            });
 
             var name = new TextBlock
             {
                 Text = candidate.Text,
                 FontSize = 12,
                 VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
             };
             name.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Primary");
+            Grid.SetColumn(name, 0);
+            grid.Children.Add(name);
 
-            left.Children.Add(name);
-
-            if (!string.IsNullOrEmpty(candidate.Detail))
+            // 数据类型：没类型的（常量示例）留空，不留占位文字。
+            // ⚠️ 间距用「列右留白 + 下一列左留白」凑，而不是只给本列 Margin ——
+            // 本列现在是 Auto 宽度，留白会算进列宽，空类型行就会白白缩进一段。
+            var type = new TextBlock
             {
-                var detail = new TextBlock
-                {
-                    Text = candidate.Detail,
-                    FontSize = 11,
-                    Margin = new Thickness(10, 0, 0, 0),
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-                detail.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
+                Text = candidate.TypeName,
+                FontSize = 11,
+                Margin = new Thickness(12, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            type.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Secondary");
+            Grid.SetColumn(type, 1);
+            grid.Children.Add(type);
 
-                left.Children.Add(detail);
-            }
-
-            Grid.SetColumn(left, 0);
-            grid.Children.Add(left);
+            // 注释：用户自己填的那一列，截断而不是换行（行高固定 1 行）
+            var comment = new TextBlock
+            {
+                Text = candidate.Comment,
+                FontSize = 11,
+                Margin = new Thickness(10, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            comment.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Muted");
+            Grid.SetColumn(comment, 2);
+            grid.Children.Add(comment);
 
             var kind = new TextBlock
             {
@@ -299,8 +433,7 @@ namespace DSH_Modbus采集工具.Ui
                 VerticalAlignment = VerticalAlignment.Center,
             };
             kind.SetResourceReference(TextBlock.ForegroundProperty, "Brush.Text.Tertiary");
-
-            Grid.SetColumn(kind, 1);
+            Grid.SetColumn(kind, 3);
             grid.Children.Add(kind);
 
             return grid;
@@ -438,7 +571,18 @@ namespace DSH_Modbus采集工具.Ui
                 if (index >= 0 && index < _items.Count)
                 {
                     e.Handled = true;
-                    Accept(_items[index]);
+
+                    // ⚠️ 必须先置位再 Accept：Accept 里会 Hide()，
+                    // 而宿主的 LostFocus 可能在这之后才跑（见 IsSelecting 的注释）。
+                    IsSelecting = true;
+                    try
+                    {
+                        Accept(_items[index]);
+                    }
+                    finally
+                    {
+                        IsSelecting = false;
+                    }
                 }
             }
         }

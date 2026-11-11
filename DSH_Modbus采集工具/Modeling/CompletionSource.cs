@@ -13,10 +13,30 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>插入文本框的内容（变量名）。</summary>
         public string Text { get; init; } = string.Empty;
 
-        /// <summary>右侧说明：类型 / 注释，只给人看，不参与插入。</summary>
+        /// <summary>
+        /// 数据类型显示名，如 <c>INT</c> / <c>STRING[20]</c> / <c>INT[5]</c>（数组）。
+        /// <para>候选行上显示的那一栏。系统变量与全局变量都有；常量示例为空。</para>
+        /// </summary>
+        public string TypeName { get; init; } = string.Empty;
+
+        /// <summary>
+        /// 用户写的**注释**（全局变量的「注释」列 / 系统变量写死的说明）。
+        /// <para>候选行上显示在类型后面；没有就留空、不留分隔符。</para>
+        /// </summary>
+        public string Comment { get; init; } = string.Empty;
+
+        /// <summary>
+        /// 旧的一栏合并说明（类型 + 注释，或数组下标提示）。
+        /// <para>
+        /// ⚠️ **不上屏**（2026-11-11）：候选行改用 <see cref="TypeName"/> +
+        /// <see cref="Comment"/> 两栏分别显示 —— 合并成一串时「类型 · 数组请填元素下标 · 注释」
+        /// 太长，且数组那句提示在自由监控那个框里是错的（那里要整条数组名）。
+        /// 保留它是为了让 <c>ModelingCheck</c> 的既有断言继续有效。
+        /// </para>
+        /// </summary>
         public string Detail { get; init; } = string.Empty;
 
-        /// <summary>来源分类（"系统变量" / "全局变量"），用于列表里的分组小字。</summary>
+        /// <summary>来源分类（"系统变量" / "全局变量" / "常量"），用于列表右侧的分组小字。</summary>
         public string Kind { get; init; } = string.Empty;
     }
 
@@ -152,6 +172,8 @@ namespace DSH_Modbus采集工具.Modeling
                 list.Add(new CompletionCandidate
                 {
                     Text = v.Name,
+                    TypeName = DataTypes.Get(v.Type).DisplayName,
+                    Comment = v.Comment,
                     Detail = string.IsNullOrEmpty(v.Comment) ? v.Type.ToString() : v.Comment,
                     Kind = "系统变量",
                 });
@@ -181,26 +203,29 @@ namespace DSH_Modbus采集工具.Modeling
         {
             var list = ForExpression(globals);
 
-            // 放在最后：候选按前缀命中优先排序，常量示例从不抢变量名的位置
+            // 放在最后：候选按前缀命中优先排序，常量示例从不抢变量名的位置。
+            // ⚠️ 常量**没有声明类型**（类型由写入变量定），故 TypeName 留空、写进口 Comment 栏。
             list.Add(new CompletionCandidate
             {
                 Text = "#123",
+                Comment = "十进制整数",
                 Detail = "常量 · 十进制整数",
                 Kind = "常量",
             });
             list.Add(new CompletionCandidate
             {
                 Text = "#0x1F",
+                Comment = "十六进制",
                 Detail = "常量 · 十六进制",
                 Kind = "常量",
             });
             list.Add(new CompletionCandidate
             {
                 Text = "#\"ABCD\"",
+                Comment = "字符串（双引号必填）",
                 Detail = "常量 · 字符串（双引号必填）",
                 Kind = "常量",
             });
-
             return list;
         }
 
@@ -224,8 +249,24 @@ namespace DSH_Modbus采集工具.Modeling
             /// </summary>
             IntegerScalarOrElement,
 
-            /// <summary>只要**全局变量**、且允许数组元素（采集读取 / 写入变量）。</summary>
+            /// <summary>
+            /// 只要**全局变量**、数组给**元素**写法 <c>var1[0]</c>
+            /// （采集读取 / 写入变量、表达式框、来源变量框）。
+            /// </summary>
             AnyGlobal,
+
+            /// <summary>
+            /// 只要**全局变量**、数组给**整条名字** <c>var1</c>（自由监控「元件或变量名称」）。
+            /// <para>
+            /// ⚠️ 这个档位是补一个**既有不一致**（2026-11-11）：自由监控的数组是
+            /// 「占一行、展开成 N 个元素子行」，那一栏**必须填整条数组名** ——
+            /// <c>MonitorItem.SetName</c> 拿文本去查变量表（整名匹配），填 <c>var1[0]</c>
+            /// 查不到、退回元件解析，直接报「不是有效的软元件」。
+            /// 而采集 / 扫码器的框反过来只收元素。同一个 <c>ForMonitorName</c>
+            /// 原先两边共用一份候选，等于让自由监控的补全**给出一个填了必然报错的写法**。
+            /// </para>
+            /// </summary>
+            WholeArrayGlobal,
         }
 
         /// <summary>
@@ -258,6 +299,8 @@ namespace DSH_Modbus采集工具.Modeling
                         ? new CompletionCandidate
                         {
                             Text = v.Name,
+                            TypeName = v.TypeDisplayName,
+                            Comment = v.Comment,
                             Detail = BuildGlobalDetail(v),
                             Kind = "全局变量",
                         }
@@ -272,13 +315,30 @@ namespace DSH_Modbus采集工具.Modeling
                     break;
             }
 
-            // 数组不能被整条引用（用户定案 2026-11-10：只能对元素读写）。
-            // 候选里给一个 `var1[0]` 作样板，用户要别的下标自己改数字。
+            // 数组分两种写法，取决于**这个框要整条还是元素**（2026-11-11）：
+            //   · 自由监控「元件或变量名称」→ 整条 `var1`（那一栏按整名查变量表，
+            //     数组是「占一行、展开成 N 个元素子行」）；
+            //   · 采集 / 扫码器 / 表达式 → 元素 `var1[0]`（用户定案 2026-11-10：
+            //     只能对元素读写，整条数组在那些框里一律被拒）。
             if (isArray)
             {
+                if (filter == CompletionFilter.WholeArrayGlobal)
+                {
+                    return new CompletionCandidate
+                    {
+                        Text = v.Name,
+                        TypeName = v.TypeDisplayName,
+                        Comment = v.Comment,
+                        Detail = BuildGlobalDetail(v),
+                        Kind = "全局变量",
+                    };
+                }
+
                 return new CompletionCandidate
                 {
                     Text = v.Name + "[0]",
+                    TypeName = v.TypeDisplayName,
+                    Comment = v.Comment,
                     Detail = v.TypeDisplayName + "  ·  数组，请填元素下标（0 ~ "
                         + Math.Max(0, v.Length - 1) + "）",
                     Kind = "全局变量",
@@ -288,6 +348,8 @@ namespace DSH_Modbus采集工具.Modeling
             return new CompletionCandidate
             {
                 Text = v.Name,
+                TypeName = v.TypeDisplayName,
+                Comment = v.Comment,
                 Detail = BuildGlobalDetail(v),
                 Kind = "全局变量",
             };
