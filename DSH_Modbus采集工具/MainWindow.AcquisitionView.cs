@@ -132,11 +132,46 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>
+        /// 「没有可用任务组」时的提示语。
+        /// <para>
+        /// ⚠️ 三种情况必须分开说（2026-11-11）：本视图只列**启用 + 无配置错误 +
+        /// 开了数据记录**的组，若只报一句「没有可用的任务组」，用户会去查启用开关，
+        /// 而真实原因可能是「数据记录」没开 —— 那个开关在任务选项对话框里，压根不在这一页。
+        /// </para>
+        /// </summary>
+        private static string DescribeNoUsableGroup(
+            int total, ObservableCollection<AcquisitionTaskItem>? items)
+        {
+            if (total == 0)
+            {
+                return "尚未添加任务组，请到数据管理页新增";
+            }
+
+            // 有没有「能跑但没开数据记录」的组：只有这种情况值得单独提示，
+            // 否则（全是停用 / 配置错误）原提示仍然准确。
+            for (int i = 0; i < total; i++)
+            {
+                AcquisitionTaskItem item = items![i];
+                if (item.EffectiveEnabled && !item.Model.RecordEnabled)
+                {
+                    return "没有可用的任务组（需启用、无配置错误，且打开「数据记录启用」）";
+                }
+            }
+
+            return "没有可用的任务组（需启用且无配置错误）";
+        }
+
+        /// <summary>
         /// 按 <c>_acqTaskSet</c> 重填任务组下拉框（2026-10-31 由胶囊条改来）。
         /// <para>
         /// **只列能采的组**（2026-10-31 用户定案）：停用、配置错误、一个数据项都没有的组都不出现。
         /// 理由是这两类组根本不会有数据 —— 列出来点进去只会看到一片占位，
         /// 用户会以为「功能坏了」，而真正的原因是组没开。
+        /// </para>
+        /// <para>
+        /// **没开「数据记录」的组也不列**（2026-11-11 用户要求）：本视图展示的是落盘 CSV，
+        /// 不记录的组在这里既没有历史文件、也不会有可看的实时内容 —— 选中它只会得到
+        /// 「该任务组还没有保存的数据」这种说了等于没说的空状态。
         /// </para>
         /// <para>
         /// ⚠️ 与历史数据页签**共用**这个下拉框，所以历史数据也只能看能采的组 ——
@@ -157,12 +192,16 @@ namespace DSH_Modbus采集工具
             int total = items?.Count ?? 0;
             string previous = _acqHistoryGroup;
 
-            // 可采集的组：启用且无配置错误（EffectiveEnabled 同时覆盖两者）
+            // 可采集的组：启用且无配置错误（EffectiveEnabled 同时覆盖两者），
+            // **且打开了「数据记录」**（2026-11-11 用户要求）。
+            // 理由：本视图展示的是**落盘的 CSV**（实时卡片读变量、历史表格读文件），
+            // 不记录数据的组在这里既没有历史文件、也不该占一个下拉项 ——
+            // 选中它只会得到「该任务组还没有保存的数据」这种说了等于没说的空状态。
             var usable = new List<AcquisitionTaskItem>();
             for (int i = 0; i < total; i++)
             {
                 AcquisitionTaskItem candidate = items![i];
-                if (candidate.EffectiveEnabled)
+                if (candidate.EffectiveEnabled && candidate.Model.RecordEnabled)
                 {
                     usable.Add(candidate);
                 }
@@ -198,14 +237,14 @@ namespace DSH_Modbus采集工具
 
                 if (!hasGroup)
                 {
-                    // 提示语要区分「一个组都没建」与「建了但都不能用」——
-                    // 两种情况用户要做的事完全不同
+                    // 提示语要区分三种情况 —— 用户要做的事完全不同（2026-11-11 加了第三种）：
+                    //   ① 一个组都没建        → 去数据管理页新增
+                    //   ② 建了但启用/配置不对 → 去启用、或修配置
+                    //   ③ 能跑但没开数据记录  → 去任务选项里打开「数据记录启用」
                     SetVisibility(AcqNoGroupHint, true);
                     if (AcqNoGroupHint != null)
                     {
-                        AcqNoGroupHint.Text = total == 0
-                            ? "尚未添加任务组，请到数据管理页新增"
-                            : "没有可用的任务组（需启用且无配置错误）";
+                        AcqNoGroupHint.Text = DescribeNoUsableGroup(total, items);
                     }
 
                     _acqHistoryGroup = string.Empty;
