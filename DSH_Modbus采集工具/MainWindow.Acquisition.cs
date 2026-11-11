@@ -91,9 +91,10 @@ namespace DSH_Modbus采集工具
                 ClearAcquisitionTasksButton.IsEnabled = n > 0;
             }
 
-            // 数据项 ↑↓ 的可用性也要在这里刷（2026-11-11）：XAML 里默认 IsEnabled 是 true，
-            // 列表载入 / 增删后不重算就会「没选任何项、两个箭头却都亮着」（实测踩过）。
-            // 选中项已被删掉时 OwnerOfSelectedItem 找不到它，两个箭头自然变灰，不必特判。
+            // 数据项 ↑↓ 的可用性也要在这里刷：XAML 里默认 IsEnabled 是 true，
+            // 列表载入 / 增删后不重算就会「没选任何项、两个箭头却都亮着」。
+            // ⚠️ 这里只覆盖「增删**任务组**」这条路；增删**数据项**走另外三个处理器，
+            // 它们不经本方法，必须各自调 SyncAcquisitionItemSelection()。
             UpdateAcquisitionItemMoveButtons();
 
             // 任务组增删后要重算「哪些变量需要常驻采集」—— 漏掉这里的话，
@@ -328,11 +329,17 @@ namespace DSH_Modbus采集工具
             // Move 同时改 ObservableCollection（画面重排）与模型 List（落盘顺序）并重排 # 号
             owner.MoveItem(moving, to);
 
+            // ⚠️ **只落盘，不刷总览视图**（2026-11-11 优化）：早先这里调 RefreshAcquisitionView()，
+            // 它链式做三件重活 —— 重建整个实时画布（销毁并重建全部卡片视觉树，即使当前
+            // 不在总览页）、清空重填任务组下拉框、重扫所有组的变量引用。连点 5 次下移就重建 5 遍。
+            //
+            // 而调序**此刻**对总览没有任何可见影响：
+            //   · 下拉框只列组名 / 启用 / 数据记录，与项顺序无关；
+            //   · 历史表格读的是文件名，列序变化要等下一次写入生成 `_2.csv` 才体现——
+            //     那是采集侧的 Append 自己会切文件，与这里无关；
+            //   · 实时画布按 Id 存位置、按绝对坐标摆放，卡片顺序不影响呈现，
+            //     切到总览时本来就会重建一次。
             _acqTaskSet.Save();
-
-            // 顺序变了 = CSV 的列顺序也变了（表头按数据项顺序拼），
-            // 让总览「实时 / 历史」按新列序重读。
-            RefreshAcquisitionView();
 
             UpdateAcquisitionItemMoveButtons();
         }
@@ -371,12 +378,10 @@ namespace DSH_Modbus采集工具
             // 免得 ↑↓ 作用在一个不在任何组里的对象上。
             // 判据用「还在不在任何组里」，而不是「在不在刚删的这组里」：
             // 删除一个组不影响别的组的选中项，那种情况必须保留。
-            if (_selectedAcquisitionItem != null
-                && OwnerOfSelectedItem(out _, out _) == null)
-            {
-                _selectedAcquisitionItem = null;
-            }
+            SyncAcquisitionItemSelection();
 
+            // ⚠️ RefreshAcquisitionView 内部已经会刷一次 ↑↓（见其注释），
+            // 这里再调一次是幂等的，代价只有一次遍历已展开的行容器，保留以便阅读。
             RefreshAcquisitionView();
         }
 
@@ -390,6 +395,9 @@ namespace DSH_Modbus采集工具
             task.AddItem();
             _acqTaskSet.Save();
             RefreshAcquisitionGlobals();
+
+            // 新增会让「原末项」不再是末项，↓ 的可用性要跟着变
+            SyncAcquisitionItemSelection();
             AcquisitionTaskItemsControl?.UpdateLayout();
         }
 
@@ -414,6 +422,9 @@ namespace DSH_Modbus采集工具
             task.ClearItems();
             _acqTaskSet.Save();
             RefreshAcquisitionGlobals();
+
+            // 选中的那一项多半已被清掉 → 必须重算，否则箭头亮着却点不动
+            SyncAcquisitionItemSelection();
         }
 
         private void RemoveAcquisitionItem_Click(object sender, RoutedEventArgs e)
@@ -432,6 +443,34 @@ namespace DSH_Modbus采集工具
             task.RemoveItem(row);
             _acqTaskSet.Save();
             RefreshAcquisitionGlobals();
+
+            // ⚠️ 删掉的若正是选中项，`_selectedAcquisitionItem` 就指向一个不在任何组里的对象：
+            // 箭头会停留在删除前的可用状态（亮着），点下去却因找不到所属组直接 return。
+            // 这条路径**不走 RefreshAcquisitionView**，所以必须单独同步（实测踩过）。
+            SyncAcquisitionItemSelection();
+        }
+
+        /// <summary>
+        /// 增删数据项之后同步「选中态 + ↑↓ 可用性」。
+        /// <para>
+        /// 两件事：① 选中项已不在任何组里时清掉引用（否则它一直被窗口字段持有，
+        /// 且 ↑↓ 会作用在一个已经不可见、也不可移动的对象上）；
+        /// ② 重算箭头可用性 —— 置灰条件全部由 <see cref="UpdateAcquisitionItemMoveButtons"/> 判。
+        /// </para>
+        /// <para>
+        /// ⚠️ 增删数据项的三个处理器都在数据管理页，**不经过**
+        /// <see cref="RefreshAcquisitionView"/>（那是增删**任务组**才走的），
+        /// 所以不能指望它顺手刷新。
+        /// </para>
+        /// </summary>
+        private void SyncAcquisitionItemSelection()
+        {
+            if (_selectedAcquisitionItem != null && OwnerOfSelectedItem(out _, out _) == null)
+            {
+                _selectedAcquisitionItem = null;
+            }
+
+            UpdateAcquisitionItemMoveButtons();
         }
 
         private void ToggleAcquisitionTaskExpand_Click(object sender, RoutedEventArgs e)
