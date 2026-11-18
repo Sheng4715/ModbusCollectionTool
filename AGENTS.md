@@ -9,10 +9,10 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **53943 B / 余量约 11 KB**（2026-11-11 校）；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **54061 B / 余量约 11 KB**（2026-11-18 校）；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
-> 📦 **已搬到细节档的查阅型大表**：§15 完整目录树、§16 样式键全表（51 个 `x:Key`）。
+> 📦 **已搬到细节档的查阅型大表**：§15 完整目录树、§16 样式键全表（53 个 `x:Key`）。
 
 ---
 
@@ -33,18 +33,18 @@ dotnet run --project DSH_Modbus采集工具
 ## 2. 目录结构
 
 
-> 📁 **完整目录树已移到 [`AGENTS-细节.md`](AGENTS-细节.md) §15**（约 9.4 KB，属查阅型参考）。
+> 📁 **完整目录树已移到 [`AGENTS-细节.md`](AGENTS-细节.md) §15**（约 10.6 KB，属查阅型参考）。
 > 这里只留**每次改动都要判断**的两条：哪些目录不碰 WPF、新增逻辑该放哪。
 > ⚠️ **增删源文件时两处都要改**：§15 是全量树，本节只到目录级。
 
 **9 个不引 WPF 的目录**（可脱离界面阅读/断言，**没有任何** `using System.Windows*`）：
 `Drivers/` `Expressions/` `Io/` `Logging/` `Modeling/` `Net/` `Polling/` `Scanners/` `Startup/`
 
-**引 WPF 的**：`Ui/` `Themes/` + 根目录的 `MainWindow*.cs` 八个 partial、`MonitorItem.cs` / `GlobalVarItem.cs` / `AcquisitionTaskItem.cs` / `SystemVarRow.cs` / `App.xaml.cs`。
+**引 WPF 的**：`Ui/` `Themes/` + 根目录的 `MainWindow*.cs` 九个 partial、`MonitorItem.cs` / `GlobalVarItem.cs` / `AcquisitionTaskItem.cs` / `SystemVarRow.cs` / `App.xaml.cs`。
 
 ⚠️ **判断该不该碰 WPF 看「所在目录」，不是看文件名**：`MonitorItem.cs` 是 `DataPoint` 的界面包装、碰 WPF 属正常，但它在**根目录** —— 不要以为「根目录都不碰」。
 
-**目录职责一句话**（细节见 §15）：入口 `App`（单实例 → 主题 → 建窗）；`MainWindow.*` 八个 partial 按页面分；
+**目录职责一句话**（细节见 §15）：入口 `App`（单实例 → 主题 → 建窗）；`MainWindow.*` 九个 partial 按页面分；
 `Polling/` 采集编排、`Io/` 点位集与分页、`Modeling/` 数据模型与纯逻辑、`Themes/` 主题、`Ui/` 呈现与对话框、
 `Scanners/` 扫码器、`Startup/` 自启与单实例、`Drivers/` Modbus 报文与品牌地址表、`Logging/` 日志落盘。
 
@@ -74,9 +74,9 @@ Window
 | 导航项 | 面板 | 说明 |
 |---|---|---|
 | `OverviewNav` 总览 | `OverviewPanel` | 页头右侧下拉框「当前视图」（`FormComboBox`）**三项**：`PLC状态机`（P1.2）/ `生产数据`（占位）/ `数据采集`（P1.4，见 §5.5、§5.8）；卡片内是当前视图 + 底部运行日志卡。⚠️ 选择会记住（`app-settings.json` → `OverviewView`，存**枚举名**，`Modeling/OverviewViewSetting.cs`，见细节 §5.5） |
-| `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入 X / 输出 Y / 自由监控 / 系统变量）+ 分页 |
-| `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **两档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接 / 右交互，见 §5.9） |
+| `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入监控 / 输出监控 / 自由监控 / 系统变量）+ 分页 |
 | `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，见 §5.7）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5 只读清单，见 §5.3）。⚠️ 第四档「扫码器」已于 2026-11-04 删除，并入设备连接页 |
+| `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **两档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接 / 右交互，见 §5.9） |
 | `SettingsNav` 设置 | `SettingsPanel` | **卡片顺序（2026-11-08 定案）**：应用标题（P5.6）→ 显示外观（P5.1）→ 开机自启动（P5.5）→ 日志保存（P5.2）→ 项目信息（P5.3）。⚠️ 「自动连接」卡已于 2026-11-05 删除：PLC 的搬去设备连接页，扫码器改用行上「启用」（§7.2） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
@@ -90,7 +90,7 @@ Window
 
 ### 3.3 关键样式（Window.Resources）
 
-> 📋 **51 个 `x:Key` 全表已移到 [`AGENTS-细节.md`](AGENTS-细节.md) §16**（约 5.8 KB 查表）。
+> 📋 **53 个 `x:Key` 全表已移到 [`AGENTS-细节.md`](AGENTS-细节.md) §16**（约 5.9 KB 查表）。
 > 改外观前先去全表里找**现成的**，不要另造；下面只留「必知 + 最容易踩的」。
 
 **名字前缀**：`Io*` = IO 页/分页、`Form*` = 表单、`Monitor*` = 自由监控行内、`Acq*` = 采集任务组行内、`GlobalVar*` / `SystemVar*` = 两个分段模板、`Scanner*` = 扫码器、`Dialog.*` = 对话框（在 `Themes/DialogControls.xaml`，见 §9.3）。
@@ -181,7 +181,7 @@ Window
 - ⚠️ 换主题时 `DynamicResource` 换不到 DWM 属性，`OnThemeChanged` 里要调一次 `WindowCorners.SyncBorderColor(this)`；颜色必须从资源取，不能写死
 - 老系统（Win10）上这两个属性号不认识，`DwmSetWindowAttribute` 返回非 0，此时**安静放弃** —— 窗口保持直角无边框，不影响功能
 
-## 4. 代码分工（`MainWindow` 主体 + 八个 partial）
+## 4. 代码分工（`MainWindow` 主体 + 九个 partial）
 
 > **2026-10-29 拆分**：`MainWindow.xaml.cs` 曾长期贴着 4600 行，现为主体 + `MachineState` / `Acquisition` / `GlobalVar` / `Monitor` / `IoImport` / `AcquisitionView` / `AcquisitionLive` / `Scanner`。
 > **新建处理器先按页面归到对应 partial**，只有跨页面的（连接生命周期 / 心跳 / 导航 / 日志 / 底栏）才写回主体。
@@ -207,7 +207,7 @@ Window
 | **项目信息（P5.3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（§7.3） |
 | **开机自启动（P5.5）** | `Startup/AutoStartCommand.cs`（纯逻辑：命令串 / 同 exe 判定 / 禁用记录 `& 0x01` 判据）+ `Startup/AutoStartRegistry.cs`（HKCU `Run` + `StartupApproved` 读写）；窗口侧 `AutoStartToggle_Changed` / `SyncAutoStartToggle` / `RefreshAutoStartStatus`（§7.4） |
 | **应用标题（P5.6）** | `Modeling/AppTitle.cs`（纯逻辑：两个默认值 / 清洗换行与超长 / 默认识别）+ `ThemeManager.AppTitleText` / `SetAppTitle`；窗口侧 `ApplyAppTitle` / `ApplyAppTitlePermission` / `AppTitleTextBox_LostFocus`；权限 `UserRules.CanEditAppTitle`（§7.5）。⚠️ 改的是**两处**：`TitleBarCaption` + `Window.Title`。⚠️ 卡上只有「标题」+ 输入框：**清空即恢复默认**，没有按钮、没有账户说明（2026-11-08 定案） |
-| 关键字段 | `_session` / `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter` / `_logWriter` / `_statusBar`。**`volatile` 共 10 个**：`_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_machineGlobals` / `_acquisitionGlobals` / `_scannerGlobals` |
+| 关键字段 | `_session` / `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_machineViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter` / `_logWriter` / `_statusBar`。**`volatile` 共 12 个**：`_windowClosed` / `_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_machineViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_machineGlobals` / `_acquisitionGlobals` / `_scannerGlobals` |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 

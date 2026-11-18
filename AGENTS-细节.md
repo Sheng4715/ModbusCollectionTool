@@ -19,7 +19,7 @@
 - 导入校验：**仅接受 X / Y 元件**，地址须落在当前驱动范围内；结果**一律用 `ThemeMessageDialog`** 汇报（0 项有效则警告框且拒绝替换）
 - **分页**：每页 4 列 × `IoPager.RowsPerColumn`(16) = 64 点，X/Y 各自独立页号；单页时整体隐藏。列宽 `*` 等分；行高 22、行距 2、列距 4
 - **采集跟随可见性**：只读**当前显示分段 + 当前页**（`_visiblePage` 快照，按所属地址区分块 FC01，同区跨度超 2000 点切窗，默认 100ms）；**离开本页停止 IO 采集，独立心跳继续**；断线不清灯色（`IsOn` 保持上次值）
-- **三个分段统一「跟随可见性」**（输入 X / 输出 Y / 自由监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开设备监控页则全停）。详见 §5.1 与 `Design.md` §5.6
+- **三个分段统一「跟随可见性」**（输入监控 / 输出监控 / 自由监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开设备监控页则全停）。详见 §5.1 与 `Design.md` §5.6
 - **卡片内同一时刻只有一条滚动条**：Row=2 的 `Grid` 下，X/Y 共用一个 `IoScrollViewer`（每页固定 64 点，见 §5 分页），自由监控则让 `FreeMonitorPanel` 自己填满该格、只让列表滚动（表头常驻 —— 它是「+」的落点）。⚠️ **列表不要写 `MaxHeight`**：面板整体已绑 `ViewportHeight`，写死高度会让「里层先滚、里层滚不动了外层再滚」，两条滚动条并存（历史缺陷：527f2e2 给自由监控列表套了 `MaxHeight="380"`）
 - **合法异常码不算断线**（2026-10-16）：IO 分块读**单独捕 `ModbusResponseException`** 并与成功路径分开 —— 跳过该块、其余块照读、该块的点保持上次值，**不断开也不重连**；某块**连续** `ModbusPoller.ConsecutiveExceptionThreshold`（**5**）次才记一条琥珀「通讯异常」（措辞 `原因（地址 xxx 异常码 N）`），**只记一次、读通即清零**（不这么做，100ms 一拍会让 200 条日志 20 秒内刷满）。**超时 / IO 异常仍照旧断开**。详见 §5.1 / §6 与 `Design.md` §8-12
 
@@ -910,7 +910,7 @@
   |---|---|---|
   | 设备监控（IO / 自由监控） | 页面可见时 | 设备连接页 `100/200/500/1000 ms` |
   | 数据管理 → 采集数据 | 周期式最低 `0.1 s`；触发式只在上升沿 | 任务组自己的 `PeriodSeconds` |
-  | 总览 → 数据采集 → 实时数据 | 待实现 | 设备连接页 |
+  | 总览 → 数据采集 → 实时数据 | 只更新卡片文本，不额外发报文 | 采集引擎的常驻轮询（连接设置） |
 
   - **采集不发报文**：`RunAcquisitionTick` 只判定 + 取 `GlobalVariable.Value` + 写 CSV，
     值由 `PollAcquisitionGlobalsAsync` 常驻读。故切页面不影响记录、也不重复发报文
@@ -2422,7 +2422,7 @@ bool acquired = mutex.WaitOne(0);
 ## 15. 完整目录树（原 AGENTS.md §2）
 
 > **为什么搬到这里**：AGENTS.md 有 65536 B 硬预算（超了整份被丢弃），
-> 这份树约 9.4 KB 且属于**查阅型参考**（找文件在哪），不是每次改动都要照着做的规则。
+> 这份树约 10.6 KB 且属于**查阅型参考**（找文件在哪），不是每次改动都要照着做的规则。
 > AGENTS.md §2 只留「9 个无 WPF 目录 + 反 WPF 判断原则 + 断言工程清单」这些必须每次记住的部分。
 > **新增/删除源文件时两处都要改**：这里是全量树，AGENTS.md §2 只列目录级说明。
 
@@ -2471,7 +2471,7 @@ DSH_Modbus采集工具/
 │   ├── IoPager.cs              # 分页纯计算（页数 / 夹取 / 切片 / 翻页 / 页号文本）
 │   ├── IoTableImporter.cs      # xlsx → 注释表 + 失败明细
 │   └── XlsxIoTableReader.cs    # xlsx 解析（零依赖 zip + XML）
-├── Modeling/                   # 数据模型与纯逻辑（24 个，均无 WPF）
+├── Modeling/                   # 数据模型与纯逻辑（30 个，均无 WPF）
 │   ├── AtomicFile.cs           # 配置文件原子写（.tmp→Replace+`.bak`）+ 容错读（逐元素抢救）
 │   ├── DataTypes.cs            # 类型枚举 + 规格表
 │   ├── DataTypeEnums.cs        # DataType / DisplayFormat 两个枚举（零依赖，可被最小断言工程单独链接）
@@ -2541,10 +2541,10 @@ DSH_Modbus采集工具/
 
 ## 16. 样式键全表（原 AGENTS.md §3.3）
 
-> **为什么搬到这里**：这是 Window.Resources 里 **51 个 x:Key** 的查表，约 5.8 KB。
+> **为什么搬到这里**：这是 Window.Resources 里 **53 个 x:Key** 的查表，约 5.9 KB。
 > 改外观时按需查；AGENTS.md §3.3 只留「名字前缀约定 + 4 条最容易踩的」。
 
-> 全部定义在 `MainWindow.xaml` 的 `Window.Resources` 里（**51 个 `x:Key`** + 一个**无 key 的隐式 `ScrollBar`**）。改外观先在这里找现成的；下表只列**会复用、或踩过坑**的，其余是某行专用模板（`*ItemTemplate`）。
+> 全部定义在 `MainWindow.xaml` 的 `Window.Resources` 里（**53 个 `x:Key`** + 一个**无 key 的隐式 `ScrollBar`**）。改外观先在这里找现成的；下表只列**会复用、或踩过坑**的，其余是某行专用模板（`*ItemTemplate`）。
 
 **名字前缀**：`Io*` = IO 页/分页、`Form*` = 表单、`Monitor*` = 自由监控行内、`Acq*` = 采集任务组行内、`GlobalVar*` / `SystemVar*` = 两个分段模板、`Scanner*` = 扫码器、`Dialog.*` = 对话框（在 `Themes/DialogControls.xaml`，见 §9.3）。
 
@@ -2554,7 +2554,7 @@ DSH_Modbus采集工具/
 | `NavRadioButton` | 导航项（灰底背板，选中加粗） |
 | `AccountButton` | 导航底部的账户入口（头像 18 + 用户名）。**比 `NavRadioButton` 紧凑**（Padding 10 / 头像 18 / 间距 8）：导航列 112 DIP 放不下「技术员」三个汉字，按 `NavRadioButton` 的 14+20+10+14 只剩 38 DIP（需约 42）。⚠️ `Margin` 左边距仍是 8，左缘才与其余导航项齐平 |
 | `NavItemTemplate` | 导航项共享 `ControlTemplate`：外距/内距/高度全从 Style 传。要做不同缩进改 Style，别复制模板 |
-| `IoSegmentRadioButton` | 分段控件，**14 处**：IO 页输入 X / 输出 Y / 自由监控 / 系统变量、数据管理三档、设置页主题两档、设备连接两档（PLC / 扫码器） |
+| `IoSegmentRadioButton` | 分段控件，**14 处**：IO 页输入监控 / 输出监控 / 自由监控 / 系统变量、数据管理三档、设置页主题两档、设备连接两档（PLC / 扫码器） |
 | `ToggleSwitch` | **开关**（Win11 式）：轨道 40×20、柄 12、内缩 4；关＝`Control.Background`、开＝`Accent.Fill`；**状态文字在轨道左侧**，由代码按 `IsChecked` 改写 `Content`（「开」/「关」） |
 | `IoItemTemplate` | IO 点位单元格（灯 10×10、注释 MinWidth 144；`Comment` 为 INPC） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |
@@ -2578,6 +2578,9 @@ DSH_Modbus采集工具/
 | `AcqRowDeleteButton` | 行「删除本组」×，`BasedOn` `AcqRowIconButton`，**只把悬停换实心红**（`Brush.Danger.Fill.Hover` + 白字），与全局变量 / 监控行的行尾删除一致 |
 | `AcqEnableSwitch` | 「启用」开关，`BasedOn` `ToggleSwitch`，只补「文案随 `IsChecked` 变」。⚠️ 必须在 `Style.Triggers` 里换 `Content`，模板触发器压不过局部值 |
 | `AcquisitionSourceBox` / `AcquisitionTargetBox` | 采集写入任务的来源 / 写入变量框，`BasedOn` `MonitorInlineTextBox`，只加「有错时字变红」。⚠️ `BasedOn` 要求被继承者**先定义** |
+| `AcqGroupCombo` | 总览「数据采集」的任务组下拉框，`BasedOn` `FormComboBox`，只把底色改透明 + 补 1px 框线（该页是卡片内嵌，胶囊灰底会显得沉重） |
+| `GlobalVarMoveButton` | 全局变量表头 ↑↓ 排序按钮（24×24、图标字体、竖排）。**排序对象是当前选中行**；没选中或已在两端时置灰 |
+| `SourceForegroundConverter` | 采集「来源变量」框的字色转换器（常量橙 / 有错红 / 正常）。`IMultiValueConverter`，换主题要 `RaiseSourceColorRefresh()` 触发重算（§9.2） |
 | `AcquisitionTaskRowTemplate` / `AcquisitionItemRowTemplate` | 任务组行（7 列 + 展开子表）/ 数据项行（序号·名称·变量·类型只读·删除） |
 | `AcqLiveCard`（代码构造） | 实时数据卡片：`Border` + 项名称 + 数值，放 Canvas 里拖动（§5.8.1） |
 | `LogClearButton` / `DeviceLogItemTemplate` / `DeviceLogListStyle` | 日志卡清空 / 日志行（时间戳灰 + 按级别着色）/ 列表（无选中底色） |

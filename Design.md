@@ -224,8 +224,8 @@ HeartbeatLoop（PeriodicTimer，每 100ms 一个 tick）:
 
 | 分段 | 可见性判据 | 数据源 | 功能码 |
 |---|---|---|---|
-| 输入 X | `!_freeViewActive` 且当前页为 X | `_visiblePage`（IO 点位集） | FC01 |
-| 输出 Y | `!_freeViewActive` 且当前页为 Y | `_visiblePage`（IO 点位集） | FC01 |
+| 输入监控 | `!_freeViewActive` 且当前页为 X | `_visiblePage`（IO 点位集） | FC01 |
+| 输出监控 | `!_freeViewActive` 且当前页为 Y | `_visiblePage`（IO 点位集） | FC01 |
 | 自由监控 | `_freeViewActive` | `_monitorSet`（监控项集合） | 线圈 FC01 / 保持寄存器 FC03 / 输入寄存器 FC04 |
 
 外层另有一道**页面级**闸门 `_ioPageActive`：离开「设备监控」页则三个分段全停，独立心跳继续（心跳不写任何显示值）。
@@ -417,7 +417,7 @@ D[n] = (char[2i] << 8) | char[2i+1]
 - 写入触发时机：输入框**失焦**或**回车**（且内容非空）—— ✅ 已实现（`MonitorValue_KeyDown` / `MonitorValue_LostFocus` 两条路径靠 `_lastCommittedValue` 去重）
 - 写入功能码取决于声明类型：`BOOL` → FC05（线圈）；16 位 → FC06；32 位 / `STRING[n]` → FC16 —— ✅ 已实现（`MonitorItemSet.TryBuildWrite` 按编码结果长度选码）
 - **写入范围仅限自由监控**：IO 监控页的灯是只读展示，不可写（与「IO 监控只展示」的定位一致）
-- **写入失败弹窗提示**（`MessageBox`）；**不写运行日志** —— 日志只记设备状态（ADR-14），写入失败属操作反馈而非连接状态
+- **写入失败弹窗提示**（`ThemeMessageDialog.Info`，2026-11-06 起全应用统一，不再用系统 `MessageBox`）；**不写运行日志** —— 日志只记设备状态（ADR-14），写入失败属操作反馈而非连接状态
 - 持久化 `data-points.json`（`DataPointStore`）：**存储仍是 `Element` + `Index` 两个字段**，界面层负责拼接与拆分 → 既有配置文件无损、无需迁移
 
 **采集导出（P3.1）** —— **已实现**（任务组 / 数据项 / 执行方式 / CSV 落盘，见 §10.24 起）
