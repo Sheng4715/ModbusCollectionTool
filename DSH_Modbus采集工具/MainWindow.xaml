@@ -3518,9 +3518,10 @@
                                 <!-- 串口专属选项（P4.4）。与以太网面板**互斥显隐**，
                                      由 ConnectionTypeComboBox_SelectionChanged 切换。
                                      默认值取 Modbus 行业通行的 9600 8N1。
-                                     ⚠️ 连接按钮刻意**不在本面板里**：它在上面「IP 地址」行，
-                                     与以太网共用同一个 ConnectButton（两边的显隐是互斥的，
-                                     按钮随之落到当前可见的那一组里，不需要第二个按钮）。 -->
+                                     连接按钮在「端口」行、紧跟「刷新」右侧（ConnectButtonSerial）；
+                                     以太网那边同样在「目标网卡」行有自己的 ConnectButtonEthernet。
+                                     两个按钮同一时刻只有一个可见，三态与启用态必须成对设置
+                                     （统一走 SetConnectButtonText / SetConnectButtonEnabled）。 -->
                                 <StackPanel x:Name="SerialOptionsPanel" Visibility="Collapsed">
 
                                     <!-- 串口号：下拉列出本机可用端口，「刷新」重新枚举 -->
@@ -3529,10 +3530,17 @@
                                                    Width="80"
                                                    FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                    VerticalAlignment="Center"/>
+                                        <!-- ⚠️ **必须挂 SelectionChanged**（2026-11-20 修）：
+                                             落盘唯一入口是 SerialSetting_Changed（下拉没有失焦语义），
+                                             漏了本行就变成「只换端口 → 关程序 → 重启回到旧端口」；
+                                             若旧端口已不存在，还会静默落到列表第 0 项连到别的设备。
+                                             处理器内部有 _restoringSerialSelection 保护，
+                                             扫描重建列表（Items.Clear + 重新选中）不会误写盘。 -->
                                         <ComboBox x:Name="SerialPortComboBox"
                                                   Width="200"
                                                   VerticalAlignment="Center"
-                                                  Style="{StaticResource FormComboBox}"/>
+                                                  Style="{StaticResource FormComboBox}"
+                                                  SelectionChanged="SerialSetting_Changed"/>
                                         <Button x:Name="RefreshSerialButton"
                                                 Content="刷新"
                                                 Width="60"
@@ -3608,7 +3616,11 @@
                                         </ComboBox>
                                     </StackPanel>
 
-                                    <!-- 停止位 -->
+                                    <!-- 停止位。⚠️ **刻意不提供 1.5**（2026-11-20 实测）：Windows 上
+                                         1.5 个停止位只允许配合 5 数据位，而本应用的数据位只有 7/8 →
+                                         选了它连接必定抛 IOException「参数错误。」，是无法生效的选项。
+                                         老的 app-settings.json 里若存着 OnePointFive，回填时
+                                         SelectComboByContent 找不到该项会保持默认（1），不会崩。 -->
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                         <TextBlock Text="停止位"
                                                    Width="80"
@@ -3621,7 +3633,6 @@
                                                   SelectedIndex="0"
                                                   SelectionChanged="SerialSetting_Changed">
                                             <ComboBoxItem Content="1"/>
-                                            <ComboBoxItem Content="1.5"/>
                                             <ComboBoxItem Content="2"/>
                                         </ComboBox>
                                     </StackPanel>

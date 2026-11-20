@@ -477,6 +477,12 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private bool _restoringConnectionType;
 
+        /// <summary>
+        /// 已经提示过「上次用的串口当前不可用」的那个端口名，用于去重 ——
+        /// 扫描（启动 / 切换连接方式 / 点刷新）会反复跑，不去重就会刷满运行日志。
+        /// </summary>
+        private string? _notifiedMissingSerialPort;
+
         private static string CommentsFilePath =>
             Path.Combine(AppContext.BaseDirectory, "io-comments.json");
 
@@ -2065,6 +2071,12 @@ namespace DSH_Modbus采集工具
             using var connectCts = _session.BeginConnect(token);
             try
             {
+                // 串口的「连上」只说明端口能打开，**不说明总线上有设备**；以太网则天然证明对端可达。
+                // 站号配错 / A-B 接反 / 从站没上电全都表现为「端口打开成功」，
+                // 若直接报已连接，界面先绿一下、2 秒后变红并开始自动重连 —— 用户看不出是站号问题。
+                // 故连接成功后一律做一次探测读（首次与重连都做，理由见下面那段的注释）。
+                bool serialDeviceAnswered = true;
+
                 if (target.IsSerial)
                 {
                     var rtu = (ModbusRtuClient)client;
@@ -2072,6 +2084,11 @@ namespace DSH_Modbus采集工具
 
                     // 串口打开是同步阻塞调用：放到线程池，避免连接期间卡住 UI
                     await Task.Run(rtu.Connect, connectCts.Token);
+
+                    // ⚠️ **首次连接与重连都要探测**（2026-11-20 真机修正）：
+                    // 早先只在首次探测，结果站号配错时重连会先亮绿「已连接」、
+                    // 8 秒后被心跳判为断线再变红 —— 每 8 秒一次的假绿灯，比不连更误导。
+                    serialDeviceAnswered = await ProbeSerialAsync(rtu, target.Driver, connectCts.Token);
                 }
                 else
                 {
@@ -2087,12 +2104,36 @@ namespace DSH_Modbus采集工具
                     return false;
                 }
 
+                // 重连时「端口开了但设备不答」= 这次没连上：按 ADR-14 静默退避重试，
+                // **不给假绿色、也不写日志**（重连尝试本就不写日志）。
+                // 首次连接不走这条 —— 那时要给用户一条明确原因（下面琥珀色分支）。
+                if (isReconnect && !serialDeviceAnswered)
+                {
+                    client.Dispose();
+                    return false;
+                }
+
                 // 接管客户端、记住期望目标（异常断开后据此自动重连）、清零退避计数
                 _session.MarkConnected(client, target);
                 SetConnectButtonText("断开");
                 SetConnectButtonEnabled(true);
-                SetStatus("已连接", "#0B7A0B");
-                AppendDeviceLog($"PLC已连接：{target.Endpoint}", DeviceLogLevel.Connected);
+
+                if (serialDeviceAnswered)
+                {
+                    SetStatus("已连接", "#0B7A0B");
+                    AppendDeviceLog($"PLC已连接：{target.Endpoint}", DeviceLogLevel.Connected);
+                }
+                else
+                {
+                    // 端口打开了、设备没应答：**连接保留**（可能只是这一次没回，也可能站号/接线不对），
+                    // 采集与心跳继续跑，第一次成功会自动把状态改回绿（日志规则 5「通讯恢复」）。
+                    // 这里的价值是把「2 秒后超时才暴露」提前到点连接时就说清怀疑方向。
+                    SetStatus("已连接（设备未应答）", "#B26A00");
+                    AppendDeviceLog(
+                        $"PLC已连接：{target.Endpoint}，但设备未应答（请检查站号/接线/波特率）",
+                        DeviceLogLevel.Warning);
+                }
+
                 StartPolling(client, target.Driver);
                 return true;
             }
@@ -2126,6 +2167,47 @@ namespace DSH_Modbus采集工具
             finally
             {
                 _session.EndConnect(connectCts);
+            }
+        }
+
+        /// <summary>
+        /// 串口连接的**探测读**：只用「有没有应答」判断总线上是否真有设备。
+        /// <para>
+        /// ⚠️ 返回 <c>false</c> **不等于连接失败**：端口确实打开了，采集循环照常启动，
+        /// 之后的成功会由心跳把状态改回「已连接」（日志规则 5）。这里只是把
+        /// 「站号 / 接线 / 波特率配错」从「2 秒后超时才暴露」提前到点连接时就点出来。
+        /// </para>
+        /// <para>
+        /// 从站回**合法异常码**也算「有应答」：链路是通的，只是它不认这个地址
+        /// （比如驱动地址表里的 M 区在这台设备上不存在）—— 那属于配置问题，不是断线。
+        /// </para>
+        /// </summary>
+        private static async Task<bool> ProbeSerialAsync(
+            ModbusRtuClient rtu, CommDriver driver, CancellationToken token)
+        {
+            if (!ModbusHeartbeat.TryGetHeartbeatAddress(driver, out ushort address, out _))
+            {
+                return true; // 没有可用的探测地址：不判断，避免把正常连接误报成「未应答」
+            }
+
+            try
+            {
+                // idleInterval = Zero 表示「不省略」，必定真的发一条
+                await rtu.HeartbeatIfIdleAsync(address, TimeSpan.Zero, token).ConfigureAwait(true);
+                return true;
+            }
+            catch (ModbusResponseException)
+            {
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch
+            {
+                // 超时 / CRC 错 / IO 错：都算「这次没读到」，交给上层给琥珀色提示
+                return false;
             }
         }
 
@@ -2245,7 +2327,14 @@ namespace DSH_Modbus采集工具
         /// 等采集/心跳循环真正退出后，再释放「断连发生当时」的那个客户端。
         /// 用 <paramref name="client"/> 的引用相等守卫：紧接着的重连若已接管**新**客户端，
         /// 这里就绝不去拆它（旧连接的回调不得误操作新连接）。
+        /// <para>
+        /// ⚠️ **不要改成「立刻释放」**：串口的阻塞读**打断不了**（<c>SerialPort.Read</c>
+        /// 不认 CancellationToken），实测点断开后请求还会跑满 2 s 才返回；
+        /// 若立刻 Dispose，等于在正在读的端口上关句柄。
+        /// </para>
         /// </summary>
+        /// <param name="pending">采集 + 心跳的完成任务（<c>Task.WhenAll</c>）。</param>
+        /// <param name="client">断连发生当时的客户端；已被新连接取代时这里不再释放。</param>
         private async Task ReleaseClientAfterPollAsync(Task? pending, IModbusClient? client)
         {
             if (pending != null)
@@ -2664,18 +2753,32 @@ namespace DSH_Modbus采集工具
                     SerialPortComboBox.Items.Add(info);
                 }
 
-                // 还原优先级：本次选择 → 上次记住的 → 第 0 项
+                // 还原优先级：本次选择 → 上次记住的 → 第 0 项（**仅当什么都没记住时**）
                 string? wanted = !string.IsNullOrEmpty(previous)
                     ? previous
                     : (ThemeManager.SerialPortName.Length > 0 ? ThemeManager.SerialPortName : null);
 
                 int index = wanted != null ? SerialPortScanner.IndexOf(ports, wanted) : -1;
-                if (index < 0 && SerialPortComboBox.Items.Count > 0)
+
+                // 从没选过端口（首次使用）才默认落到第一个，省一次点击
+                if (index < 0 && wanted == null && SerialPortComboBox.Items.Count > 0)
                 {
                     index = 0;
                 }
 
                 SerialPortComboBox.SelectedIndex = index;
+
+                // ⚠️ 记住的端口这次不在列表里（换机器 / 拔了 USB 转串口 / 端口号被系统改了）：
+                // **刻意不落到第 0 项**（2026-11-20 改）。落到第 0 项 = 界面悄悄指着另一个设备，
+                // 配上「自动连接」会直接连错设备，现场很难反应过来。
+                // 保持空选，连接时由现有校验提示「请选择串口号」。
+                if (index < 0 && wanted != null && wanted != _notifiedMissingSerialPort)
+                {
+                    _notifiedMissingSerialPort = wanted;
+                    AppendDeviceLog(
+                        $"串口 {wanted} 当前不可用（已拔出或被系统改了端口号），请重新选择端口",
+                        DeviceLogLevel.Warning);
+                }
             }
             finally
             {
@@ -3183,17 +3286,22 @@ namespace DSH_Modbus采集工具
                         AppendDeviceLog(warning == null ? "PLC通讯恢复" : $"PLC通讯异常：{warning}",
                             warning == null ? DeviceLogLevel.Connected : DeviceLogLevel.Warning);
                     });
-                }, token);
+                }, token,
+                // 心跳成功同样清零「链路级失败」计数：否则轮询偶发失败 + 心跳正常时
+                // 计数只增不减，攒够阈值就断线（2026-11-20）
+                onResponded: () => _poller.NoteTransportSuccess(client),
+                // ⚠️ 失败**交回本循环**继续跑，而不是退出后由 catch 收尾 ——
+                // 退出就等于「再也不心跳」，容忍阈值永远凑不满（真机踩中）
+                tolerateFailure: _ => _poller.TolerateTransportFailure(client));
             }
             catch (OperationCanceledException)
             {
-                if (!token.IsCancellationRequested)
-                {
-                    _poller.NotifyConnectionLost(client, token, "心跳读取超时");
-                }
+                // 用户断开 / 关窗：静默收尾
             }
             catch (Exception ex)
             {
+                // 走到这里说明**没有容忍**（连续失败已到阈值）：按断线处理。
+                // ⚠️ 直接用 NotifyConnectionLost，不要再过一遍容忍计数，否则阈值的语义会被多算一次。
                 _poller.NotifyConnectionLost(client, token, $"心跳检查失败：{ex.Message}");
             }
         }

@@ -251,6 +251,37 @@ try
             DisconnectReasonClassifier.Classify("  读取超时  ") == "读取超时");
         Check("未归类：原样保留、不吞信息",
             DisconnectReasonClassifier.Classify("某种没见过的原因") == "某种没见过的原因");
+
+        // ---- Modbus 报文细分（2026-11-20）：三者原先被压成同一句，排查方向被抹平 ----
+        Check("站号不符：保留期望/实际两个数字",
+            DisconnectReasonClassifier.Classify("Modbus 响应站号不符：期望 1，实际 2")
+                == "站号不符（期望 1，实际 2）",
+            DisconnectReasonClassifier.Classify("Modbus 响应站号不符：期望 1，实际 2"));
+        Check("CRC 错单独成句",
+            DisconnectReasonClassifier.Classify("Modbus 响应 CRC 校验失败") == "响应 CRC 校验失败");
+        Check("数据字节数不符单独成句",
+            DisconnectReasonClassifier.Classify("Modbus 响应数据字节数与请求不符：期望 1，实际 2")
+                == "响应数据长度不符");
+        Check("写应答不符单独成句",
+            DisconnectReasonClassifier.Classify("Modbus 写响应地址与请求不符") == "写应答与请求不符");
+
+        // ---- 串口原文（.NET 抛的是文件/路径措辞的英文，原样透出等于没提示）----
+        Check("串口被占用（真实原文）",
+            DisconnectReasonClassifier.Classify("Access to the path 'COM4' is denied.")
+                == "串口被占用（其他程序正在使用该端口）");
+        Check("串口不存在（真实原文）",
+            DisconnectReasonClassifier.Classify("Could not find file 'COM4'.")
+                == "串口不存在（未接好或已被拔出）");
+        Check("串口名无效",
+            DisconnectReasonClassifier.Classify(
+                "The given port name (XYZ) does not resolve to a valid serial port. (Parameter 'portName')")
+                == "串口名无效");
+        Check("串口参数组合不支持",
+            DisconnectReasonClassifier.Classify("参数错误。") == "串口参数无效（当前组合不被系统支持）");
+        Check("串口超时以「已取消」形式冒出：仍归响应超时",
+            DisconnectReasonClassifier.Classify("The operation was canceled.") == "响应超时");
+        Check("我们自抛的中文超时也归响应超时",
+            DisconnectReasonClassifier.Classify("串口响应超时") == "响应超时");
     }
 }
 finally

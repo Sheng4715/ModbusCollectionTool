@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **54061 B / 余量约 11 KB**（2026-11-18 校）；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **56231 B / 余量约 9 KB**（2026-11-20 校）；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 > 📦 **已搬到细节档的查阅型大表**：§15 完整目录树、§16 样式键全表（53 个 `x:Key`）。
@@ -48,7 +48,7 @@ dotnet run --project DSH_Modbus采集工具
 `Polling/` 采集编排、`Io/` 点位集与分页、`Modeling/` 数据模型与纯逻辑、`Themes/` 主题、`Ui/` 呈现与对话框、
 `Scanners/` 扫码器、`Startup/` 自启与单实例、`Drivers/` Modbus 报文与品牌地址表、`Logging/` 日志落盘。
 
-> **独立验证工程**（仓库根，不属于本工程）：`ModelingCheck/`（用真机实测数据对编解码做断言）、`LoggingCheck/`（日志行格式 / 跨天换文件 / 续写 / 容错 / 断开原因归类，**44 项**）。
+> **独立验证工程**（仓库根，不属于本工程）：`ModelingCheck/`（用真机实测数据对编解码做断言）、`LoggingCheck/`（日志行格式 / 跨天换文件 / 续写 / 容错 / 断开原因归类，**54 项**）。
 > `.tmp/` 下另有一批**一次性**工程（**未提交**，随用随弃）：断言型 `ConnCheck`(35) / `DeviceLogCheck`(23) / `NicCheck`(17) / `AcquisitionCheck` / `GlobalVarCheck` / `MonitorVarCheck` / `SystemVarCheck`；探针型 `IoCheck` / `FakeSlave` / `E2ESlave` / `MachineSlave` / `CounterSlave` / `OrderSlave` / `OrderProbe` / `xlsxprobe`。验的是「改一次就够」的行为，要重跑时会话记录里有完整源码。
 >
 > **每次改完的验证口径（2026-10-29 用户定案）**：只跑 (a) `dotnet build DSH_Modbus采集工具.sln` + (b) `.tmp/ExpressionCheck`（构建该工程后**直接跑 exe**；`dotnet run` 每次多花约 5 s 在 SDK/NuGet 探测上）。其余断言工程只在改到它们的断言对象时单独跑那一个。
@@ -378,7 +378,7 @@ public sealed class MyDialog : DialogWindow
 | **类型值编解码与显示格式化** | `Modeling/ValueCodec.cs`（入参传字节顺序，不读全局状态） |
 | **ARRAY 数组类型（P6.4）** | `Modeling/DataTypeEnums.cs`（枚举，零依赖）+ `ArrayRules.cs`（声明规则，零依赖）+ `ArrayValueCodec.cs`（逐元素寻址/编解码）+ `Ui/ArrayDeclareDialog.cs`；子行模型 `MonitorElement` 与 `TryBuildElementWrite` 在 `MonitorItem.cs`。⚠️ 显示名写 `INT[20]`（元素类型+个数）、**不做整组聚合**、**只能对元素写**、占用按「个数 × 单元素单元数」算 —— 见 §5.2.3 |
 | Modbus 报文/超时、心跳 | `Drivers/ModbusTcpClient.cs`（TCP）/ `Drivers/ModbusRtuClient.cs`（串口 RTU）；**两者共用** `Drivers/ModbusPdu.cs`（PDU）与 `Drivers/IModbusClient.cs`（接口）；`Drivers/ModbusHeartbeat.cs` → `RunAsync`、`HeartbeatIfIdleAsync` |
-| **串口 Modbus RTU（P4.4，2026-11-18）** | `Drivers/ModbusRtuClient.cs` + `Drivers/Crc16.cs`（0xA001 / 初值 0xFFFF / **帧尾低字节在前**）+ `Drivers/SerialSettings`（默认 **9600 8N1**，`Describe()` 出 `COM3 9600 8N1`）。⚠️ **RTU 没有长度字段**，收帧靠「站号 + 功能码」推算（`ReadFrame`）；⚠️ **站号参与 CRC**；⚠️ **站号 TCP/RTU 共用**一个 `StationNumber`。UI 在设备连接页 `SerialOptionsPanel`（与 `EthernetOptionsPanel` **互斥显隐**）；**连接按钮两个**（`ConnectButtonEthernet` / `ConnectButtonSerial`，各贴自家「刷新」右侧，状态必须成对走 `SetConnectButtonText`/`SetConnectButtonEnabled`）+ `Net/SerialPortScanner.cs`（下拉显示「COM4 · 设备名」，设备名取自注册表、零依赖；⚠️ 下拉装的是对象，取端口名走 `SelectedPortName()`）+ `ScanSerialPorts` / `SerialSetting_Changed` / `ReadSerialSettings`；**协议类型由连接方式唯一决定、下拉只列对应一项**（`SyncProtocolOptions`；⚠️ 启动时要在构造函数里显式调一次，条目是运行时填的）。持久化 `ThemeManager.Serial*`。✅ **真机验收通过**（汇川 Easy @ COM4，19 项）＋ 离线 `56 项` —— 见 `AGENTS-细节.md` §8.3（含 §8.3.2b 写应答 8 字节的坑） |
+| **串口 Modbus RTU（P4.4，2026-11-18）** | `Drivers/ModbusRtuClient.cs` + `Drivers/Crc16.cs`（0xA001 / 初值 0xFFFF / **帧尾低字节在前**）+ `Drivers/SerialSettings`（默认 **9600 8N1**，`Describe()` 出 `COM3 9600 8N1`）。⚠️ **RTU 没有长度字段**，收帧靠「站号 + 功能码」推算（`ReadFrame`）；⚠️ **站号参与 CRC**；⚠️ **站号 TCP/RTU 共用**一个 `StationNumber`。UI 在设备连接页 `SerialOptionsPanel`（与 `EthernetOptionsPanel` **互斥显隐**）；**连接按钮两个**（`ConnectButtonEthernet` / `ConnectButtonSerial`，各贴自家「刷新」右侧，状态必须成对走 `SetConnectButtonText`/`SetConnectButtonEnabled`）+ `Net/SerialPortScanner.cs`（下拉显示「COM4 · 设备名」，设备名取自注册表、零依赖；⚠️ 下拉装的是对象，取端口名走 `SelectedPortName()`）+ `ScanSerialPorts` / `SerialSetting_Changed` / `ReadSerialSettings`；**协议类型由连接方式唯一决定、下拉只列对应一项**（`SyncProtocolOptions`；⚠️ 启动时要在构造函数里显式调一次，条目是运行时填的）。持久化 `ThemeManager.Serial*`。✅ **真机验收通过**（汇川 Easy @ COM4，19 项）＋ 离线 `56 项` —— 见 `AGENTS-细节.md` §8.3（含 §8.3.2b 写应答 8 字节的坑）。⚠️ **2026-11-20 复审补丁**：**迟到帧静默错值**（发送前清缓冲 + 失败后静默保护，§8.3.2c）；超时按波特率推算 + 单请求单截止时刻；首次连接做**探测读**（串口打开 ≠ 设备在应答）；链路失败**连续 3 次**才断线重连；⚠️ **端口下拉必须挂 `SelectionChanged="SerialSetting_Changed"`**（漏了就是「只改端口不落盘」）；上次端口不在时**不回落第 0 项**；停止位「1.5」已删（永远打不开）；断线原因归类补串口类别 —— 详见 §8.3.3 / §8.3.4 |
 | 轮询与断线逻辑 | `Polling/ModbusPoller.cs` 的 `PollLoopAsync` / `PollOnceAsync` + `Disconnect(status,color)` |
 | **IO 合法异常码不再断开（连续 5 次才记日志）** | `PollOnceAsync` 的 `catch (ModbusResponseException)` + `ConsecutiveExceptionThreshold` + `_blockExceptionStreaks`；告警通道 `ICollectorHost.ReportCommunicationWarning` → 窗口 `ReportCommunicationWarning`（§5，证据 `Design.md` §10.2） |
 | 网卡扫描/绑定/记忆 | `Net/NicScanner.cs`（`NicInfo` / `Scan` / `IndexOf` / `RestoreIndex`）；窗口侧 `ScanNetworkAdapters` / `TargetNicComboBox_SelectionChanged` / `ConnectButton_Click`（§3.4、§8.2） |

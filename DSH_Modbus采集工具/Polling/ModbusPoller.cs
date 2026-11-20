@@ -33,13 +33,46 @@ internal sealed class ModbusPoller
     /// </summary>
     public const int ConsecutiveExceptionThreshold = 5;
 
+    /// <summary>
+    /// **链路级**失败（超时 / CRC 错 / IO 错）连续几次才判断开。
+    /// <para>
+    /// 2026-11-20 起：只有「客户端还活着」的失败才计入本阈值 —— 串口一次干扰
+    /// 就让界面断开 + 自动重连，现场会表现为「时不时掉线」；而 TCP 失败时
+    /// <c>RequestAsync</c> 已经 Dispose 客户端，<c>IsConnected</c> 立刻为 false，
+    /// 因此仍是立即断线，行为不变。
+    /// </para>
+    /// </summary>
+    public const int TransportFailureThreshold = 3;
+
     private readonly ICollectorHost _host;
 
     /// <summary>记下计数所属的客户端；重连/换设备时据此清空下面的计数。</summary>
     private IModbusClient? _streakOwner;
 
+    /// <summary>链路级失败的连续计数（与 <see cref="TransportFailureThreshold"/> 配合）。</summary>
+    private IModbusClient? _transportFailureOwner;
+    private int _transportFailures;
+
+    /// <summary>
+    /// 保护上面两个字段：轮询线程与心跳线程都会调
+    /// <see cref="TolerateTransportFailure"/> / <see cref="NoteTransportSuccess"/>，
+    /// 不加锁的话「心跳刚清零、轮询又加一」可能互相覆盖，阈值就时灵时不灵。
+    /// </summary>
+    private readonly object _transportFailureLock = new();
+
     /// <summary>每块的连续异常码计数，键 = 块的地址范围（如 "20480-20543"）。读成功一次即清零。</summary>
     private readonly Dictionary<string, int> _blockExceptionStreaks = new();
+
+    /// <summary>
+    /// 本拍**实际发出**的报文条数。只在轮询线程内累加，不需要同步。
+    /// <para>
+    /// 用途：区分「这一拍照常读完」与「这一拍什么都没读」。后者（页面不在监控页、
+    /// 没有任何要读的量）**不能**当成「链路正常」去清零失败计数 ——
+    /// 2026-11-20 真机实测：站号配错、界面上没有可采的量时，每拍都是空跑，
+    /// 于是心跳连着失败也永远凑不满阈值，界面一直停在「已连接（设备未应答）」不断线。
+    /// </para>
+    /// </summary>
+    private int _requestsThisTick;
 
     public ModbusPoller(ICollectorHost host) => _host = host;
 
@@ -51,10 +84,19 @@ internal sealed class ModbusPoller
         while (!token.IsCancellationRequested)
         {
             DateTime start = DateTime.UtcNow;
+            _requestsThisTick = 0;
 
             try
             {
                 await PollOnceAsync(client, driver, token);
+
+                // ⚠️ 只有**真的发过报文**的一拍才算「链路正常」，才清零失败计数。
+                // 空拍（页面不在监控页 / 没有要读的量）什么也没证明 ——
+                // 把它当成功会让心跳的连续失败永远清零，设备彻底没应答也不断线（真机踩中）。
+                if (_requestsThisTick > 0)
+                {
+                    NoteTransportSuccess(client);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -64,11 +106,23 @@ internal sealed class ModbusPoller
                     break;
                 }
 
+                // 串口偶发一次超时（干扰 / 从站忙）不该立刻断开 + 重连：
+                // 客户端还活着就再试几拍，凑满阈值才判断开。TCP 走不到这里（客户端已被 Dispose）。
+                if (TolerateTransportFailure(client))
+                {
+                    continue;
+                }
+
                 NotifyConnectionLost(client, token, "读取超时");
                 break;
             }
             catch (Exception ex)
             {
+                if (TolerateTransportFailure(client))
+                {
+                    continue;
+                }
+
                 NotifyConnectionLost(client, token, ex.Message);
                 break;
             }
@@ -163,6 +217,7 @@ internal sealed class ModbusPoller
 
                 try
                 {
+                    _requestsThisTick++;
                     bool[] coils = await modbus.ReadCoilsAsync((ushort)min, (ushort)(max - min + 1), token);
                     _blockExceptionStreaks.Remove(key);
                     results.Add((chunkPoints, min, coils));
@@ -248,6 +303,7 @@ internal sealed class ModbusPoller
 
             try
             {
+                _requestsThisTick++;
                 if (block.Area is ModbusArea.Coil)
                 {
                     bool[] coils = await modbus.ReadCoilsAsync(
@@ -475,6 +531,7 @@ internal sealed class ModbusPoller
 
             try
             {
+                _requestsThisTick++;
                 if (block.Area is ModbusArea.Coil)
                 {
                     bool[] coils = await modbus.ReadCoilsAsync(
@@ -529,6 +586,47 @@ internal sealed class ModbusPoller
             }
 
             GlobalReadPlan.Apply(block, coils, regs, _host.MonitorSet.ByteOrders);
+        }
+    }
+
+    /// <summary>
+    /// 记一次链路级失败并判断是否该**容忍**（<c>true</c> = 继续采集，不判断开）。
+    /// <para>
+    /// 只有「客户端仍存活」的失败才容忍：TCP 请求失败时会 Dispose 客户端
+    /// （<see cref="ModbusTcpClient"/> 的 RequestAsync），<c>IsConnected</c> 立刻为 false
+    /// → 这里返回 false → 立即断线，与改动前完全一致。
+    /// 串口失败后端口仍然开着，说明是总线层面的一次性失败，可以再试。
+    /// </para>
+    /// </summary>
+    public bool TolerateTransportFailure(IModbusClient client)
+    {
+        if (!client.IsConnected)
+        {
+            return false;
+        }
+
+        lock (_transportFailureLock)
+        {
+            if (!ReferenceEquals(_transportFailureOwner, client))
+            {
+                _transportFailureOwner = client;
+                _transportFailures = 0;
+            }
+
+            _transportFailures++;
+            return _transportFailures < TransportFailureThreshold;
+        }
+    }
+
+    /// <summary>一次成功即清零失败计数（心跳与轮询都调，按客户端实例区分）。</summary>
+    public void NoteTransportSuccess(IModbusClient client)
+    {
+        lock (_transportFailureLock)
+        {
+            if (ReferenceEquals(_transportFailureOwner, client))
+            {
+                _transportFailures = 0;
+            }
         }
     }
 
