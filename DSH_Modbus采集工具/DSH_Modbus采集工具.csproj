@@ -36,6 +36,9 @@
     <Company>DSH</Company>
     <Description>基于 WPF / .NET 8 的 Modbus 数据采集上位机</Description>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
 
   <!--
     构建日期：生成到 obj/ 下的一个源文件里，随项目一起编译。

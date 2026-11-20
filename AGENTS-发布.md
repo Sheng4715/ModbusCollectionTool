@@ -47,17 +47,24 @@ dotnet publish "DSH_Modbus采集工具\DSH_Modbus采集工具.csproj" `
 ### 12.2 产物
 
 ```
-Release\DSH_Modbus采集工具_1.0.2\                       合计 4 个文件 / 638 KB
+Release\DSH_Modbus采集工具_1.0.2\                       合计 5 个文件 / 约 718 KB（2026-11-18 实测）
 ├── DSH_Modbus采集工具.exe                  140 KB   apphost，只负责找运行时、加载 dll
-├── DSH_Modbus采集工具.dll                  497 KB   全部业务代码（含 XAML 编译出的 BAML）
-├── DSH_Modbus采集工具.deps.json           0.4 KB   依赖清单（本项目只有自己一个库）
-└── DSH_Modbus采集工具.runtimeconfig.json  0.4 KB   声明要 .NET 8 桌面运行时
+├── DSH_Modbus采集工具.dll                537.5 KB   全部业务代码（含 XAML 编译出的 BAML）
+├── System.IO.Ports.dll                    34.7 KB   串口驱动（P4.4）—— ⚠️ 必须一起拷
+├── DSH_Modbus采集工具.deps.json            5.9 KB   依赖清单（含 System.IO.Ports 条目）
+└── DSH_Modbus采集工具.runtimeconfig.json   0.4 KB   声明要 .NET 8 桌面运行时
 ```
 
 - 实测 exe 属性：`FileVersion 1.0.2.0` / `ProductVersion 1.0.2+<sha>` / `ProductName DSH Modbus 采集工具`
 - `runtimeconfig.json` 里是**两条** `frameworks`：`Microsoft.NETCore.App` + `Microsoft.WindowsDesktop.App`。
   后者是 WPF 独有 —— 目标机装错成体积更小的 **Console Runtime** 会起不来
-- `.deps.json` 只有一个条目，正是「零第三方 NuGet」的直接证据
+- ⚠️ **`System.IO.Ports.dll` 不能漏**（2026-11-18 起）：P4.4 串口功能靠它。
+  **实测漏拷的表现很隐蔽** —— 应用**照常启动、以太网一切正常**（CLR 惰性解析程序集，
+  只有真正走进串口代码才加载），只在**点「串口 → 连接」时抛 `FileNotFoundException`**，
+  界面表现为「连接失败：未能加载文件或程序集 System.IO.Ports」。
+  所以「以太网能连」**不能证明**交付包是完整的；覆盖更新时也别只换 exe
+- ~~`.deps.json` 只有一个条目，正是「零第三方 NuGet」的直接证据~~ → **已不再成立**（2026-11-18）：
+  现在有 `System.IO.Ports` 一条真实依赖，`.deps.json` 因此从 0.4 KB 增至 5.9 KB
 
 ### 12.3 包里**没有**什么（重要）
 

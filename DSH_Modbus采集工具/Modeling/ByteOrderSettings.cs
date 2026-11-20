@@ -41,16 +41,20 @@ namespace DSH_Modbus采集工具.Modeling
             : new ByteOrderSettings(driver.Int32ByteOrder, driver.FloatByteOrder, driver.StringByteOrder);
 
         /// <summary>
-        /// 未选驱动时的兜底值 = <b>信捷 XD 真机实测值</b>（<c>3412</c> / <c>3412</c> / <c>12</c>）。
+        /// 未选驱动时的兜底值 = <b>信捷 XD 的取值</b>（<c>3412</c> / <c>3412</c> / <c>21</c>）。
         /// <para>
         /// 原先这里填的是「大端 <c>1234</c>」—— 那是照通用 Modbus 惯例猜的，本项目两台验收机
         /// （信捷 XD、汇川 Easy）实测**都不是大端**，猜错只会给出看着正常的错值。
         /// 兜底取主力品牌（信捷）的实测值，至少落在「本项目真机成立」的一侧。
         /// 实际运行中这条几乎不会走到：设备类型下拉恒有选中项，构造期就 <c>SetDriver</c> 了。
         /// </para>
+        /// <para>
+        /// ⚠️ 字符串序随信捷改为 <c>21</c>（2026-11-20，用户实测：信捷新增了真正的 STRING 类型，
+        /// 旧 <c>12</c> 是针对 byte 数组模拟的写法）。见 <c>DriverRegistry</c> 同处注释。
+        /// </para>
         /// </summary>
         public static ByteOrderSettings Default { get; } = new(
-            ByteOrder32.Order3412, ByteOrder32.Order3412, StringByteOrder.Order12);
+            ByteOrder32.Order3412, ByteOrder32.Order3412, StringByteOrder.Order21);
 
         public bool Equals(ByteOrderSettings other)
             => Int32 == other.Int32 && Float == other.Float && String == other.String;

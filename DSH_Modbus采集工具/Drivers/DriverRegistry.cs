@@ -54,13 +54,17 @@ namespace DSH_Modbus采集工具.Drivers
             Key = "xinje_xd",
             DisplayName = "信捷XD/XL系列",
 
-            // ---- 字节顺序：真机实测值（2026-10-13，XD5E-60T10-E @192.168.1.66）----
-            // 32 位：D800=123456 → 读回 D800=0xE240 / D801=0x0001（低字在低地址，字序 3412）
-            // 字符串：D810='abcd' → 读回 0x6162 / 0x6364（每寄存器 2 字符、高字节在前）
-            // 证据见 Design.md §10.3 / §10.4
+            // ---- 字节顺序（信捷 XD/XL）----
+            // 32 位整型 / 浮点：真机实测 `3412`（低字在低地址）。2026-10-13 XD5E @192.168.1.66，见 Design.md §10.3
+            // 字符串：**2026-11-20 改为 `21`**（用户真机实测）。
+            //   ⚠️ 为什么从 `12` 改成 `21`：信捷**后来新增了真正的 STRING 类型**，
+            //   此前该功能是用 **byte 数组**模拟的 —— 两者在寄存器内的字节落位不同。
+            //   旧结论（`12`，高字节是前一个字符，Design.md §10.4 / `abcd` → 0x6162）针对的是
+            //   byte 数组那套写法，**不适用于新 STRING 类型**。
+            //   两品牌现在字符串序**一致**（都是 `21`），故「两品牌唯一差异是字符串」这条旧结论已失效。
             Int32ByteOrder = ByteOrder32.Order3412,
             FloatByteOrder = ByteOrder32.Order3412,
-            StringByteOrder = StringByteOrder.Order12,
+            StringByteOrder = StringByteOrder.Order21,
 
             Areas = new[]
             {

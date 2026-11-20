@@ -3,7 +3,7 @@ namespace DSH_Modbus采集工具.Drivers
     /// <summary>与页面无关的健康检查，复用连接内的串行请求锁。</summary>
     public static class ModbusHeartbeat
     {
-        public static async Task RunAsync(ModbusTcpClient client, CommDriver driver,
+        public static async Task RunAsync(IModbusClient client, CommDriver driver,
             Func<string?, Task> reportWarning, CancellationToken token)
         {
             // 心跳地址不单独配置，直接取自驱动地址表：**地址最小**的线圈区起始地址。

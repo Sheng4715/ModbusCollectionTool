@@ -56,10 +56,12 @@ Check("G7 取舍：1234.567 显示为 1234.567", ValueCodec.FormatRegisters(Data
 Check("FormatRegisters REAL/HEX", ValueCodec.FormatRegisters(DataType.Real, d802, DisplayFormat.Hex, orders, 0), "0x42F6E666");
 
 Console.WriteLine();
-Console.WriteLine("=== 3. 真机黄金样本：STRING 'abcd' （每寄存器 2 字符、高字节在前）===");
-ushort[] d810 = { 0x6162, 0x6364 };
-Check("DecodeString len=4", ValueCodec.DecodeString(d810, 4, StringByteOrder.Order12), "abcd");
-Check("DecodeString len=3 (截断)", ValueCodec.DecodeString(d810, 3, StringByteOrder.Order12), "abc");
+Console.WriteLine("=== 3. 字符串编解码（每寄存器 2 字符）===");
+// ⚠️ 2026-11-20：信捷改为真正的 STRING 类型、字符串序 `21`（旧 `12` 是 byte 数组模拟时代的结论）。
+// 这里验的是「同一批寄存器字，按 21 解出的文本」—— 基线随品牌默认值一起换成 21。
+ushort[] d810 = { 0x6261, 0x6463 };
+Check("DecodeString len=4 (Order21)", ValueCodec.DecodeString(d810, 4, StringByteOrder.Order21), "abcd");
+Check("DecodeString len=3 (截断)", ValueCodec.DecodeString(d810, 3, StringByteOrder.Order21), "abc");
 Check("FormatRegisters STRING/ASCII", ValueCodec.FormatRegisters(DataType.String, d810, DisplayFormat.Ascii, orders, 4), "abcd");
 Check("STRING[9] 占用寄存器数", DataTypes.Get(DataType.String).RegistersForLength(9), 5);
 Check("STRING[4] 占用寄存器数", DataTypes.Get(DataType.String).RegistersForLength(4), 2);
@@ -214,14 +216,16 @@ CheckEncode("REAL 123.45 -> 真机两寄存器", DataType.Real, DisplayFormat.De
 CheckEncode("REAL 负数 -1.5", DataType.Real, DisplayFormat.Dec, "-1.5", 0, orders,
     ValueCodec.Split32(unchecked((uint)BitConverter.SingleToInt32Bits(-1.5f)), orders.Int32));
 
-// 字符串：真机黄金样本 'abcd' -> 0x6162, 0x6364
-CheckEncode("STRING[4] 'abcd' -> 真机两寄存器", DataType.String, DisplayFormat.Ascii, "abcd", 4, orders, new ushort[] { 0x6162, 0x6364 });
+// 字符串：信捷 2026-11-20 起字符串序为 21（真正的 STRING 类型）——
+// 'a'(0x61) 在**低字节**，故 'ab' → 0x6261。
+// ⚠️ 旧期望 [0x6162, 0x6364] 是 byte 数组模拟时代的 `12` 序，不再是当前默认。
+CheckEncode("STRING[4] 'abcd' -> 两寄存器", DataType.String, DisplayFormat.Ascii, "abcd", 4, orders, new ushort[] { 0x6261, 0x6463 });
 
 // ⚠️ 关键：编码必须补齐到声明的寄存器数（EncodeString 按文本长度自算，会少给）
 CheckRegs("STRING[9] 'abc' 补零到 5 个寄存器", ValueCodec.EncodeStringFixed("abc", 9, orders.String),
-    new ushort[] { 0x6162, 0x6300, 0x0000, 0x0000, 0x0000 });
+    new ushort[] { 0x6261, 0x0063, 0x0000, 0x0000, 0x0000 });
 CheckRegs("STRING[9] 超长 'abcdefghijkl' 截断到 9 字符", ValueCodec.EncodeStringFixed("abcdefghijkl", 9, orders.String),
-    new ushort[] { 0x6162, 0x6364, 0x6566, 0x6768, 0x6900 });
+    new ushort[] { 0x6261, 0x6463, 0x6665, 0x6867, 0x0069 });
 Check("STRING 补零后的寄存器数 == RegistersForLength",
     ValueCodec.EncodeStringFixed("abc", 9, orders.String).Length,
     DataTypes.Get(DataType.String).RegistersForLength(9));
@@ -294,21 +298,19 @@ ushort[] Encode(DataType t, string text, ByteOrderSettings o)
 // 驱动默认值就是出厂约定；未选驱动时用大端兜底
 Check("信捷出厂默认 DINT 字序", ByteOrderSettings.FromDriver(xinje).Int32, ByteOrder32.Order3412);
 Check("信捷出厂默认 REAL 字序", ByteOrderSettings.FromDriver(xinje).Float, ByteOrder32.Order3412);
-// 兜底值取主力品牌（信捷）的实测值，不再是照惯例猜的大端 ——
-// 两台验收机（信捷 XD / 汇川 Easy）实测都不是大端，猜错只会给出看着正常的错值。
-Check("未选驱动时整数回落到 3412（信捷实测值）", ByteOrderSettings.Default.Int32, ByteOrder32.Order3412);
-Check("未选驱动时字符串回落到 12（信捷实测值）", ByteOrderSettings.Default.String, StringByteOrder.Order12);
+// 兜底值取主力品牌（信捷）的取值，不再是照惯例猜的大端 ——
+// 两台验收机（信捷 XD / 汇川 Easy）实测整数与浮点都不是大端，猜错只会给出看着正常的错值。
+Check("未选驱动时整数回落到 3412（信捷取值）", ByteOrderSettings.Default.Int32, ByteOrder32.Order3412);
+Check("未选驱动时字符串回落到 21（信捷 2026-11-20 起）", ByteOrderSettings.Default.String, StringByteOrder.Order21);
 
-// 两个品牌的默认值都来自真机实测（信捷 §10.3/§10.4、汇川 §10.16）：
-// 整数与浮点两品牌相同（3412），**字符串相反**（信捷 12、汇川 21）。
-// 这组断言同时证明「切换驱动 = 重新取该驱动的默认，不是继承上一份」。
+// 两个品牌的默认值都来自真机实测（信捷 §8-17、汇川 §10.16）：
+// 整数与浮点两品牌相同（3412）；字符串**2026-11-20 起也相同**（都是 21）——
+// 信捷改用真正的 STRING 类型后，与 byte 数组模拟时代的 `12` 不同了。
 CommDriver inovance = DriverRegistry.GetByKey("inovance_easy")!;
-Check("信捷默认字符串 = 12", ByteOrderSettings.FromDriver(xinje).String, StringByteOrder.Order12);
-Check("汇川默认字符串 = 21（与信捷相反）", ByteOrderSettings.FromDriver(inovance).String, StringByteOrder.Order21);
+Check("信捷默认字符串 = 21", ByteOrderSettings.FromDriver(xinje).String, StringByteOrder.Order21);
+Check("汇川默认字符串 = 21", ByteOrderSettings.FromDriver(inovance).String, StringByteOrder.Order21);
 Check("汇川默认整数 = 3412", ByteOrderSettings.FromDriver(inovance).Int32, ByteOrder32.Order3412);
 Check("汇川默认浮点 = 3412", ByteOrderSettings.FromDriver(inovance).Float, ByteOrder32.Order3412);
-Check("切换驱动后整份 settings 跟着换（不是继承上一份）",
-    ByteOrderSettings.FromDriver(inovance) == ByteOrderSettings.FromDriver(xinje), false);
 
 
 // ============================================================

@@ -21,7 +21,7 @@
 - **采集跟随可见性**：只读**当前显示分段 + 当前页**（`_visiblePage` 快照，按所属地址区分块 FC01，同区跨度超 2000 点切窗，默认 100ms）；**离开本页停止 IO 采集，独立心跳继续**；断线不清灯色（`IsOn` 保持上次值）
 - **三个分段统一「跟随可见性」**（输入监控 / 输出监控 / 自由监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开设备监控页则全停）。详见 §5.1 与 `Design.md` §5.6
 - **卡片内同一时刻只有一条滚动条**：Row=2 的 `Grid` 下，X/Y 共用一个 `IoScrollViewer`（每页固定 64 点，见 §5 分页），自由监控则让 `FreeMonitorPanel` 自己填满该格、只让列表滚动（表头常驻 —— 它是「+」的落点）。⚠️ **列表不要写 `MaxHeight`**：面板整体已绑 `ViewportHeight`，写死高度会让「里层先滚、里层滚不动了外层再滚」，两条滚动条并存（历史缺陷：527f2e2 给自由监控列表套了 `MaxHeight="380"`）
-- **合法异常码不算断线**（2026-10-16）：IO 分块读**单独捕 `ModbusResponseException`** 并与成功路径分开 —— 跳过该块、其余块照读、该块的点保持上次值，**不断开也不重连**；某块**连续** `ModbusPoller.ConsecutiveExceptionThreshold`（**5**）次才记一条琥珀「通讯异常」（措辞 `原因（地址 xxx 异常码 N）`），**只记一次、读通即清零**（不这么做，100ms 一拍会让 200 条日志 20 秒内刷满）。**超时 / IO 异常仍照旧断开**。详见 §5.1 / §6 与 `Design.md` §8-12
+- **合法异常码不算断线**（2026-10-16）：IO 分块读**单独捕 `ModbusResponseException`** 并与成功路径分开 —— 跳过该块、其余块照读、该块的点保持上次值，**不断开也不重连**；某块**连续** `ModbusPoller.ConsecutiveExceptionThreshold`（**5**）次才记一条琥珀「通讯异常」（措辞 `原因（地址 xxx 异常码 N）`），**只记一次、读通即清零**（不这么做，100ms 一拍会让 1000 条日志 100 秒内刷满）。**超时 / IO 异常仍照旧断开**。详见 §5.1 / §6 与 `Design.md` §8-12
 
 **灯色（`IoPoint.StateBrush`）**：灭灯 `#C4C4C4`；点亮时**输入 X 绿 `#0B7A0B`、输出 Y 橙 `#FFA500`**。
 
@@ -1674,6 +1674,11 @@ ScrollViewer                        ← 画布放不下就滚
 - 地址表里没有线圈区时提示「未启用心跳」并 return（用 `FirstOrDefault` 而非 `First`，否则抛出的异常会被上层当成通讯故障并断开连接）。正常驱动不会出现
 - 合法异常响应抛 `ModbusResponseException` → **保持连接**并告警（码 1/2 提示配置无效，其余提示响应异常），后续心跳成功即清除。**IO 轮询自 2026-10-16 起同样不断开**（见 §5）；两条支路的差别只剩阈值与呈现：心跳每次异常即告警并去重，IO 累计**连续 5 次**才记一条
 - 读取超时 2s；空闲失联通常**约 3 秒**检测到（1s 空闲 + 2s 超时 + 调度延迟），不是严格 3s 上限
+- ✅ **2026-11-18 真机实测过**（信捷 XD @`192.168.1.66:502`，`.tmp/HeartbeatProbe` 抓帧代理，11 项断言全通过）：
+  空闲期心跳为 FC01 / M0 / 数量 1、间隔实测 **1100 ms**（100ms 的 `PeriodicTimer` 粒度决定命中窗口
+  1000～1100 ms，**上沿属正常不是缺陷**）；**轮询期间心跳帧数为 0**（「正常应答时被设计性省略」成立）；
+  停采后约 900 ms 自动恢复。证据见 `Design.md` §10.44。⚠️ 想再验一次别只看日志 ——
+  心跳被省略时**本来就无痕**，「发了没记」与「没发」在应用内无法区分，必须抓帧
 - `RunConnectionTasksAsync` 启动时把**连接与驱动快照**传给两个任务，所有回 UI 回调先过 `IsCurrentConnection`（未关窗 && token 未取消 && 仍连着 && 是同一个客户端实例 —— 判定集中在 `ConnectionSession.IsCurrent`）→ 旧连接的后台回调无法误操作新连接
 - `StopPolling` 只取消并置 null，**释放交给任务自身 `finally`**（确认自己仍是当前连接后）；`OnClosed` 统一取消连接尝试、停任务并释放
 - **连接的身份与生命周期状态**（当前客户端 / 是否连着 / 期望目标 / 在途取消源 / 重连计数）在 `Polling/ConnectionSession.cs`，**async 编排留在窗口** —— 等待循环里逐秒刷状态栏、锁表单、改按钮文案全是界面驱动的东西。两种「断开」语义也在那里落了地：`ForgetTarget()` = 用户主动断开（目标清掉 → 不重连），只 `ReleaseClient()` = 异常断开（目标留着 → 才能重连）
@@ -2013,20 +2018,21 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
 
 `CommDriver` 上有三个**品牌约定**属性，设备连接页各对应一个下拉框：
 
-| 属性 | 枚举 | 信捷 XD 实测值 | 汇川 Easy 实测值 |
+| 属性 | 枚举 | 信捷 XD | 汇川 Easy |
 |---|---|---|---|
 | `Int32ByteOrder` | `ByteOrder32`（`1234`/`2143`/`3412`/`4321`） | `Order3412` | `Order3412` |
 | `FloatByteOrder` | 同上 | `Order3412` | `Order3412` |
-| `StringByteOrder` | `StringByteOrder`（`12`/`21`） | `Order12` | **`Order21`** |
+| `StringByteOrder` | `StringByteOrder`（`12`/`21`） | **`Order21`** | `Order21` |
 
 - 记号含义见 `CommDriver.cs` 的枚举注释：把 4 个字节**按重要性**编号 1=MSB…4=LSB，名称即字节流里的排列顺序
-- **两品牌的值都是真机定案**：信捷见 `Design.md` §10.3 / §10.4，汇川见 §10.16（2026-10-21，`192.168.1.10:502`）
-- ⚠️ **两品牌唯一差异是字符串**：信捷 `12`（第 1 个字符在高字节）、汇川 `21`（低字节）。
-  照抄对方的值会把 `ABCD` 显示成 `BADC`。整数与浮点两品牌相同（`3412`）
-- 新增品牌时**不要照抄任何一家的值**：先用 `.tmp/OrderProbe` 探针实测（见下）
-- **项目里不存在"猜"的字序了**：两台验收机的驱动默认都是实测值；
-  `ByteOrderSettings.Default`（未选驱动时的兜底）也取信捷实测值 `3412`/`3412`/`12`，
-  不再是照通用惯例猜的大端 `1234`
+- ⚠️ **信捷字符串序 2026-11-20 由 `12` 改为 `21`**（用户真机实测）。原因：**信捷后来新增了真正的
+  `STRING` 类型**，此前该功能是用 **byte 数组**模拟的 —— 两者在寄存器内的字节落位不同。
+  旧结论（`12` / `abcd` → `0x6162`，见 `Design.md` §10.4）针对的是 byte 数组那套写法，
+  **不适用于新 STRING 类型**。`ByteOrderSettings.Default` 的兜底值同步改为 `21`
+- ⚠️ 因此「**两品牌唯一差异是字符串**」这条旧结论**已失效** —— 现在两品牌的字符串序一致（都是 `21`）。
+  将来做多品牌对照时别再拿「字符串序」当区分依据
+- **32 位整型 / 浮点的两品牌默认仍都是 `3412`**（各自真机实测，见 `Design.md` §10.3 / §10.16）
+- 新增品牌时**不要照抄任何一家的值**：先用 `.tmp/OrderProbe` 探针实测（见下）；尤其别假设信捷与汇川还不同
 - ⚠️ 字符串**不涉及「字序」**：它只是字节序列，没有字的权重之分，别把 `3412` 套到 `STRING` 上
 
 **三套各自独立，且真的会被读**（P4.3，2026-10-21 接线）：
@@ -2036,10 +2042,20 @@ d.TryResolve("X17", ModbusArea.Coil, out int addr, out string err); // 八进制
   编解码器仍然**不读全局状态**，只认入参
 - ⚠️ `REAL` 与 `DINT` **不再共用一套字序**。早先两者绑在一个 `byteOrder` 参数上，
   「32位浮点数字节顺序」下拉框改了也不生效（界面显示 1234、数值仍按 3412 解，**不报错但全是错值**）
-- **切换设备类型 = 重置为驱动默认**（用户定案）：`SyncByteOrderCombos` 里 `ApplyByteOrders(FromDriver(driver))`，
-  `MonitorItemSet.SetDriver` 也同步重置一次；**不持久化**，重启回到驱动默认
-- 所有改动路径都走窗口的 `ApplyByteOrders`（写 `_byteOrders` + `_monitorSet.SetByteOrders`）——
-  **不要只改下拉框**，那样界面与数据会各说各话
+- **切换设备类型 = 重置为驱动默认**（用户定案，2026-11-20 起改为「方案 B」）：
+  - **持久化**：三套字序存 `app-settings.json` → `Int32ByteOrder` / `FloatByteOrder` /
+    `StringByteOrder`（存**枚举数值**；`-1` = 没保存过。⚠️ 字符串序**不能用 0 当哨兵** ——
+    `Order12` 的枚举值就是 0）
+  - **同品牌重启 → 恢复用户调过的值**；**换品牌 → 强制重置为新驱动默认**
+  - 实现：`SyncByteOrderCombos` 按 `_driverJustSwitched` 分支 —— 该标志只在
+    `DeviceTypeComboBox_SelectionChanged` 的切换路径内置位，为真时**忽略持久化值**、
+    一律 `FromDriver`
+  - ⚠️ **换品牌后要用「新驱动默认」重新落盘**（`PersistByteOrders(FromDriver(_currentDriver))`）：
+    否则 json 里仍是旧品牌的值，下次启动会把它恢复回来 —— 那正是当初不敢持久化的原因
+  - ⚠️ **三个字序要么全恢复、要么全不用**（`TryGetSavedByteOrders` 任一越界即整体放弃）：
+    只恢复一半会造出「整数是上次的、浮点是默认的」混合态，界面上根本看不出哪项是旧的
+  - `MonitorItemSet.SetDriver` 也同步重置一次；所有改动路径都走窗口的 `ApplyByteOrders`
+    （写 `_byteOrders` + `_monitorSet.SetByteOrders`）—— **不要只改下拉框**，那样界面与数据会各说各话
 - 轮询回填取 `_host.MonitorSet.ByteOrders` 那份快照（`ApplyBlock` 的入参）：后台线程不能读窗口字段
 - 验证：`ModelingCheck` §11 共 14 项（改浮点不影响整数、改整数不影响浮点、编码侧同样各走各的；
   另含两品牌出厂默认的对照 —— 信捷字符串 `12`、汇川 `21`，这条同时证明「切驱动 = 重取默认」）。全部 **100 项**通过
@@ -2056,7 +2072,6 @@ OrderProbe <ip> <port> <unitId> <localIp|-> <addr:count> [addr:count ...]
 `STRING[4]='ABCD'`；32 位与浮点**必须分开测**（两套字序独立，见上）。
 
 ### 8.2 目标网卡（TargetNic）选择
-
 设备连接页的「目标网卡」下拉框决定 `ConnectButton_Click` 里 `new IPEndPoint(nic.Ip, 0)` 的**本地端点**
 （即绑定哪块网卡出去）。规则与坑：
 
@@ -2505,6 +2520,7 @@ DSH_Modbus采集工具/
 │   ├── DeviceLogFileWriter.cs  # 按天追加 .log + 跨天换文件 + 失败自愈
 │   └── DisconnectReasonClassifier.cs  # 异常原文 → 简短中文（底栏与日志共用）
 ├── Net/NicScanner.cs           # 网络接口 → NicInfo + 「上次选择」还原优先级
+├── Net/SerialPortScanner.cs    # 串口 → SerialPortInfo（端口名 + 注册表里的设备名，零依赖）
 ├── Ui/                         # 窗口呈现辅助与对话框（引 WPF，不碰业务）
 │   ├── MaximizedInset.cs       # 最大化溢出补偿：物理像素 + 按 DPI 内缩（§3.6）
 │   ├── WindowCorners.cs        # 圆角 + 边缘线（DWM 绘制，§3.8）
@@ -2590,3 +2606,181 @@ DSH_Modbus采集工具/
 | **隐式 `ScrollBar`**（**无 `x:Key`**） | 细滚动条（10px）。⚠️ 隐式样式是唯一能命中 `ScrollViewer` 内部创建的滚动条的手段，**别改成 keyed**。⚠️ **横向必须在 `ControlTemplate.Triggers` 里把 `PART_Track.IsDirectionReversed` 翻回 `False`**：模板那个 `True` 是给纵向的，横向不翻的话 `Value=0` 时滑块贴右端（2026-11-06 实测复现并修真，历史表格的横向条就是这么坏的） |
 
 
+
+---
+
+## 8.3 串口 Modbus RTU（P4.4，2026-11-18）
+
+> 本节编号接在 §8.2 之后；物理位置在文件末尾（§15/§16 是查阅型大表，在其之后追加不打断它们）。
+
+**用户三条定案**：引微软官方 `System.IO.Ports`（**打破原「零第三方依赖」红线**）、
+串口真机验收**延后**（现场无设备）、默认 **9600 8N1**。
+
+### 8.3.1 为什么必须抽协议层
+
+`ModbusTcpClient` 原先**同时**负责 PDU 与 MBAP 装订，且采集引擎 / 心跳 / 写入 /
+`ConnectionSession` 共 **41 处**引用这个具体类型。不抽的话加 RTU 只有两条路：
+每处长一个 `if (isSerial)`，或复制一整套采集逻辑 —— 后者会让分块与失败策略慢慢走偏。
+
+| 文件 | 职责 | 无 WPF |
+|---|---|---|
+| `Drivers/ModbusPdu.cs` | PDU 构造 / 解析 / 异常码 / 写回显校验，**传输无关** | ✅ |
+| `Drivers/Crc16.cs` | RTU 校验（0xA001、初值 0xFFFF、**帧尾低字节在前**） | ✅ |
+| `Drivers/IModbusClient.cs` | 6 读写 + 心跳 + 站号 + 连接状态 | ✅ |
+| `Drivers/ModbusTcpClient.cs` | MBAP 装订 + TCP；PDU 改调 `ModbusPdu` | ✅ |
+| `Drivers/ModbusRtuClient.cs` | 串口 + `SerialSettings` + 按功能码推算帧长 | ✅ |
+
+⚠️ **连接方法刻意不在 `IModbusClient` 里**：TCP 要 IP/端口/本地绑定端点，RTU 要
+COM 口 + 波特率 + 数据位 + 校验 + 停止位。硬塞进一个签名只能变成「一堆可空参数的万能连接」，
+那种签名既看不懂也用不对。两种连接各自留在实现类上，由窗口按连接方式分支调用。
+
+### 8.3.2 RTU 与 TCP 的三处本质差异（最容易埋坑的地方）
+
+1. ⚠️ **RTU 没有长度字段**。收帧必须先读「站号 + 功能码」，再推算剩余字节：
+   异常响应**恒 5 字节**；正常响应看**第 3 字节**声明的数据字节数。
+   推错就整条流失步 —— 故 `ReadFrame` 与 `ValidateFrame` 都做成 `static`，
+   只为能脱离串口独立断言。
+2. ⚠️ **站号参与 CRC**。改站号后 CRC 必变，所以站号配错的表现是
+   **「CRC 校验失败」而不是「站号不符」** —— 现场别一看 CRC 错就只怀疑线路。
+3. ⚠️ **CRC 低字节在前**。写反与「CRC 算错」现象完全一样：从站静默丢弃、主机只见超时。
+
+### 8.3.2b ⚠️ 写应答是 8 字节回显，**不能**按读应答解析（2026-11-18 真机踩中）
+
+RTU 三类响应结构**完全不同**，必须先看功能码 + 请求类型再决定读多少字节：
+
+| 响应类型 | 整帧长度 | 结构 |
+|---|---|---|
+| 异常应答 | **5 字节** | 站号 + (FC\|0x80) + 异常码 + CRC(2) |
+| **写应答（回显）** | **8 字节** | 站号 + FC + 地址(2) + 值/数量(2) + CRC(2) —— **没有「字节数」字段** |
+| 读应答 | **变长** | 站号 + FC + 字节数(1) + 数据(N) + CRC(2) |
+
+**踩坑现象**（汇川 Easy @COM4，实际发生）：
+
+- 写 `M0`（地址 `0x0000`）→ 把地址高字节 `0x00` 当成字节数 → 只读 5 字节就校验 CRC → **`IOException`**
+- 写 `Y7`（地址 `0xFC07`）→ 把高字节 `0xFC`=252 当成字节数 → 死等 254 字节 → **`TimeoutException`**
+- ⚠️ **写入其实早就成功了**：写前读、写后再读，值确实翻转了。只是应答被误解析，
+  所以表现为「写失败但设备真的动了」—— 这种「成功了却报错」最难判断
+
+**修法**：`ReadFrame` 增加 `isWrite` 参数，写路径**固定读 6 字节**（前 2 已读，合计 8）。
+⚠️ 不要试图靠「第三字节像不像字节数」去猜 —— 地址高字节可任意取值，必然误判。
+
+**诊断手法（值得复用）**：区分「请求被丢弃」与「写成功但不回包」，就**写前读一次、写后再读一次**。
+只看异常类型会把「回包格式错」误判成「从站不支持写」。
+
+**超时与清缓冲**：单次请求 2 s；任何失败（超时 / 取消 / CRC 错 / IO 错）都
+`DiscardInBuffer()` 后再上抛 —— 残帧留在缓冲里会让**下一条**请求跟着失败，
+表现为「偶发失败、重试就好」，极难查。合法异常响应**不清缓冲**（帧已完整读完，串口可复用）。
+
+### 8.3.3 UI 与持久化
+
+- `SerialOptionsPanel` 与 `EthernetOptionsPanel` **互斥显隐**（`ConnectionTypeComboBox_SelectionChanged`）
+- ⚠️ **连接按钮有两个，各贴在自家「刷新」右边**（用户 2026-11-18 定案）：
+  以太网 `ConnectButtonEthernet`（`RefreshNicButton` 右侧）、串口 `ConnectButtonSerial`
+  （`RefreshSerialButton` 右侧）。实测两者相对位置完全一致（刷新 x=842 w=90 → 连接 x=944 w=120）。
+  ⚠️ **两个按钮的三态（连接/断开/取消重连）与启用态必须成对设置** —— 统一走
+  `SetConnectButtonText` / `SetConnectButtonEnabled` / `SetConnectButtonHeight` 三个方法，
+  **不要直接碰按钮属性**，漏一个的表现是「切换连接方式后按钮文案停在旧状态」。
+  历史教训：更早版本把按钮放在 `EthernetOptionsPanel` 里，串口模式折叠该面板后
+  **按钮整个消失、串口根本点不到连接**（UIA 实测 `ConnectButton` 不在树）
+- ⚠️ **与连接方式无关的控件，一律放在两个互斥面板之前**（`AutoConnectPlcToggle` 即此类）：
+  放进互斥面板内 → 切到另一模式时**消失**；放在面板之后但仍是表单末行 → 因两种模式上方行数不同，
+  **位置上下跳**（实测串口 y=678 / 以太网 y=867）。故统一下沉到「连接方式」上方（y=363 恒定）。
+  自检：切换连接方式后，该控件 `BoundingRectangle` 应完全不变
+- ⚠️ **协议类型由连接方式唯一决定，下拉里只列对应那一项**（`SyncProtocolOptions`）：
+  以太网 → `ModbusTCP`，串口 → `ModbusRTU`。
+  **不要退回「XAML 静态写两项 + 只改 SelectedIndex」**（2026-11-18 用户指出并修掉）：
+  两项都在时用户能选中「以太网 + ModbusRTU」，那个组合不生效（连接仍按 TCP 走）却
+  不报任何错 —— 属最难查的静默错配。只留一项**不是禁用**，仍可点开确认
+  （同扫码器连接页 2026-11-04 定案「只有一项也应能点开」）。
+  ⚠️ 条目是运行时填入的，故**启动时必须在构造函数里显式调一次** `SyncProtocolOptions()`
+  —— 不能指望「XAML 的 SelectedIndex=0 触发 SelectionChanged」，那条路径已不存在；
+  漏了的表现是**协议框空白 + 底栏缺协议段**（实测踩过）
+- 程序改写协议框时罩 `_syncingProtocol`，否则会多刷一次底栏
+- **串口下拉显示「端口 · 设备名」**（2026-11-18 用户要求），如 `COM4 · USB-Enhanced-SERIAL CH343`
+  - 实现在 `Net/SerialPortScanner.cs`（无 WPF）：`SerialPortInfo { PortName, Description }`，
+    `ToString()` 出显示文本；端口名来自 `SerialPort.GetPortNames()`，
+    设备名来自注册表 `HKLM\SYSTEM\CurrentControlSet\Enum\**\Device Parameters\PortName` +
+    同层 `FriendlyName`（实测 CH343 / CH340 / CP210x / ELTIMA 虚拟口全命中）
+  - ⚠️ **刻意不用 WMI**（`Win32_PnPEntity`）：那要额外引 `System.Management` 包，
+    而本项目只有一个依赖（串口驱动）。注册表遍历零依赖，拿到的是同一份 FriendlyName
+  - ⚠️ **设备名只用于显示**：连接与持久化一律用 `PortName`。取来的是
+    `USB-SERIAL CH340 (COM4)` 这种自带端口后缀的串，`StripPortSuffix` 会剥掉，
+    否则下拉框里端口号重复两遍
+  - ⚠️ **取不到设备名不影响可用性**：任何一步失败都退回「只显示端口名」，
+    列表绝不为空
+  - ⚠️ **只显示 `GetPortNames()` 返回的口**（当前真实存在）。注册表里还有一堆
+    已拔设备的残留记录（实测本机 10 个注册、只有 3 个可用），不能拿注册表当端口来源
+  - ⚠️ 下拉框装的是**对象**不是字符串 —— 取当前端口一律走窗口的 `SelectedPortName()`。
+    曾经到处写 `SelectedItem as string`，改对象后那些地方会静默变 `null`
+    （表现为「明明选了串口却说未选」）
+- 串口下拉 `ScanSerialPorts` 整段罩 `_restoringSerialSelection`（同网卡那条坑：
+  `Items.Clear()` 也触发 `SelectionChanged`，不挡会把用户选择抹掉），
+  且**按数字排序**（默认字符串排序会让 COM10 排在 COM2 前面）
+- **校验位 / 停止位的解析只此一处**（`ReadParityFromUi` / `ReadStopBitsFromUi`）：
+  读写各写一份 switch，一旦漂移就是「改了但落盘的是旧值」，界面看不出异常
+- 持久化 `ThemeManager.Serial*` + `StationNumber`；**默认值存空串 / 0**，
+  旧 json 缺字段无缝升级（与 `TargetIp` / `TargetPort` 同一不变式）
+- ⚠️ **`_restoringSerialSelection` 的初值必须是 `true`**（`private bool ... = true;`，2026-11-20 实测踩中）：
+  `InitializeComponent()` 里 XAML 的 `SelectedIndex` 会触发 `SerialSetting_Changed`，
+  **那时用户设置还没回填**（回填在构造函数后面的 `ApplyConnectionSettings`）。
+  初值给 `false` 的话，这几次回调会把默认值（9600/8/None/One/1）写进
+  `ThemeManager.SetSerialSettings`，**把刚加载的用户设置覆盖掉**，之后回填读到的自然是默认值。
+  症状：**参数能正确落盘，但重启后完全不恢复，而且 json 里的用户值被改回默认** ——
+  看起来像「没做持久化」，实际是持久化被自己的初始化流程抹掉了。
+  生命周期：构造期恒 `true` → `ApplySerialSettings` 回填完置 `false` → 此后用户改动才落盘
+- ⚠️ **站号 TCP 与 RTU 共用**：它表达「在总线上是谁」，不因传输方式而变；分两套存
+  会让「同一个 PLC 换个连法就答不上」
+- ✅ **连接方式本身也持久化**（2026-11-20 用户指出后补）：`app-settings.json` →
+  `UseSerialConnection`（`false` = 以太网，默认；`true` = 串口）。
+  「串口六项都记了、唯独选了哪种方式不记」说不通 —— 串口用户每次启动都要手动切一次。
+  - 读写：`ThemeManager.UseSerialConnection` / `SetUseSerialConnection`（值没变不写盘）
+  - 回填：`RestoreConnectionType()`，且**必须排在 `ApplySerialSettings()` 之前** ——
+    串口面板要在选中「串口」后才扫描端口，`SerialPortComboBox` 为空时 `ApplySerialSettings`
+    选不中任何项（顺序反了就是「连接方式记住了但串口号没恢复」）
+  - ⚠️ 回填罩 `_restoringConnectionType`：赋值会触发 `SelectionChanged` → 回调尾部的
+    `SetUseSerialConnection` 再写一遍盘
+  - ⚠️ 默认值（以太网）不显式存：旧 json 缺字段 → 反序列化得 `false` → 停在以太网，
+    与升级前一致，无需迁移
+  - ⚠️ **切换连接方式时表单必须是可用的**：连接中 `SetInputsEnabled(false)` 会把它一起禁用，
+    UIA 表现为 `IsKeyboardFocusable=False`、`SetFocus()` 抛「目标元素无法接收焦点」。
+    这是**设计如此**（连接中锁定表单），不是 bug —— 做自动化验证前要先断开，否则会误判
+- **验证口径**：改值 → 看 json → **重启** → 看界面。⚠️ 只验「json 里有值」不够 ——
+  上面那个 bug 正好是「json 有值但启动被覆盖」，必须走完整往返
+
+### 8.3.4 验证与未验
+
+- `.tmp/RtuCheck` **50 项离线断言全通过** —— CRC 官方已知向量（`01 03 00 00 00 0A` → `0xCDC5`）、
+  帧尾字节序、PDU 构造/解析、异常码、写回显校验、读字节数推算、整帧拼装、参数模型、两种目标
+- **TCP 真机回归**：PDU 层重写后重跑 `.tmp/HeartbeatProbe`（信捷 `192.168.1.66:502`）**11 项全通过**
+  —— 这是本次改动**最大的风险点**（动了所有 TCP 报文路径）
+- ✅ **真机已验收**（2026-11-18，汇川 Easy @ **COM4 9600 8N1 站号 1**，`.tmp/RtuLive` **19 项全通过**）：
+  FC01 读（35 ms）、FC05 写 ON/OFF 并回读确认、连续 20 次读稳定（555 ms）、
+  **变长读 1/8/9/16/17 点**（验帧长推算跨字节边界）、FC06 写寄存器回读、FC16 写多寄存器回读、
+  非法地址回异常码 2 且**连接保持**（异常后可继续正常读）。
+  ⚠️ 验收中发现并修掉一个真 bug：**写应答被按读应答解析**，见 §8.3.2b
+- ✅ **串口参数持久化**（2026-11-20）：串口号 / 波特率 / 数据位 / 校验位 / 停止位 / 站号
+  **六项**改值 → 落盘 → 重启 → 全部正确恢复。
+  ⚠️ 该 bug 的症状是「能落盘但重启不恢复、且 json 被改回默认」，见上条 `_restoringSerialSelection`
+- ✅ **寄存器「类型语义层」**（2026-11-18，`.tmp/RegLive` **29 项**）：
+  验「值 → `ValueCodec` 编码 → 真串口 → PLC → FC03 读回 → `ValueCodec` 解码」整条链路，
+  覆盖 DINT/REAL/INT/UINT/STRING 全部类型 + 3 套字节顺序 + 16 位边界位模式 + DEC/HEX/BIN 显示
+- ⚠️ **`DecodeInteger` 返回的是「位模式」，不是有符号值**：
+  `INT` 的 `0x8000` 经它返回 **32768**，符号解释在格式化层（`FormatRegisters` → `Interpret`）。
+  **验有符号性要验 `FormatRegisters`**，拿 `DecodeInteger` 跟 `-32768` 比会误报 bug
+- ✅ **CRC 双向验证**（2026-11-18）：
+  - **从站侧**（`.tmp/CrcLive`，真机 COM4）：CRC 低字节/高字节/两字节取反，三种坏帧**全被静默丢弃**；
+    正确 CRC 正常应答；「改数据但 CRC 不动」同样丢弃；错误帧之后好帧仍能应答
+  - **接收侧**（`.tmp/CrcRecv`，**ELTIMA 虚拟串口对 COM10↔COM11** 自建假从站）：回坏 CRC →
+    抛「CRC 校验失败」而非当有效值；站号不符 → 抛「站号不符」；不回包 → 超时；坏帧后连接未被毒化
+  - ⚠️ 接收侧**真机做不到**（PLC 从不发坏帧），只能用虚拟串口对。
+    `CrcRecv <被测口> <假从站口> <站号>` 可重跑
+  - ⚠️ 写这类测试要先自检「坏帧变体是否真的变了」：传错参数等于发的好帧，会得出相反结论
+- ✅ **信捷 XD 串口**（2026-11-20，`.tmp/XinjeLive` **24 项**，COM4 9600 8N1 站号 1）：
+  线圈 M/Y 区 FC05 写回读、FC01 多点读；寄存器 D 区 FC06/FC16、DINT、STRING
+  - **八进制编号实测**：`Y7=0x6007` / `Y10=0x6008` / `Y17=0x600F` —— **Y10 只比 Y7 大 1**（八进制进位）
+  - ⚠️ **本机信捷允许写只读区 X**（FC05 写 `X0` 未被拒）。设备行为，非 bug；
+    应用仍按只读处理（`IsReadOnlyElement` 拦「写」不拦「映射」）。现场若依赖「X 写不进去」需注意
+- **仍未验**：拔串口线的断线判定与自动重连（CRC 已双向验完，见上一条）
+- ⚠️ **发布产物变了**：多 `System.IO.Ports.dll`（34.7 KB），共 5 个文件。
+  漏拷时**应用照常启动、以太网照常连**（CLR 惰性解析），只在点串口连接时抛
+  `FileNotFoundException` —— 见 `AGENTS-发布.md` §12.2

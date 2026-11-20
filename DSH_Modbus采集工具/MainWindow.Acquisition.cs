@@ -740,7 +740,7 @@ namespace DSH_Modbus采集工具
 
             try
             {
-                ModbusTcpClient? modbus = _session.Client;
+                IModbusClient? modbus = _session.Client;
                 bool plcConnected = modbus != null && _session.IsConnected;
 
                 // ⚠️ **未连接不能整轮 return**（2026-11-05 修订）：写入变量可能全是
@@ -1004,7 +1004,7 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            ModbusTcpClient? modbus = _session.Client;
+            IModbusClient? modbus = _session.Client;
             if (modbus == null || !_session.IsConnected)
             {
                 return;
@@ -1076,7 +1076,7 @@ namespace DSH_Modbus采集工具
                         continue;
                     }
 
-                    ModbusTcpClient? modbus = _session.Client;
+                    IModbusClient? modbus = _session.Client;
                     if (modbus == null || !_session.IsConnected)
                     {
                         state.PendingCompletionValue = string.Empty;

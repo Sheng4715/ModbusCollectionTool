@@ -22,14 +22,18 @@ namespace DSH_Modbus采集工具.Drivers
     /// Modbus TCP 主站：MBAP 报文封装 + 功能码 0x01/0x02/0x03/0x04（读）
     /// 与 0x05/0x06/0x10（写）。
     /// 单连接、请求串行（信号量），单次请求 2 秒超时。
+    /// <para>
+    /// PDU 的构造与解析已抽到 <see cref="ModbusPdu"/>（TCP / RTU 共用），
+    /// 本类只负责 **MBAP 装订 + 传输**：事务标识、协议标识、长度字段、单元号。
+    /// </para>
     /// </summary>
-    public sealed class ModbusTcpClient : IDisposable
+    public sealed class ModbusTcpClient : IModbusClient
     {
-        /// <summary>单次 FC16 最多写的寄存器数（协议上限 123）。</summary>
-        public const int MaxRegistersPerWrite = 123;
+        /// <summary>单次 FC16 最多写的寄存器数（协议上限 123）。转发到 <see cref="ModbusPdu"/>。</summary>
+        public const int MaxRegistersPerWrite = ModbusPdu.MaxRegistersPerWrite;
 
         /// <summary>
-        /// 单次 FC03 / FC04 最多读的寄存器数（协议上限 125）。
+        /// 单次 FC03 / FC04 最多读的寄存器数（协议上限 125）。转发到 <see cref="ModbusPdu"/>。
         /// <para>
         /// ⚠️ **寄存器区的分块上限必须用它，不能用线圈那些 2000**：2000 是 FC01/FC02
         /// 的线圈上限，寄存器侧超 125 从站会回异常码 3 甚至直接断链。
@@ -37,7 +41,7 @@ namespace DSH_Modbus采集工具.Drivers
         /// 本类只把常量集中在这里供它们引用。
         /// </para>
         /// </summary>
-        public const int MaxRegistersPerRead = 125;
+        public const int MaxRegistersPerRead = ModbusPdu.MaxRegistersPerRead;
 
         private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -114,46 +118,19 @@ namespace DSH_Modbus采集工具.Drivers
         {
             // 线圈值在报文里是 0xFF00（合）/ 0x0000（分），不是 0/1
             ushort raw = on ? (ushort)0xFF00 : (ushort)0x0000;
-            return WriteAsync(BuildWriteSinglePdu(0x05, address, raw), 0x05, ct);
+            return WriteAsync(ModbusPdu.BuildWriteSingle(0x05, address, raw), 0x05, ct);
         }
 
         /// <summary>0x06 写单个保持寄存器。响应为回显请求（地址 + 值），成功无返回值。</summary>
         public Task WriteSingleRegisterAsync(ushort address, ushort value, CancellationToken ct = default)
-            => WriteAsync(BuildWriteSinglePdu(0x06, address, value), 0x06, ct);
+            => WriteAsync(ModbusPdu.BuildWriteSingle(0x06, address, value), 0x06, ct);
 
         /// <summary>
         /// 0x10 写多个保持寄存器。响应只含「起始地址 + 寄存器数」（无数据），
-        /// 故成功校验与单写不同，见 <see cref="WriteAsync"/>。
+        /// 故成功校验与单写不同，见 <see cref="ModbusPdu.ValidateWriteResponse"/>。
         /// </summary>
         public Task WriteMultipleRegistersAsync(ushort startAddress, ushort[] values, CancellationToken ct = default)
-        {
-            if (values == null || values.Length == 0)
-            {
-                throw new ArgumentException("写入内容不能为空", nameof(values));
-            }
-
-            if (values.Length > MaxRegistersPerWrite)
-            {
-                throw new ArgumentException(
-                    $"单次最多写 {MaxRegistersPerWrite} 个寄存器，实际 {values.Length} 个", nameof(values));
-            }
-
-            int count = values.Length;
-            byte[] pdu = new byte[6 + count * 2];
-            pdu[0] = 0x10;
-            pdu[1] = (byte)(startAddress >> 8);
-            pdu[2] = (byte)startAddress;
-            pdu[3] = (byte)(count >> 8);
-            pdu[4] = (byte)count;
-            pdu[5] = (byte)(count * 2);
-            for (int i = 0; i < count; i++)
-            {
-                pdu[6 + i * 2] = (byte)(values[i] >> 8);
-                pdu[7 + i * 2] = (byte)(values[i] & 0xFF);
-            }
-
-            return WriteAsync(pdu, 0x10, ct, isMultiple: true);
-        }
+            => WriteAsync(ModbusPdu.BuildWriteMultiple(startAddress, values), 0x10, ct, isMultiple: true);
 
         /// <summary>
         /// 在请求锁内检查空闲时间，只有缺少近期有效响应时才读取一个心跳线圈。
@@ -161,7 +138,7 @@ namespace DSH_Modbus采集工具.Drivers
         /// </summary>
         public async Task<bool> HeartbeatIfIdleAsync(ushort address, TimeSpan idleInterval, CancellationToken ct)
         {
-            byte[] response = await RequestAsync(BuildReadPdu(0x01, address, 1), ct, idleInterval)
+            byte[] response = await RequestAsync(ModbusPdu.BuildRead(0x01, address, 1), ct, idleInterval)
                 .ConfigureAwait(false);
             return response.Length != 0;
         }
@@ -170,126 +147,36 @@ namespace DSH_Modbus采集工具.Drivers
 
         private async Task<bool[]> ReadBitsAsync(byte functionCode, ushort start, ushort count, CancellationToken ct)
         {
-            byte[] resp = await RequestAsync(BuildReadPdu(functionCode, start, count), ct).ConfigureAwait(false);
-            if (resp.Length < 2)
-            {
-                throw new IOException("Modbus 响应报文过短");
-            }
-
-            int byteCount = resp[1];
-            if (resp.Length < 2 + byteCount || byteCount < (count + 7) / 8)
-            {
-                throw new IOException("Modbus 响应数据不完整");
-            }
-
-            bool[] bits = new bool[count];
-            for (int i = 0; i < count; i++)
-            {
-                bits[i] = (resp[2 + i / 8] & (1 << (i % 8))) != 0;
-            }
-
-            return bits;
+            byte[] resp = await RequestAsync(ModbusPdu.BuildRead(functionCode, start, count), ct).ConfigureAwait(false);
+            return ModbusPdu.ParseBits(resp, count);
         }
 
         private async Task<ushort[]> ReadRegistersAsync(byte functionCode, ushort start, ushort count, CancellationToken ct)
         {
-            byte[] resp = await RequestAsync(BuildReadPdu(functionCode, start, count), ct).ConfigureAwait(false);
-            if (resp.Length < 2)
-            {
-                throw new IOException("Modbus 响应报文过短");
-            }
-
-            int byteCount = resp[1];
-            if (byteCount != count * 2 || resp.Length < 2 + byteCount)
-            {
-                throw new IOException("Modbus 响应寄存器数不匹配");
-            }
-
-            ushort[] values = new ushort[count];
-            for (int i = 0; i < count; i++)
-            {
-                values[i] = (ushort)((resp[2 + i * 2] << 8) | resp[3 + i * 2]);
-            }
-
-            return values;
+            byte[] resp = await RequestAsync(ModbusPdu.BuildRead(functionCode, start, count), ct).ConfigureAwait(false);
+            return ModbusPdu.ParseRegisters(resp, count);
         }
 
-        private static byte[] BuildReadPdu(byte functionCode, ushort start, ushort count) => new[]
-        {
-            functionCode,
-            (byte)(start >> 8), (byte)start,
-            (byte)(count >> 8), (byte)count,
-        };
-
-        private static byte[] BuildWriteSinglePdu(byte functionCode, ushort address, ushort value) => new[]
-        {
-            functionCode,
-            (byte)(address >> 8), (byte)address,
-            (byte)(value >> 8), (byte)value,
-        };
-
         /// <summary>
-        /// 三个写功能码的公共路径。写入响应与读响应**格式完全不同**：
-        /// 读回「字节数 + 数据」，写回「功能码 + 地址 + 值/数量」的**回显**（恒 4 字节 PDU），
-        /// 故不能走读的那套长度校验，这里自行校验。
+        /// 三个写功能码的公共路径。响应是「回显」而非「字节数 + 数据」，
+        /// 故校验交给 <see cref="ModbusPdu.ValidateWriteResponse"/>。
         /// </summary>
         private async Task WriteAsync(byte[] pdu, byte functionCode, CancellationToken ct, bool isMultiple = false)
         {
             byte[] resp = await RequestAsync(pdu, ct, isWrite: true).ConfigureAwait(false);
+            ModbusPdu.ValidateWriteResponse(resp, pdu, isMultiple);
+        }
 
-            // 响应长度：0x05/0x06 回显地址 + 值；0x10 回显地址 + 寄存器数
-            if (resp.Length != 5)
+        private static void ThrowIfException(byte[] resp, byte requestFunctionCode)
+        {
+            if (ModbusPdu.IsException(resp, requestFunctionCode, out byte code))
             {
-                throw new IOException($"Modbus 写响应长度异常：{resp.Length}");
-            }
-
-            // 回显的地址必须与请求一致（0x10 还要比对数量）——防止应答错位时误判成功
-            if (resp[1] != pdu[1] || resp[2] != pdu[2])
-            {
-                throw new IOException("Modbus 写响应地址与请求不符");
-            }
-
-            if (isMultiple)
-            {
-                if (resp[3] != pdu[3] || resp[4] != pdu[4])
-                {
-                    throw new IOException("Modbus 写响应寄存器数与请求不符");
-                }
-            }
-            else if (resp[3] != pdu[3] || resp[4] != pdu[4])
-            {
-                throw new IOException("Modbus 写响应值与请求不符");
+                throw ModbusPdu.CreateException(code);
             }
         }
 
-        private static void ThrowIfException(byte[] resp)
-        {
-            if (resp.Length >= 1 && (resp[0] & 0x80) != 0)
-            {
-                byte code = resp.Length >= 2 ? resp[1] : (byte)0;
-                throw new ModbusResponseException(code, $"Modbus 异常：{DescribeException(code)}（异常码 {code}）");
-            }
-        }
-
-        /// <summary>
-        /// Modbus 异常码的中文说明（GB/T 19582 / MODBUS Application Protocol V1.1b3）。
-        /// 注意：部分 PLC 对越界或跨地址区的请求回非标准码 —— 实测信捷 XD 对跨本体/扩展空隙的
-        /// 读取回 <c>06</c>（标准语义为「从站设备忙」，而非「非法数据地址」02）。
-        /// </summary>
-        internal static string DescribeException(byte code) => code switch
-        {
-            1 => "非法功能码",
-            2 => "非法数据地址",
-            3 => "非法数据值",
-            4 => "从站设备故障",
-            5 => "确认（从站已受理，需稍后查询结果）",
-            6 => "从站设备忙",
-            7 => "否认",
-            8 => "存储奇偶校验错误",
-            10 => "网关路径不可用",
-            11 => "网关目标设备无响应",
-            _ => "未知异常",
-        };
+        /// <summary>Modbus 异常码的中文说明。转发到 <see cref="ModbusPdu.DescribeException"/>。</summary>
+        internal static string DescribeException(byte code) => ModbusPdu.DescribeException(code);
 
         /// <summary>发送请求并返回响应 PDU（不含 MBAP/单元号）。请求串行，2 秒超时。</summary>
         /// <param name="isWrite">
@@ -358,18 +245,19 @@ namespace DSH_Modbus采集工具.Drivers
 
                 byte[] respPdu = new byte[respLength - 1];
                 Buffer.BlockCopy(body, 1, respPdu, 0, respLength - 1);
-                bool exception = respPdu[0] == (pdu[0] | 0x80);
-                if (exception)
+
+                // 异常响应的判定与抛出一律走 ModbusPdu，保证与 RTU 同一口径
+                if (ModbusPdu.IsException(respPdu, pdu[0], out _))
                 {
-                    if (respPdu.Length != 2)
-                    {
-                        throw new IOException("Modbus 异常响应长度无效");
-                    }
+                    Interlocked.Exchange(ref _lastResponseTimestamp, Stopwatch.GetTimestamp());
+                    ThrowIfException(respPdu, pdu[0]);
+                    return respPdu; // 不可达：ThrowIfException 必抛
                 }
-                else if (!isWrite)
+
+                if (!isWrite)
                 {
                     int count = (pdu[3] << 8) | pdu[4];
-                    int expectedBytes = pdu[0] is 0x01 or 0x02 ? (count + 7) / 8 : count * 2;
+                    int expectedBytes = ModbusPdu.ExpectedReadBytes(pdu[0], count);
                     if (respPdu[0] != pdu[0] || respPdu.Length != expectedBytes + 2
                         || respPdu[1] != expectedBytes)
                     {
@@ -387,7 +275,6 @@ namespace DSH_Modbus采集工具.Drivers
                 }
 
                 Interlocked.Exchange(ref _lastResponseTimestamp, Stopwatch.GetTimestamp());
-                ThrowIfException(respPdu);
                 return respPdu;
             }
             catch (ModbusResponseException)

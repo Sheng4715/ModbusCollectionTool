@@ -172,6 +172,15 @@ namespace DSH_Modbus采集工具
         private bool _syncingByteOrderCombos;
 
         /// <summary>
+        /// 刚切换过设备类型（2026-11-20 方案 B 用）。
+        /// <para>
+        /// <see cref="SyncByteOrderCombos"/> 据此区分两条路径：**仅因换品牌触发**时忽略持久化值、
+        /// 强制回到新驱动默认；启动首同步则允许恢复持久化值。这是「持久化但不带错品牌的值」的开关。
+        /// </para>
+        /// </summary>
+        private bool _driverJustSwitched;
+
+        /// <summary>
         /// 已挂上变量名补全的「元件名称」文本框（P7.1）。
         /// <para>
         /// 用弱表而不是普通字典：监控行会随模板虚拟化反复创建销毁，
@@ -431,6 +440,42 @@ namespace DSH_Modbus采集工具
         /// 按钮文案、表单锁定）刻意留在窗口 —— 那是界面驱动的东西，搬走只会多一层接口。
         /// </summary>
         private readonly ConnectionSession _session = new();
+
+        /// <summary>
+        /// 程序正在改写「协议类型」下拉框（随连接方式联动时）。
+        /// 挡住 <c>ProtocolTypeComboBox_SelectionChanged</c> 在程序回填时重复刷新底栏，
+        /// 与 <see cref="_revertingDeviceType"/> / <see cref="MainWindow._restoringNicSelection"/>
+        /// 是同一手法：区分「用户改的」与「程序改的」。
+        /// </summary>
+        private bool _syncingProtocol;
+
+        /// <summary>
+        /// 程序正在重建串口下拉列表（<c>Items.Clear()</c> 也会触发 SelectionChanged）。
+        /// 罩住整段扫描，避免临时消失的端口把用户选择抹掉。
+        /// <para>
+        /// ⚠️ **初值必须是 <c>true</c>**：<c>InitializeComponent()</c> 里 XAML 的
+        /// <c>SelectedIndex</c> 会触发 <c>SerialSetting_Changed</c> —— 那时用户设置还没回填
+        /// （回填在构造函数后面的 <c>ApplyConnectionSettings</c>），若初值给 <c>false</c>，
+        /// 这几次回调会把**默认值**（9600/8/None/One/1）写进 <see cref="ThemeManager.SetSerialSettings"/>，
+        /// 把刚加载的用户设置**覆盖掉**。之后回填读到的自然是默认值 ——
+        /// 表现为「串口参数保存了但重启后不恢复」（2026-11-20 实测踩中，诊断日志见 §8.3.3）。
+        /// </para>
+        /// <para>
+        /// 生命周期：构造期恒 <c>true</c> → 由 <see cref="ApplySerialSettings"/> 回填完成后置
+        /// <c>false</c>，此后用户的改动才真正落盘。
+        /// </para>
+        /// </summary>
+        private bool _restoringSerialSelection = true;
+
+        /// <summary>
+        /// 程序正在回填「连接方式」下拉框（2026-11-20）。
+        /// <para>
+        /// ⚠️ **与 <see cref="_restoringSerialSelection"/> 是同一类保护**：回填会触发
+        /// <see cref="ConnectionTypeComboBox_SelectionChanged"/>，不挡住就会把刚读出来的值
+        /// 再写一遍盘。更麻烦的是「区分不出用户意图」—— 见下方 <see cref="RestoreConnectionType"/>。
+        /// </para>
+        /// </summary>
+        private bool _restoringConnectionType;
 
         private static string CommentsFilePath =>
             Path.Combine(AppContext.BaseDirectory, "io-comments.json");
@@ -704,6 +749,13 @@ namespace DSH_Modbus采集工具
 
             SyncInputHeights();
             ScanNetworkAdapters();
+
+            // 协议类型下拉的条目是**运行时按连接方式填入**的，XAML 里没有静态项。
+            // 因此不能指望「XAML 的 SelectedIndex=0 会触发 SelectionChanged」把列表建好 ——
+            // 启动时那条路径根本不存在，漏了这行下拉框就是空的、底栏也缺协议段。
+            // 这里显式按当前连接方式建一次列表（幂等，与切换事件同一实现）。
+            SyncProtocolOptions();
+
             UpdateOverviewStatus();
 
             // 总览页「当前视图」：回填上次的选择（2026-11-09）。必须排在下面那两个
@@ -1203,22 +1255,27 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            if (ConnectionTypeComboBox?.SelectedIndex != 0)
+            // 连接方式两种都支持自动连（P4.4 起串口也是一等公民）。
+            // 以太网要求 IP 已填；串口要求已选端口 —— 没选就静默跳过，
+            // 交还控制权给用户（自动连接不该因为配置不全弹框打扰启动）。
+            if (ConnectionTypeComboBox?.SelectedIndex == 1)
             {
-                return;
+                if (string.IsNullOrWhiteSpace(SelectedPortName()))
+                {
+                    return;
+                }
             }
-
-            if (string.IsNullOrWhiteSpace(IpTextBox?.Text))
+            else if (string.IsNullOrWhiteSpace(IpTextBox?.Text))
             {
                 return;
             }
 
             // 不写设备日志（需求）：自动连接是后台行为，静默进行即可；
             // 成功会由 TryConnectAsync 记「已连接」，失败会记「连接失败」，不必再加一条。
-            ConnectButton_Click(ConnectButton, new RoutedEventArgs());
+            ConnectButton_Click(ConnectButtonEthernet, new RoutedEventArgs());
         }
 
-        // ---------- 连接参数持久化（IP / 端口） ----------
+        // ---------- 连接参数持久化（IP / 端口 / 串口） ----------
 
         /// <summary>
         /// 把持久化的连接参数回填到界面。
@@ -1238,6 +1295,275 @@ namespace DSH_Modbus采集工具
             {
                 PortTextBox.Text = ThemeManager.TargetPort.ToString();
             }
+
+            // ⚠️ 连接方式必须**先于**串口参数回填：串口面板要在选中「串口」后才扫描端口，
+            // 而 SerialPortComboBox 为空时 ApplySerialSettings 选不中任何项。
+            RestoreConnectionType();
+
+            ApplySerialSettings();
+            ApplyStationNumber();
+        }
+
+        /// <summary>
+        /// 回填上次选用的连接方式（2026-11-20 用户要求：串口参数都持久化了，
+        /// 「选了哪种方式」更该记，否则串口用户每次启动都要手动切一次）。
+        /// <para>
+        /// 整段罩在 <see cref="_restoringConnectionType"/> 里：赋值会触发
+        /// <c>SelectionChanged</c> → 该回调尾部的 <c>SetUseSerialConnection</c> 会再写一次盘。
+        /// </para>
+        /// </summary>
+        private void RestoreConnectionType()
+        {
+            if (ConnectionTypeComboBox == null)
+            {
+                return;
+            }
+
+            int target = ThemeManager.UseSerialConnection ? 1 : 0;
+            if (ConnectionTypeComboBox.SelectedIndex == target)
+            {
+                // 已经是目标项（默认就是以太网）：无需赋值，也就不会触发事件
+                return;
+            }
+
+            _restoringConnectionType = true;
+            try
+            {
+                ConnectionTypeComboBox.SelectedIndex = target;
+            }
+            finally
+            {
+                _restoringConnectionType = false;
+            }
+        }
+
+        /// <summary>回填串口参数（P4.4）。没保存过的项保持 XAML 默认（9600 8N1）。</summary>
+        private void ApplySerialSettings()
+        {
+            // 整段罩住：程序化回填会触发 SelectionChanged → SerialSetting_Changed，
+            // 不挡住就会在启动时把默认值反写成「用户设置」。
+            // 注意标志的初值必须是 true（见字段声明处的说明）—— 那层保护发生在
+            // InitializeComponent 期间，早于本方法。
+            _restoringSerialSelection = true;
+            try
+            {
+                ApplySerialSettingsCore();
+            }
+            finally
+            {
+                _restoringSerialSelection = false;
+            }
+        }
+
+        private void ApplySerialSettingsCore()
+        {
+            if (SerialPortComboBox != null && ThemeManager.SerialPortName.Length > 0)
+            {
+                // 端口可能已不存在（换机器 / 拔了 USB 转串口）：这时不强行选中，
+                // 保持下拉框现状，用户连的时候会被下面那句「请选择串口号」挡住。
+                // ⚠️ 按 PortName 匹配，不能按显示文本（文本含设备名，换 USB 口就变）。
+                string saved = ThemeManager.SerialPortName;
+                foreach (object item in SerialPortComboBox.Items)
+                {
+                    if (item is SerialPortInfo info
+                        && string.Equals(info.PortName, saved, StringComparison.OrdinalIgnoreCase))
+                    {
+                        SerialPortComboBox.SelectedItem = item;
+                        break;
+                    }
+                }
+            }
+
+            SelectComboByTag(SerialBaudRateComboBox, ThemeManager.SerialBaudRate);
+            SelectComboByTag(SerialDataBitsComboBox, ThemeManager.SerialDataBits);
+
+            SelectComboByContent(SerialParityComboBox, ThemeManager.SerialParity switch
+            {
+                nameof(System.IO.Ports.Parity.Odd) => "奇校验",
+                nameof(System.IO.Ports.Parity.Even) => "偶校验",
+                nameof(System.IO.Ports.Parity.Mark) => "Mark",
+                nameof(System.IO.Ports.Parity.Space) => "Space",
+                _ => string.Empty,
+            });
+
+            SelectComboByContent(SerialStopBitsComboBox, ThemeManager.SerialStopBits switch
+            {
+                nameof(System.IO.Ports.StopBits.Two) => "2",
+                nameof(System.IO.Ports.StopBits.OnePointFive) => "1.5",
+                _ => string.Empty,
+            });
+        }
+
+        /// <summary>回填从站站号（0 = 没保存过 → 保持 XAML 默认 1）。</summary>
+        private void ApplyStationNumber()
+        {
+            if (StationNumberTextBox != null && ThemeManager.StationNumber is >= 1 and <= 247)
+            {
+                StationNumberTextBox.Text = ThemeManager.StationNumber.ToString();
+            }
+        }
+
+        /// <summary>按 <c>Tag</c> 里的数值选中下拉项（找不到就保持原样）。</summary>
+        private static void SelectComboByTag(System.Windows.Controls.ComboBox? combo, int value)
+        {
+            if (combo == null || value == 0)
+            {
+                return;
+            }
+
+            foreach (object item in combo.Items)
+            {
+                if (item is System.Windows.Controls.ComboBoxItem cbi
+                    && cbi.Tag is string tag
+                    && int.TryParse(tag, out int parsed)
+                    && parsed == value)
+                {
+                    combo.SelectedItem = cbi;
+                    return;
+                }
+            }
+        }
+
+        /// <summary>按显示文本选中下拉项（找不到就保持原样）。</summary>
+        private static void SelectComboByContent(System.Windows.Controls.ComboBox? combo, string content)
+        {
+            if (combo == null || content.Length == 0)
+            {
+                return;
+            }
+
+            foreach (object item in combo.Items)
+            {
+                if (item is System.Windows.Controls.ComboBoxItem cbi
+                    && string.Equals(cbi.Content as string, content, StringComparison.Ordinal))
+                {
+                    combo.SelectedItem = cbi;
+                    return;
+                }
+            }
+        }
+
+        /// <summary>从界面读取一整套串口参数（调用前已确保串口号非空）。</summary>
+        private SerialSettings ReadSerialSettings(string portName)
+        {
+            int baud = ReadComboTag(SerialBaudRateComboBox, 9600);
+            int dataBits = ReadComboTag(SerialDataBitsComboBox, 8);
+
+            return new SerialSettings(portName, baud, dataBits, ReadParityFromUi(), ReadStopBitsFromUi());
+        }
+
+        /// <summary>
+        /// 从界面读校验位。**解析只此一处** —— 之前 Read/Save 各写一份 switch，
+        /// 两处一旦漂移（比如一边认「偶校验」另一边认「Even」），表现就是
+        /// 「改了校验位但落盘的是旧值」，而界面看不出任何异常。
+        /// </summary>
+        private System.IO.Ports.Parity ReadParityFromUi()
+        {
+            string text = (SerialParityComboBox?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content as string
+                          ?? string.Empty;
+
+            return text switch
+            {
+                "奇校验" => System.IO.Ports.Parity.Odd,
+                "偶校验" => System.IO.Ports.Parity.Even,
+                "Mark" => System.IO.Ports.Parity.Mark,
+                "Space" => System.IO.Ports.Parity.Space,
+                _ => System.IO.Ports.Parity.None,
+            };
+        }
+
+        /// <summary>从界面读停止位。解析只此一处，理由同 <see cref="ReadParityFromUi"/>。</summary>
+        private System.IO.Ports.StopBits ReadStopBitsFromUi()
+        {
+            string text = (SerialStopBitsComboBox?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content as string
+                          ?? string.Empty;
+
+            return text switch
+            {
+                "2" => System.IO.Ports.StopBits.Two,
+                "1.5" => System.IO.Ports.StopBits.OnePointFive,
+                _ => System.IO.Ports.StopBits.One,
+            };
+        }
+
+        /// <summary>读下拉框 Tag 里的整数值；取不到（或非正）时用兜底值。</summary>
+        private static int ReadComboTag(System.Windows.Controls.ComboBox? combo, int fallback)
+        {
+            if (combo?.SelectedItem is System.Windows.Controls.ComboBoxItem cbi
+                && cbi.Tag is string tag
+                && int.TryParse(tag, out int parsed)
+                && parsed > 0)
+            {
+                return parsed;
+            }
+
+            return fallback;
+        }
+
+        /// <summary>
+        /// 当前的目标从站站号（1~247）。以太网与串口共用 —— 它表达「在总线上是谁」，
+        /// 不因传输方式而变。取不到合法值时回落到 1，与 ModbusClient 的默认值一致。
+        /// </summary>
+        private int TargetStationNumber
+        {
+            get
+            {
+                if (StationNumberTextBox != null
+                    && int.TryParse(StationNumberTextBox.Text.Trim(), out int value)
+                    && value is >= 1 and <= 247)
+                {
+                    return value;
+                }
+
+                return 1;
+            }
+        }
+
+        /// <summary>串口参数变更是「选择即落盘」（下拉框没有失焦语义，只需一次写入）。</summary>
+        private void SerialSetting_Changed(object sender, RoutedEventArgs e)
+        {
+            // 程序化回填（ApplySerialSettings / 扫描重建列表）不算用户改动，不写盘 ——
+            // 否则启动回填会把「看一眼」的默认值当成用户设置存进 json。
+            if (_restoringSerialSelection)
+            {
+                return;
+            }
+
+            SaveSerialSettingsFromUi();
+            UpdateOverviewStatus();
+        }
+
+        /// <summary>站号是文本框，按「失焦提交」保存（与 IP / 端口同一套规则）。</summary>
+        private void StationNumberTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            SaveSerialSettingsFromUi();
+            UpdateOverviewStatus();
+        }
+
+        /// <summary>
+        /// 把当前界面的串口参数存进 app-settings.json。
+        /// <para>
+        /// ⚠️ 站号非法（空 / 越界）时**保留上次的有效值**，不拿垃圾覆盖 ——
+        /// 与端口号那条规则一致（见 <see cref="ConfigInput_LostFocus"/>）。
+        /// </para>
+        /// </summary>
+        private void SaveSerialSettingsFromUi()
+        {
+            string portName = SelectedPortName() ?? ThemeManager.SerialPortName;
+
+            int baud = ReadComboTag(SerialBaudRateComboBox, ThemeManager.SerialBaudRate > 0 ? ThemeManager.SerialBaudRate : 9600);
+            int dataBits = ReadComboTag(SerialDataBitsComboBox, ThemeManager.SerialDataBits > 0 ? ThemeManager.SerialDataBits : 8);
+
+            // ⚠️ 先取成局部变量再 switch：写成 `expr as string switch` 会被编译器按
+            // `expr as (string switch)` 解析（CS8848 优先级警告）。
+            string parity = ReadParityFromUi().ToString();
+            string stopBits = ReadStopBitsFromUi().ToString();
+
+            int station = int.TryParse(StationNumberTextBox?.Text.Trim(), out int s) && s is >= 1 and <= 247
+                ? s
+                : (ThemeManager.StationNumber > 0 ? ThemeManager.StationNumber : 1);
+
+            ThemeManager.SetSerialSettings(portName, baud, dataBits, parity, stopBits, station);
         }
 
         /// <summary>
@@ -1436,8 +1762,7 @@ namespace DSH_Modbus采集工具
         private string? BuildConnectionDetail()
         {
             if (DeviceTypeComboBox == null || ConnectionTypeComboBox == null
-                || ProtocolTypeComboBox == null
-                || IpTextBox == null || PortTextBox == null)
+                || ProtocolTypeComboBox == null)
             {
                 return null;
             }
@@ -1449,9 +1774,32 @@ namespace DSH_Modbus采集工具
                                 ?? ConnectionTypeComboBox.Text;
             string protocol = (ProtocolTypeComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content as string
                               ?? ProtocolTypeComboBox.Text;
-            string ipPort = $"{IpTextBox.Text.Trim()}:{PortTextBox.Text.Trim()}";
 
-            return $"{driver}：{connection}  {protocol}  {ipPort}";
+            // 串口模式拼「COM3 9600 8N1」，不再拼 IP:端口（Brief §7 已知问题 #2）。
+            // 串口下 IP / 端口根本不参与连接，显示它只会让人以为连接参数是那个 IP。
+            // ⚠️ 底栏**不显示设备名**（用户 2026-11-18 定案）：只有一行、右侧还要放驱动 /
+            // 协议 / 参数，塞进设备名后常见型号名会被截断，反而更难认；
+            // 设备名已在「串口号」下拉里给出（见 Net/SerialPortScanner.cs）。
+            bool isSerial = ConnectionTypeComboBox.SelectedIndex == 1;
+            string endpoint;
+            if (isSerial)
+            {
+                string portName = SelectedPortName()?.Trim() ?? string.Empty;
+                endpoint = portName.Length == 0
+                    ? "(未选串口)"
+                    : ReadSerialSettings(portName).Describe();
+            }
+            else
+            {
+                if (IpTextBox == null || PortTextBox == null)
+                {
+                    return null;
+                }
+
+                endpoint = $"{IpTextBox.Text.Trim()}:{PortTextBox.Text.Trim()}";
+            }
+
+            return $"{driver}：{connection}  {protocol}  {endpoint}";
         }
 
         // ---------- 网卡扫描与记忆 ----------
@@ -1553,10 +1901,7 @@ namespace DSH_Modbus采集工具
                     StringOrderComboBox.Height = comboHeight;
                 }
 
-                if (ConnectButton != null)
-                {
-                    ConnectButton.Height = comboHeight;
-                }
+                SetConnectButtonHeight(comboHeight);
 
                 if (RefreshNicButton != null)
                 {
@@ -1566,6 +1911,54 @@ namespace DSH_Modbus采集工具
         }
 
         // ---------- 连接状态机（建连 / 断开） ----------
+
+        /// <summary>
+        /// 两个「连接」按钮（以太网 / 串口各一个，各自贴在「刷新」右边）。
+        /// <para>
+        /// ⚠️ **为什么是两个控件而不是一个**：以太网与串口面板互斥显隐，按钮若只有一个、
+        /// 放在面板外面，就没法「贴在刷新按钮右侧」（用户 2026-11-18 定案）。
+        /// 两个按钮同一时刻只有一个可见，故三态（连接 / 断开 / 取消重连）与启用态
+        /// **必须成对设置** —— 漏一个的表现是「切换连接方式后按钮文案停在旧状态」。
+        /// </para>
+        /// <para>
+        /// 所有状态改动都只走下面三个方法，**不要直接碰按钮属性** —— 那样一定会漏掉另一个。
+        /// </para>
+        /// </summary>
+        private System.Windows.Controls.Button?[] ConnectButtons =>
+            new[] { ConnectButtonEthernet, ConnectButtonSerial };
+
+        private void SetConnectButtonText(string text)
+        {
+            foreach (System.Windows.Controls.Button? button in ConnectButtons)
+            {
+                if (button != null)
+                {
+                    button.Content = text;
+                }
+            }
+        }
+
+        private void SetConnectButtonEnabled(bool enabled)
+        {
+            foreach (System.Windows.Controls.Button? button in ConnectButtons)
+            {
+                if (button != null)
+                {
+                    button.IsEnabled = enabled;
+                }
+            }
+        }
+
+        private void SetConnectButtonHeight(double height)
+        {
+            foreach (System.Windows.Controls.Button? button in ConnectButtons)
+            {
+                if (button != null)
+                {
+                    button.Height = height;
+                }
+            }
+        }
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
@@ -1588,20 +1981,7 @@ namespace DSH_Modbus采集工具
                 CancelReconnect();
                 SetStatus("已取消自动重连", "#9A9A9A");
                 SetInputsEnabled(true);
-                ConnectButton.Content = "连接";
-                return;
-            }
-
-            string ip = IpTextBox.Text.Trim();
-            if (string.IsNullOrEmpty(ip))
-            {
-                SetStatus("IP 不能为空", "#C42B1C");
-                return;
-            }
-
-            if (!int.TryParse(PortTextBox.Text.Trim(), out int port) || port is < 1 or > 65535)
-            {
-                SetStatus("端口号无效", "#C42B1C");
+                SetConnectButtonText("连接");
                 return;
             }
 
@@ -1612,17 +1992,51 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            // 绑定所选网卡的本地源地址（多网卡/子网冲突时强制走该网卡）；
-            // 未选有效网卡项时为 null，交给系统路由自动选择
-            IPEndPoint? localEndPoint = TargetNicComboBox.SelectedItem is NicInfo nic
-                ? new IPEndPoint(nic.Ip, 0)
-                : null;
+            // 连接方式：0 = 以太网，1 = 串口（P4.4）。两种目标的参数来源完全不同，
+            // 故在同一个入口里先分支校验，再统一交给 TryConnectAsync。
+            bool isSerial = ConnectionTypeComboBox?.SelectedIndex == 1;
 
-            ConnectButton.IsEnabled = false;
+            ReconnectTarget target;
+            if (isSerial)
+            {
+                string portName = SelectedPortName()?.Trim() ?? string.Empty;
+                if (string.IsNullOrEmpty(portName))
+                {
+                    SetStatus("请选择串口号", "#C42B1C");
+                    return;
+                }
+
+                SerialSettings settings = ReadSerialSettings(portName);
+                target = ReconnectTarget.ForSerial(settings, driver);
+            }
+            else
+            {
+                string ip = IpTextBox.Text.Trim();
+                if (string.IsNullOrEmpty(ip))
+                {
+                    SetStatus("IP 不能为空", "#C42B1C");
+                    return;
+                }
+
+                if (!int.TryParse(PortTextBox.Text.Trim(), out int port) || port is < 1 or > 65535)
+                {
+                    SetStatus("端口号无效", "#C42B1C");
+                    return;
+                }
+
+                // 绑定所选网卡的本地源地址（多网卡/子网冲突时强制走该网卡）；
+                // 未选有效网卡项时为 null，交给系统路由自动选择
+                IPEndPoint? localEndPoint = TargetNicComboBox.SelectedItem is NicInfo nic
+                    ? new IPEndPoint(nic.Ip, 0)
+                    : null;
+
+                target = new ReconnectTarget(ip, port, driver, localEndPoint);
+            }
+
+            SetConnectButtonEnabled(false);
             SetInputsEnabled(false);
             SetStatus("正在连接 …", "#B26A00");
 
-            var target = new ReconnectTarget(ip, port, driver, localEndPoint);
             if (await TryConnectAsync(target, isReconnect: false, CancellationToken.None))
             {
                 return; // 成功后由 StartPolling 接管；表单保持锁定
@@ -1632,7 +2046,7 @@ namespace DSH_Modbus采集工具
             if (!_windowClosed)
             {
                 SetInputsEnabled(true);
-                ConnectButton.IsEnabled = true;
+                SetConnectButtonEnabled(true);
             }
         }
 
@@ -1642,12 +2056,31 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private async Task<bool> TryConnectAsync(ReconnectTarget target, bool isReconnect, CancellationToken token)
         {
-            var client = new ModbusTcpClient();
+            // 两种传输各自建连：TCP 走 ConnectAsync（可带本地绑定端点），
+            // RTU 走同步 Connect（串口打开本身很快，且没有「远端」概念）。
+            // 连接成功后一律收敛成 IModbusClient，下游（轮询/心跳/写入）不再区分。
+            IModbusClient client = target.IsSerial
+                ? new ModbusRtuClient(target.Serial!)
+                : new ModbusTcpClient();
             using var connectCts = _session.BeginConnect(token);
             try
             {
-                await client.ConnectAsync(target.Ip, target.Port, TimeSpan.FromSeconds(3),
-                    target.LocalEndPoint, connectCts.Token);
+                if (target.IsSerial)
+                {
+                    var rtu = (ModbusRtuClient)client;
+                    rtu.UnitId = (byte)TargetStationNumber;
+
+                    // 串口打开是同步阻塞调用：放到线程池，避免连接期间卡住 UI
+                    await Task.Run(rtu.Connect, connectCts.Token);
+                }
+                else
+                {
+                    var tcp = (ModbusTcpClient)client;
+                    tcp.UnitId = (byte)TargetStationNumber;
+                    await tcp.ConnectAsync(target.Ip, target.Port, TimeSpan.FromSeconds(3),
+                        target.LocalEndPoint, connectCts.Token);
+                }
+
                 if (_windowClosed || connectCts.IsCancellationRequested)
                 {
                     client.Dispose();
@@ -1656,8 +2089,8 @@ namespace DSH_Modbus采集工具
 
                 // 接管客户端、记住期望目标（异常断开后据此自动重连）、清零退避计数
                 _session.MarkConnected(client, target);
-                ConnectButton.Content = "断开";
-                ConnectButton.IsEnabled = true;
+                SetConnectButtonText("断开");
+                SetConnectButtonEnabled(true);
                 SetStatus("已连接", "#0B7A0B");
                 AppendDeviceLog($"PLC已连接：{target.Endpoint}", DeviceLogLevel.Connected);
                 StartPolling(client, target.Driver);
@@ -1742,6 +2175,43 @@ namespace DSH_Modbus采集工具
             {
                 PortTextBox.IsEnabled = enabled;
             }
+
+            // 串口参数（P4.4）：连接中同样锁定 —— 它们决定帧格式，
+            // 与字节顺序不同（后者只影响解释方式，改完下一拍即生效）。
+            if (SerialPortComboBox != null)
+            {
+                SerialPortComboBox.IsEnabled = enabled;
+            }
+
+            if (RefreshSerialButton != null)
+            {
+                RefreshSerialButton.IsEnabled = enabled;
+            }
+
+            if (SerialBaudRateComboBox != null)
+            {
+                SerialBaudRateComboBox.IsEnabled = enabled;
+            }
+
+            if (SerialDataBitsComboBox != null)
+            {
+                SerialDataBitsComboBox.IsEnabled = enabled;
+            }
+
+            if (SerialParityComboBox != null)
+            {
+                SerialParityComboBox.IsEnabled = enabled;
+            }
+
+            if (SerialStopBitsComboBox != null)
+            {
+                SerialStopBitsComboBox.IsEnabled = enabled;
+            }
+
+            if (StationNumberTextBox != null)
+            {
+                StationNumberTextBox.IsEnabled = enabled;
+            }
         }
 
         private void Disconnect()
@@ -1758,7 +2228,7 @@ namespace DSH_Modbus采集工具
             _session.CancelConnect();
 
             Task? pending = _pollCompletion;
-            ModbusTcpClient? clientToRelease = _session.Client;
+            IModbusClient? clientToRelease = _session.Client;
             StopPolling();
 
             // StopPolling 只发取消信号、不等待后台循环真正退出；若此刻某拍正卡在
@@ -1766,7 +2236,7 @@ namespace DSH_Modbus采集工具
             // 故改为等循环退出后再释放；Disconnect 恒在 UI 线程，await 后仍回 UI 线程。
             _ = ReleaseClientAfterPollAsync(pending, clientToRelease);
 
-            ConnectButton.Content = "连接";
+            SetConnectButtonText("连接");
             SetInputsEnabled(true);
             SetStatus(statusText, colorHex);
         }
@@ -1776,7 +2246,7 @@ namespace DSH_Modbus采集工具
         /// 用 <paramref name="client"/> 的引用相等守卫：紧接着的重连若已接管**新**客户端，
         /// 这里就绝不去拆它（旧连接的回调不得误操作新连接）。
         /// </summary>
-        private async Task ReleaseClientAfterPollAsync(Task? pending, ModbusTcpClient? client)
+        private async Task ReleaseClientAfterPollAsync(Task? pending, IModbusClient? client)
         {
             if (pending != null)
             {
@@ -1812,8 +2282,8 @@ namespace DSH_Modbus采集工具
             }
 
             CancellationTokenSource cts = _session.BeginReconnect();
-            ConnectButton.Content = "取消重连";
-            ConnectButton.IsEnabled = true;
+            SetConnectButtonText("取消重连");
+            SetConnectButtonEnabled(true);
             SetInputsEnabled(false); // 重连期间表单保持锁定：参数已快照，改了也不会生效，避免误导
             _ = ReconnectLoopAsync(target, cts);
         }
@@ -1876,7 +2346,7 @@ namespace DSH_Modbus采集工具
                     SetStatus($"自动重连已停止：{reason}", "#C42B1C");
 
                     // 与「取消重连」按钮那条路径落到同一个可用状态，避免按钮文案与实际行为不符
-                    ConnectButton.Content = "连接";
+                    SetConnectButtonText("连接");
                     SetInputsEnabled(true);
                 }
             }
@@ -2075,6 +2545,57 @@ namespace DSH_Modbus采集工具
             ScanNetworkAdapters();
         }
 
+        /// <summary>
+        /// 按当前「连接方式」重建协议类型下拉的条目。
+        /// <para>
+        /// **只列对应的一项**：以太网 → <c>ModbusTCP</c>，串口 → <c>ModbusRTU</c>。
+        /// </para>
+        /// <para>
+        /// ⚠️ **为什么是重建列表、而不是只改 <c>SelectedIndex</c>**：这两个选项原先静态写在
+        /// XAML 里，只靠代码切下标 —— 项仍然都在，展开后用户照样能选中「以太网 + ModbusRTU」。
+        /// 那个组合不会生效（连接仍按 TCP 走）、界面也不报错，属最难查的静默错配。
+        /// </para>
+        /// <para>
+        /// 只留一项**不是**禁用：下拉框仍可点开确认（同扫码器连接页 2026-11-04 定案
+        /// 「只有一项也应能点开」）。
+        /// </para>
+        /// <para>
+        /// 该组合本身也没有需求 —— 「以太网 + RTU」需要一个串口转 TCP 的网关，
+        /// 属现场自备设备，应用侧只需按「对面是 TCP」连。
+        /// </para>
+        /// </summary>
+        private void SyncProtocolOptions()
+        {
+            if (ProtocolTypeComboBox == null || ConnectionTypeComboBox == null)
+            {
+                return;
+            }
+
+            bool isEthernet = ConnectionTypeComboBox.SelectedIndex == 0;
+            string protocol = isEthernet ? "ModbusTCP" : "ModbusRTU";
+
+            // 已经很正确就不动：避免每次切页/刷新都重建条目（会让下拉框闪一下）
+            if (ProtocolTypeComboBox.Items.Count == 1
+                && ProtocolTypeComboBox.Items[0] is System.Windows.Controls.ComboBoxItem only
+                && string.Equals(only.Content as string, protocol, StringComparison.Ordinal)
+                && ProtocolTypeComboBox.SelectedIndex == 0)
+            {
+                return;
+            }
+
+            _syncingProtocol = true;
+            try
+            {
+                ProtocolTypeComboBox.Items.Clear();
+                ProtocolTypeComboBox.Items.Add(new System.Windows.Controls.ComboBoxItem { Content = protocol });
+                ProtocolTypeComboBox.SelectedIndex = 0;
+            }
+            finally
+            {
+                _syncingProtocol = false;
+            }
+        }
+
         private void ConnectionTypeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
             UpdateOverviewStatus();
@@ -2086,6 +2607,98 @@ namespace DSH_Modbus采集工具
 
             bool isEthernet = ConnectionTypeComboBox.SelectedIndex == 0;
             EthernetOptionsPanel.Visibility = isEthernet ? Visibility.Visible : Visibility.Collapsed;
+
+            if (SerialOptionsPanel != null)
+            {
+                SerialOptionsPanel.Visibility = isEthernet ? Visibility.Collapsed : Visibility.Visible;
+            }
+
+            // 协议类型由连接方式唯一决定 —— 见 SyncProtocolOptions 的说明
+            SyncProtocolOptions();
+
+            // 首次切到串口时才有必要枚举端口（枚举会打开注册表查 COM 口，代价不大但没必要每次都做）
+            if (!isEthernet && (SerialPortComboBox?.Items.Count ?? 0) == 0)
+            {
+                ScanSerialPorts();
+            }
+
+            // 记住连接方式（2026-11-20 用户要求）：串口那六项都记，选了哪种方式更该记。
+            // ⚠️ 回填时由 _restoringConnectionType 挡住 —— 否则启动回填会把它又写一遍，
+            // 且「用户没改过」与「用户改成了默认值」将无法区分。
+            if (!_restoringConnectionType)
+            {
+                ThemeManager.SetUseSerialConnection(!isEthernet);
+            }
+
+            UpdateOverviewStatus();
+        }
+
+        /// <summary>
+        /// 重新枚举本机串口并填入下拉框。
+        /// <para>
+        /// ⚠️ 与网卡扫描同一套「用户意图 vs 程序改动」的处理：<c>Items.Clear()</c> 也会触发
+        /// <c>SelectionChanged</c>，故整段罩在 <see cref="_restoringSerialSelection"/> 里，
+        /// 否则端口临时消失（USB 转串口被拔）时那次回退会把用户的选择悄悄抹掉。
+        /// </para>
+        /// </summary>
+        private void ScanSerialPorts()
+        {
+            if (SerialPortComboBox == null)
+            {
+                return;
+            }
+
+            // 记住「本次扫描前的选择」时按**端口名**取，不能按显示文本 ——
+            // 文本里嵌着设备名，换个 USB 口设备名可能不同（同网卡那条坑）。
+            string? previous = SelectedPortName();
+
+            _restoringSerialSelection = true;
+            try
+            {
+                SerialPortComboBox.Items.Clear();
+
+                // 枚举 + 设备名 + 按端口号数字升序，全部在 Net/SerialPortScanner（无 WPF）
+                List<SerialPortInfo> ports = SerialPortScanner.Scan();
+                foreach (SerialPortInfo info in ports)
+                {
+                    SerialPortComboBox.Items.Add(info);
+                }
+
+                // 还原优先级：本次选择 → 上次记住的 → 第 0 项
+                string? wanted = !string.IsNullOrEmpty(previous)
+                    ? previous
+                    : (ThemeManager.SerialPortName.Length > 0 ? ThemeManager.SerialPortName : null);
+
+                int index = wanted != null ? SerialPortScanner.IndexOf(ports, wanted) : -1;
+                if (index < 0 && SerialPortComboBox.Items.Count > 0)
+                {
+                    index = 0;
+                }
+
+                SerialPortComboBox.SelectedIndex = index;
+            }
+            finally
+            {
+                _restoringSerialSelection = false;
+            }
+
+            UpdateOverviewStatus();
+        }
+
+        /// <summary>
+        /// 下拉框当前选中的**端口名**（如 <c>COM4</c>）；没选或选中的不是串口项时返回 <c>null</c>。
+        /// <para>
+        /// ⚠️ **唯一出口**：下拉框里装的是 <see cref="SerialPortInfo"/> 对象而不是字符串，
+        /// 所有「取当前端口」的地方都必须走这里。曾经到处写 <c>SelectedItem as string</c>，
+        /// 改成对象后那样全都会静默变成 <c>null</c>（表现为「明明选了串口却说未选」）。
+        /// </para>
+        /// </summary>
+        private string? SelectedPortName() =>
+            (SerialPortComboBox?.SelectedItem as SerialPortInfo)?.PortName;
+
+        private void RefreshSerialButton_Click(object sender, RoutedEventArgs e)
+        {
+            ScanSerialPorts();
         }
 
         private void DeviceTypeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -2142,7 +2755,21 @@ namespace DSH_Modbus采集工具
             }
 
             RefreshDriverAreas();
-            SyncByteOrderCombos();
+
+            // 换品牌 = 字节顺序必须回到新驱动的默认（方案 B 的关键一半）：
+            // 置标志让 SyncByteOrderCombos 忽略持久化值，强制用 FromDriver 覆盖。
+            _driverJustSwitched = true;
+            try
+            {
+                SyncByteOrderCombos();
+            }
+            finally
+            {
+                _driverJustSwitched = false;
+            }
+
+            // 覆盖后用「新驱动默认」落盘：否则下次启动会恢复旧品牌的字序（持久化字段仍是旧值）
+            PersistByteOrders(ByteOrderSettings.FromDriver(_currentDriver));
 
             // 自由监控项也按新驱动重解析（元件可用性与编号范围随品牌变化）
             _monitorSet.SetDriver(_currentDriver);
@@ -2299,12 +2926,30 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
+            // ===== 方案 B（2026-11-20 用户定案）=====
+            // 切换设备类型 → **强制用驱动默认**（不恢复持久化的值）；
+            // 启动首次同步   → 若该品牌有存过的值就用存过的，否则用驱动默认。
+            //
+            // ⚠️ 两条路径的差别就是当初「不敢持久化」那个顾虑的解法：
+            //   换品牌时若沿用旧品牌字序，会出现「界面看着正常、数值全错」的静默错值
+            //   （两品牌字符串序曾不同）。现在换品牌恒定回到驱动默认，静默错值的路被封死；
+            //   而同品牌重启能恢复用户调过的值 —— 这正是持久化要换来的便利。
+            // ⚠️ 先单独调用再把结果合并进条件：写成
+            // `!_driverJustSwitched && TryGetSavedByteOrders(out saved)` 会让编译器
+            // 无法证明 saved 已赋值（CS0165）—— 短路时右侧根本不执行。
+            bool hasSaved = TryGetSavedByteOrders(out ByteOrderSettings saved);
+            bool useSaved = !_driverJustSwitched && hasSaved;
+
+            ByteOrderSettings target = useSaved
+                ? saved
+                : ByteOrderSettings.FromDriver(driver);
+
             _syncingByteOrderCombos = true;
             try
             {
-                Int32OrderComboBox.SelectedIndex = (int)driver.Int32ByteOrder;
-                FloatOrderComboBox.SelectedIndex = (int)driver.FloatByteOrder;
-                StringOrderComboBox.SelectedIndex = (int)driver.StringByteOrder;
+                Int32OrderComboBox.SelectedIndex = (int)target.Int32;
+                FloatOrderComboBox.SelectedIndex = (int)target.Float;
+                StringOrderComboBox.SelectedIndex = (int)target.String;
             }
             finally
             {
@@ -2312,8 +2957,34 @@ namespace DSH_Modbus采集工具
             }
 
             // 下拉框是「用户看到的值」，_byteOrders 是「真正拿去解释的值」——
-            // 两者必须在这里一起重置，否则切换设备类型后界面显示新默认、数据仍按旧值解。
-            ApplyByteOrders(ByteOrderSettings.FromDriver(driver));
+            // 两者必须在这里一起落定，否则切换设备类型后界面显示新默认、数据仍按旧值解。
+            ApplyByteOrders(target);
+        }
+
+        /// <summary>
+        /// 读持久化的三套字节顺序；任一字段没保存过（<c>-1</c>）或越界则返回 <c>false</c>。
+        /// <para>
+        /// ⚠️ **三个要么全恢复、要么全不用**：只恢复一半会让「整数是上次的、浮点是默认的」这种
+        /// 混合态出现，而现场根本无法从界面上看出哪一项是旧的。
+        /// </para>
+        /// </summary>
+        private static bool TryGetSavedByteOrders(out ByteOrderSettings saved)
+        {
+            saved = default;
+
+            int i = ThemeManager.Int32ByteOrder;
+            int f = ThemeManager.FloatByteOrder;
+            int s = ThemeManager.StringByteOrder;
+
+            if (!Enum.IsDefined(typeof(ByteOrder32), i)
+                || !Enum.IsDefined(typeof(ByteOrder32), f)
+                || !Enum.IsDefined(typeof(StringByteOrder), s))
+            {
+                return false;
+            }
+
+            saved = new ByteOrderSettings((ByteOrder32)i, (ByteOrder32)f, (StringByteOrder)s);
+            return true;
         }
 
         /// <summary>
@@ -2343,11 +3014,29 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            ApplyByteOrders(new ByteOrderSettings(
+            var orders = new ByteOrderSettings(
                 (ByteOrder32)Math.Max(0, Int32OrderComboBox.SelectedIndex),
                 (ByteOrder32)Math.Max(0, FloatOrderComboBox.SelectedIndex),
-                (StringByteOrder)Math.Max(0, StringOrderComboBox.SelectedIndex)));
+                (StringByteOrder)Math.Max(0, StringOrderComboBox.SelectedIndex));
+
+            ApplyByteOrders(orders);
+
+            // 用户主动改 → 落盘（方案 B：同品牌重启能恢复）
+            PersistByteOrders(orders);
         }
+
+        /// <summary>
+        /// 把一份字节顺序写进 <c>app-settings.json</c>。
+        /// <para>
+        /// ⚠️ 两个调用点语义不同，别合并：
+        /// <list type="bullet">
+        /// <item>用户改下拉框 → 存**用户选的值**（下次同品牌启动恢复它）</item>
+        /// <item>切换设备类型 → 存**新驱动的默认**（否则下次启动会把旧品牌的值恢复回来）</item>
+        /// </list>
+        /// </para>
+        /// </summary>
+        private static void PersistByteOrders(ByteOrderSettings orders) =>
+            ThemeManager.SetByteOrders((int)orders.Int32, (int)orders.Float, (int)orders.String);
 
         /// <summary>
         /// 刷新设备连接页的地址表元件展示：按当前驱动分「线圈区 / 寄存器区」两行列出元件，
@@ -2419,6 +3108,12 @@ namespace DSH_Modbus采集工具
 
         private void ProtocolTypeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
+            // 程序联动改写（随连接方式切换）不重复刷新底栏 —— 那次刷新的调用点已经刷过了
+            if (_syncingProtocol)
+            {
+                return;
+            }
+
             UpdateOverviewStatus();
         }
 
@@ -2429,7 +3124,7 @@ namespace DSH_Modbus采集工具
 
         // ---------- Modbus 采集轮询（P0） ----------
 
-        private void StartPolling(ModbusTcpClient client, CommDriver driver)
+        private void StartPolling(IModbusClient client, CommDriver driver)
         {
             StopPolling();
             var cts = new CancellationTokenSource();
@@ -2438,7 +3133,7 @@ namespace DSH_Modbus采集工具
             _pollCompletion = RunConnectionTasksAsync(client, driver, cts);
         }
 
-        private async Task RunConnectionTasksAsync(ModbusTcpClient client, CommDriver driver,
+        private async Task RunConnectionTasksAsync(IModbusClient client, CommDriver driver,
             CancellationTokenSource cts)
         {
             CancellationToken token = cts.Token;
@@ -2463,7 +3158,7 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        private async Task HeartbeatLoopAsync(ModbusTcpClient client, CommDriver driver,
+        private async Task HeartbeatLoopAsync(IModbusClient client, CommDriver driver,
             CancellationToken token)
         {
             try
@@ -2503,7 +3198,7 @@ namespace DSH_Modbus采集工具
             }
         }
 
-        private bool IsCurrentConnection(ModbusTcpClient client, CancellationToken token) =>
+        private bool IsCurrentConnection(IModbusClient client, CancellationToken token) =>
             _session.IsCurrent(client, token, _windowClosed);
 
         private void StopPolling()
@@ -2538,26 +3233,26 @@ namespace DSH_Modbus采集工具
             AcquisitionGlobals: _acquisitionGlobals,
             ScannerGlobals: _scannerGlobals);
 
-        bool ICollectorHost.IsCurrentConnection(ModbusTcpClient client, CancellationToken token) =>
+        bool ICollectorHost.IsCurrentConnection(IModbusClient client, CancellationToken token) =>
             IsCurrentConnection(client, token);
 
         Task ICollectorHost.RunOnUiAsync(Action action) => Dispatcher.InvokeAsync(action).Task;
 
         Task<T> ICollectorHost.RunOnUiAsync<T>(Func<T> func) => Dispatcher.InvokeAsync(func).Task;
 
-        void ICollectorHost.NotifyConnectionLost(ModbusTcpClient client, CancellationToken token, string reason) =>
+        void ICollectorHost.NotifyConnectionLost(IModbusClient client, CancellationToken token, string reason) =>
             NotifyConnectionLost(client, token, reason);
 
         string ICollectorHost.ClassifyDisconnectReason(string raw) => ClassifyDisconnectReason(raw);
 
-        void ICollectorHost.ReportCommunicationWarning(ModbusTcpClient client, CancellationToken token, string reason) =>
+        void ICollectorHost.ReportCommunicationWarning(IModbusClient client, CancellationToken token, string reason) =>
             ReportCommunicationWarning(client, token, reason);
 
         /// <summary>
         /// IO 轮询某块**连续多次**收到合法异常码的告警：链路仍在，只是从站拒绝了该请求。
         /// 走与心跳同一条「通讯异常」现象（琥珀），不新增日志种类，也**不断开**连接。
         /// </summary>
-        private void ReportCommunicationWarning(ModbusTcpClient client, CancellationToken token, string reason)
+        private void ReportCommunicationWarning(IModbusClient client, CancellationToken token, string reason)
         {
             if (token.IsCancellationRequested || Dispatcher.HasShutdownStarted)
             {
@@ -2573,7 +3268,7 @@ namespace DSH_Modbus采集工具
             }));
         }
 
-        private void NotifyConnectionLost(ModbusTcpClient client, CancellationToken token, string reason)
+        private void NotifyConnectionLost(IModbusClient client, CancellationToken token, string reason)
         {
             if (token.IsCancellationRequested || Dispatcher.HasShutdownStarted)
             {

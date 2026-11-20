@@ -1447,7 +1447,7 @@ namespace DSH_Modbus采集工具
                 return;
             }
 
-            ModbusTcpClient? modbus = _session.Client;
+            IModbusClient? modbus = _session.Client;
             if (modbus == null || !_session.IsConnected)
             {
                 // 口径 B：PLC 未连时只进内存、不报错（Brief P4.5）

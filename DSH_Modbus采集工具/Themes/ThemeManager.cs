@@ -172,6 +172,105 @@ namespace DSH_Modbus采集工具.Themes
             Save(_settings);
         }
 
+        // ==== 连接方式（以太网 / 串口） ====
+        // 与串口参数同一层次：既然串口那六项会记住，**选了哪种连接方式**更该记住 ——
+        // 否则每次启动都回到「以太网」，串口用户每次都要手动切一次（2026-11-20 用户指出）。
+
+        /// <summary>
+        /// 上次选用的连接方式；<c>false</c> = 以太网，<c>true</c> = 串口。
+        /// <para>
+        /// ⚠️ **默认 <c>false</c>（以太网）**：与 XAML 里 <c>SelectedIndex="0"</c> 一致，
+        /// 旧 json 没有这个字段时行为与升级前完全相同，无需迁移。
+        /// </para>
+        /// </summary>
+        public static bool UseSerialConnection => _settings.UseSerialConnection;
+
+        /// <summary>记住连接方式并落盘。<paramref name="useSerial"/> = true 表示串口。</summary>
+        public static void SetUseSerialConnection(bool useSerial)
+        {
+            // 值没变就不写盘（与 SetOverviewView / SetDeviceType 同一手法）：
+            // 启动期的程序化回填也会走到这里，没必要为此重写整份 app-settings.json
+            if (_settings.UseSerialConnection == useSerial)
+            {
+                return;
+            }
+
+            _settings.UseSerialConnection = useSerial;
+            Save(_settings);
+        }
+
+        // ==== 字节顺序（三套，2026-11-20 方案 B） ====
+        // 用户定案 B：**持久化 + 切换设备类型时仍重置为驱动默认**。
+        //   · 同品牌重启 → 恢复用户调过的值（解决「调完字序重启就丢」的痛点）
+        //   · 换品牌     → 由 SyncByteOrderCombos 强制覆盖为驱动默认，**不会**带着旧品牌的值
+        // 这样既补回便利，又不引入「换了品牌、字序还是旧品牌」的静默错值风险。
+
+        /// <summary>上次用的 32 位整数字序；0 表示没保存过（用驱动默认）。</summary>
+        public static int Int32ByteOrder => _settings.Int32ByteOrder;
+
+        /// <summary>上次用的 32 位浮点字序；0 表示没保存过（用驱动默认）。</summary>
+        public static int FloatByteOrder => _settings.FloatByteOrder;
+
+        /// <summary>上次用的字符串字节序；-1 表示没保存过（用驱动默认）。</summary>
+        public static int StringByteOrder => _settings.StringByteOrder;
+
+        /// <summary>
+        /// 保存三套字节顺序并落盘。
+        /// <para>
+        /// ⚠️ 字符串序用 <c>-1</c> 表示「没保存过」而非 0：<c>Order12</c> 的枚举值**就是 0**，
+        /// 若用 0 当哨兵，「用户明确选了 12」与「从没设置」将无法区分。
+        /// </para>
+        /// </summary>
+        public static void SetByteOrders(int int32, int floatOrder, int stringOrder)
+        {
+            if (_settings.Int32ByteOrder == int32
+                && _settings.FloatByteOrder == floatOrder
+                && _settings.StringByteOrder == stringOrder)
+            {
+                return;   // 值没变不写盘（与 SetUseSerialConnection 同一手法）
+            }
+
+            _settings.Int32ByteOrder = int32;
+            _settings.FloatByteOrder = floatOrder;
+            _settings.StringByteOrder = stringOrder;
+            Save(_settings);
+        }
+
+        // ==== 串口参数（P4.4） ====
+        // 与 TargetIp / TargetPort 同一套规则：空串 / 0 表示「没保存过」，界面保持默认值。
+        // 存的是**上次用的那一套**，切换连接方式不会互相覆盖（以太网参数与串口参数各存各的）。
+
+        /// <summary>上次使用的串口号（如 COM3）；空串表示没保存过。</summary>
+        public static string SerialPortName => _settings.SerialPortName;
+
+        /// <summary>上次使用的波特率；0 表示没保存过（默认 9600）。</summary>
+        public static int SerialBaudRate => _settings.SerialBaudRate;
+
+        /// <summary>上次使用的数据位；0 表示没保存过（默认 8）。</summary>
+        public static int SerialDataBits => _settings.SerialDataBits;
+
+        /// <summary>上次使用的校验位（<c>None</c> / <c>Odd</c> / <c>Even</c>）；空串表示没保存过（默认 None）。</summary>
+        public static string SerialParity => _settings.SerialParity;
+
+        /// <summary>上次使用的停止位（<c>One</c> / <c>Two</c>）；空串表示没保存过（默认 One）。</summary>
+        public static string SerialStopBits => _settings.SerialStopBits;
+
+        /// <summary>上次使用的从站站号；0 表示没保存过（默认 1）。</summary>
+        public static int StationNumber => _settings.StationNumber;
+
+        /// <summary>保存整套串口参数（含站号）并落盘。</summary>
+        public static void SetSerialSettings(
+            string portName, int baudRate, int dataBits, string parity, string stopBits, int stationNumber)
+        {
+            _settings.SerialPortName = (portName ?? string.Empty).Trim();
+            _settings.SerialBaudRate = baudRate;
+            _settings.SerialDataBits = dataBits;
+            _settings.SerialParity = parity ?? string.Empty;
+            _settings.SerialStopBits = stopBits ?? string.Empty;
+            _settings.StationNumber = stationNumber;
+            Save(_settings);
+        }
+
         // ==== 应用标题 ====
 
         /// <summary>
@@ -455,6 +554,63 @@ namespace DSH_Modbus采集工具.Themes
             /// </para>
             /// </summary>
             public string DeviceTypeKey { get; set; } = string.Empty;
+
+            // ==== 串口参数（P4.4，2026-11-18） ====
+            // 与 TargetIp / TargetPort 同一不变式：默认值一律存「空 / 0」，
+            // 表示「没保存过」，界面回落到 XAML 里的默认（9600 8N1、站号 1）。
+            // 这样升级用户的旧 json 缺这些字段时，观感与升级前完全一致，无需迁移。
+
+            /// <summary>上次使用的串口号（如 COM3）。空串 = 没保存过。</summary>
+            public string SerialPortName { get; set; } = string.Empty;
+
+            /// <summary>波特率。0 = 没保存过（默认 9600）。</summary>
+            public int SerialBaudRate { get; set; }
+
+            /// <summary>数据位。0 = 没保存过（默认 8）。</summary>
+            public int SerialDataBits { get; set; }
+
+            /// <summary>校验位枚举名（None / Odd / Even / Mark / Space）。空串 = 没保存过（默认 None）。</summary>
+            public string SerialParity { get; set; } = string.Empty;
+
+            /// <summary>停止位枚举名（One / OnePointFive / Two）。空串 = 没保存过（默认 One）。</summary>
+            public string SerialStopBits { get; set; } = string.Empty;
+
+            /// <summary>
+            /// 从站站号（RTU 1~247，TCP 也用同一个 UnitId）。0 = 没保存过（默认 1）。
+            /// <para>
+            /// ⚠️ 与以太网**共用一个站号**：它表达的是「这台设备在总线上是谁」，
+            /// 不因传输方式而变，分两套存只会让「同一个 PLC 换个连法就答不上」。
+            /// </para>
+            /// </summary>
+            public int StationNumber { get; set; }
+
+            /// <summary>
+            /// 上次选用的连接方式：<c>false</c> = 以太网（默认），<c>true</c> = 串口。
+            /// <para>
+            /// 与 <see cref="SerialPortName"/> 同一不变式：默认值（以太网）不显式存，
+            /// 旧 json 缺这个字段 → 反序列化得 <c>false</c> → 界面停在以太网，
+            /// 与升级前「每次都回到以太网」的行为完全一致，无需迁移。
+            /// </para>
+            /// </summary>
+            public bool UseSerialConnection { get; set; }
+
+            // ==== 字节顺序（2026-11-20 方案 B） ====
+            // ⚠️ 存的是**枚举数值**（不是名字）：这三个字段只在「同品牌重启」时被恢复，
+            // 而恢复动作受 `DeviceTypeKey` 约束 —— 换品牌时由 SyncByteOrderCombos 覆盖。
+            // 数值 idx 与枚举定义一一对应（ByteOrder32: 1234=0/2143=1/3412=2/4321=3；
+            // StringByteOrder: 12=0/21=1），加新成员时**只能追加到末尾**。
+
+            /// <summary>32 位整数字序；**-1** = 没保存过。</summary>
+            public int Int32ByteOrder { get; set; } = -1;
+
+            /// <summary>32 位浮点字序；**-1** = 没保存过。</summary>
+            public int FloatByteOrder { get; set; } = -1;
+
+            /// <summary>
+            /// 字符串字节序；**-1** = 没保存过。
+            /// <para>⚠️ 不能用 0 当哨兵：<c>StringByteOrder.Order12</c> 的枚举值就是 0。</para>
+            /// </summary>
+            public int StringByteOrder { get; set; } = -1;
         }
 
         private static AppSettings Load()

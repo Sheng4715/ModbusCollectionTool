@@ -3347,6 +3347,28 @@
                                 <!-- ===== PLC 连接（原设备连接表单，整段原样保留） ===== -->
                                 <StackPanel x:Name="PlcConnectionPanel">
 
+                                <!-- 自动连接（2026-11-05 从设置页搬来）
+                                     只对 PLC 生效，与扫码器无关（扫码器由各自行上的「启用」开关决定）。
+                                     ⚠️ **放在「连接方式」上方**（用户 2026-11-20 定案）：
+                                     它同时适用于以太网与串口，位置必须**与连接方式无关**。
+                                     曾经夹在 EthernetOptionsPanel 里（切串口时消失）；
+                                     也曾作为表单末行（两种模式下方行数不同 → 位置上下跳）。
+                                     放在所有变量高度行之前，两种模式下 y 坐标才一致。
+                                     **通用规则：与连接方式无关的控件，一律放在两个互斥面板之前。** -->
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                    <TextBlock Text="自动连接"
+                                               Width="80"
+                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                               VerticalAlignment="Center"/>
+                                    <CheckBox x:Name="AutoConnectPlcToggle"
+                                              Style="{StaticResource ToggleSwitch}"
+                                              Content="开"
+                                              VerticalContentAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Checked="AutoConnectPlcToggle_Changed"
+                                              Unchecked="AutoConnectPlcToggle_Changed"/>
+                                </StackPanel>
+
                                 <!-- 连接方式 -->
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                     <TextBlock Text="连接方式"
@@ -3364,7 +3386,13 @@
                                     </ComboBox>
                                 </StackPanel>
 
-                                <!-- 协议类型 -->
+                                <!-- 协议类型：**由连接方式唯一决定**，故项在运行时填入、不写死。
+                                     以太网 → ModbusTCP，串口 → ModbusRTU。
+                                     ⚠️ 不要在这里静态写两个 ComboBoxItem：那样展开后会同时列出
+                                     「以太网 + ModbusRTU」这种不可能生效的组合，用户能选中、
+                                     界面也不报错，只是连接时仍按 TCP 发 —— 典型静默错配。
+                                     只列一项不等于禁用：下拉框仍可点开确认（同扫码器连接页
+                                     2026-11-04 定案「只有一项也应能点开」）。 -->
                                 <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                                     <TextBlock Text="协议类型"
                                                Width="80"
@@ -3374,10 +3402,23 @@
                                               Width="200"
                                               VerticalAlignment="Center"
                                               Style="{StaticResource FormComboBox}"
-                                              SelectedIndex="0"
-                                              SelectionChanged="ProtocolTypeComboBox_SelectionChanged">
-                                        <ComboBoxItem Content="ModbusTCP"/>
-                                    </ComboBox>
+                                              SelectionChanged="ProtocolTypeComboBox_SelectionChanged"/>
+                                </StackPanel>
+
+                                <!-- 从站站号：TCP 与 RTU 共用（RTU 是站号，TCP 是 UnitId）。
+                                     放在连接方式之外，因为两种传输表达的是同一件事：
+                                     「这台设备在总线上是谁」。 -->
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                    <TextBlock Text="站号"
+                                               Width="80"
+                                               FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBox x:Name="StationNumberTextBox"
+                                             Width="200"
+                                             Style="{StaticResource FormTextBox}"
+                                             Text="1"
+                                             TextChanged="ConfigInput_TextChanged"
+                                             LostFocus="StationNumberTextBox_LostFocus"/>
                                 </StackPanel>
 
                                 <!-- 设备类型 -->
@@ -3432,6 +3473,16 @@
                                                 Margin="8,0,0,0"
                                                 Style="{StaticResource FormButton}"
                                                 Click="RefreshNicButton_Click"/>
+                                        <!-- 连接按钮：紧贴「刷新」右侧（用户 2026-11-18 定案）。
+                                             与串口面板那个 ConnectButtonSerial 互为显隐——
+                                             同一时刻只有一个可见，故「连接/断开/取消重连」三态由
+                                             SetConnectButtonState 同步写到两个控件上。 -->
+                                        <Button x:Name="ConnectButtonEthernet"
+                                                Content="连接"
+                                                Width="60"
+                                                Margin="8,0,0,0"
+                                                Style="{StaticResource FormButton}"
+                                                Click="ConnectButton_Click"/>
                                     </StackPanel>
 
                                     <!-- IP -->
@@ -3446,12 +3497,6 @@
                                                  Text="192.168.1.100"
                                                  TextChanged="ConfigInput_TextChanged"
                                                  LostFocus="ConfigInput_LostFocus"/>
-                                        <Button x:Name="ConnectButton"
-                                                Content="连接"
-                                                Width="60"
-                                                Margin="8,0,0,0"
-                                                Style="{StaticResource FormButton}"
-                                                Click="ConnectButton_Click"/>
                                     </StackPanel>
 
                                     <!-- 端口号 -->
@@ -3468,23 +3513,117 @@
                                                  LostFocus="ConfigInput_LostFocus"/>
                                     </StackPanel>
 
-                                    <!-- 自动连接（2026-11-05 从设置页搬来）
-                                         放这里而不是设置页：它只对 PLC 生效，
-                                         与扫码器毫无关系（扫码器由各自行上的「启用」开关决定）。
-                                         搬进来的理由 —— 设置页那个卡片叫「自动连接」，
-                                         用户会以为它管所有自动连接，实际只管 PLC，属误导。 -->
+                                </StackPanel>
+
+                                <!-- 串口专属选项（P4.4）。与以太网面板**互斥显隐**，
+                                     由 ConnectionTypeComboBox_SelectionChanged 切换。
+                                     默认值取 Modbus 行业通行的 9600 8N1。
+                                     ⚠️ 连接按钮刻意**不在本面板里**：它在上面「IP 地址」行，
+                                     与以太网共用同一个 ConnectButton（两边的显隐是互斥的，
+                                     按钮随之落到当前可见的那一组里，不需要第二个按钮）。 -->
+                                <StackPanel x:Name="SerialOptionsPanel" Visibility="Collapsed">
+
+                                    <!-- 串口号：下拉列出本机可用端口，「刷新」重新枚举 -->
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                                        <TextBlock Text="自动连接"
+                                        <TextBlock Text="端口"
                                                    Width="80"
                                                    FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
                                                    VerticalAlignment="Center"/>
-                                        <CheckBox x:Name="AutoConnectPlcToggle"
-                                                  Style="{StaticResource ToggleSwitch}"
-                                                  Content="开"
-                                                  VerticalContentAlignment="Center"
+                                        <ComboBox x:Name="SerialPortComboBox"
+                                                  Width="200"
                                                   VerticalAlignment="Center"
-                                                  Checked="AutoConnectPlcToggle_Changed"
-                                                  Unchecked="AutoConnectPlcToggle_Changed"/>
+                                                  Style="{StaticResource FormComboBox}"/>
+                                        <Button x:Name="RefreshSerialButton"
+                                                Content="刷新"
+                                                Width="60"
+                                                Margin="8,0,0,0"
+                                                Style="{StaticResource FormButton}"
+                                                Click="RefreshSerialButton_Click"/>
+                                        <!-- 串口的连接按钮（与以太网那个对称，用户 2026-11-18 定案） -->
+                                        <Button x:Name="ConnectButtonSerial"
+                                                Content="连接"
+                                                Width="60"
+                                                Margin="8,0,0,0"
+                                                Style="{StaticResource FormButton}"
+                                                Click="ConnectButton_Click"/>
+                                    </StackPanel>
+
+                                    <!-- 波特率 -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="波特率"
+                                                   Width="80"
+                                                   FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                   VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="SerialBaudRateComboBox"
+                                                  Width="200"
+                                                  VerticalAlignment="Center"
+                                                  Style="{StaticResource FormComboBox}"
+                                                  SelectedIndex="3"
+                                                  SelectionChanged="SerialSetting_Changed">
+                                            <ComboBoxItem Content="1200" Tag="1200"/>
+                                            <ComboBoxItem Content="2400" Tag="2400"/>
+                                            <ComboBoxItem Content="4800" Tag="4800"/>
+                                            <ComboBoxItem Content="9600" Tag="9600"/>
+                                            <ComboBoxItem Content="19200" Tag="19200"/>
+                                            <ComboBoxItem Content="38400" Tag="38400"/>
+                                            <ComboBoxItem Content="57600" Tag="57600"/>
+                                            <ComboBoxItem Content="115200" Tag="115200"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <!-- 数据位 -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="数据位"
+                                                   Width="80"
+                                                   FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                   VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="SerialDataBitsComboBox"
+                                                  Width="200"
+                                                  VerticalAlignment="Center"
+                                                  Style="{StaticResource FormComboBox}"
+                                                  SelectedIndex="1"
+                                                  SelectionChanged="SerialSetting_Changed">
+                                            <ComboBoxItem Content="7" Tag="7"/>
+                                            <ComboBoxItem Content="8" Tag="8"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <!-- 校验位 -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="校验位"
+                                                   Width="80"
+                                                   FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                   VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="SerialParityComboBox"
+                                                  Width="200"
+                                                  VerticalAlignment="Center"
+                                                  Style="{StaticResource FormComboBox}"
+                                                  SelectedIndex="0"
+                                                  SelectionChanged="SerialSetting_Changed">
+                                            <ComboBoxItem Content="无"/>
+                                            <ComboBoxItem Content="奇校验"/>
+                                            <ComboBoxItem Content="偶校验"/>
+                                            <ComboBoxItem Content="Mark"/>
+                                            <ComboBoxItem Content="Space"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <!-- 停止位 -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="停止位"
+                                                   Width="80"
+                                                   FontSize="14" Foreground="{DynamicResource Brush.Text.Primary}"
+                                                   VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="SerialStopBitsComboBox"
+                                                  Width="200"
+                                                  VerticalAlignment="Center"
+                                                  Style="{StaticResource FormComboBox}"
+                                                  SelectedIndex="0"
+                                                  SelectionChanged="SerialSetting_Changed">
+                                            <ComboBoxItem Content="1"/>
+                                            <ComboBoxItem Content="1.5"/>
+                                            <ComboBoxItem Content="2"/>
+                                        </ComboBox>
                                     </StackPanel>
 
                                 </StackPanel>
@@ -4282,7 +4421,7 @@
                                    VerticalAlignment="Center"/>
                     </StackPanel>
 
-                    <!-- 右：连接参数（驱动 / 连接方式 / 协议 / IP:端口） -->
+                    <!-- 右：连接参数（驱动 / 连接方式 / 协议 / IP:端口 或 COM口+串口参数） -->
                     <TextBlock x:Name="StatusBarDetail"
                                FontSize="12"
                                Foreground="{DynamicResource Brush.Text.Faint}"

@@ -29,7 +29,7 @@ internal interface ICollectorHost
     /// 这条连接是否仍然是「当前连接」：未关窗 && token 未取消 && 仍连着 && 是同一个客户端实例。
     /// 旧连接的后台回调靠它失效。
     /// </summary>
-    bool IsCurrentConnection(ModbusTcpClient client, CancellationToken token);
+    bool IsCurrentConnection(IModbusClient client, CancellationToken token);
 
     /// <summary>回 UI 线程执行（内部即 <c>Dispatcher.InvokeAsync</c>）。</summary>
     Task RunOnUiAsync(Action action);
@@ -42,7 +42,7 @@ internal interface ICollectorHost
     Task<T> RunOnUiAsync<T>(Func<T> func);
 
     /// <summary>异常断线：记日志 → 保留重连目标地断开 → 启动自动重连。</summary>
-    void NotifyConnectionLost(ModbusTcpClient client, CancellationToken token, string reason);
+    void NotifyConnectionLost(IModbusClient client, CancellationToken token, string reason);
 
     /// <summary>把 Socket / Modbus 的异常原文归一为简短中文。</summary>
     string ClassifyDisconnectReason(string raw);
@@ -51,5 +51,5 @@ internal interface ICollectorHost
     /// 连续多次收到**合法异常码**时的告警（链路仍在，只是从站拒绝了这次请求）。
     /// 由宿主回 UI 线程写「通讯异常」日志 —— 引擎层碰不到日志，也**不断开**连接。
     /// </summary>
-    void ReportCommunicationWarning(ModbusTcpClient client, CancellationToken token, string reason);
+    void ReportCommunicationWarning(IModbusClient client, CancellationToken token, string reason);
 }

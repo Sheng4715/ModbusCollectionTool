@@ -5,10 +5,29 @@ using DSH_Modbus采集工具.Drivers;
 
 namespace DSH_Modbus采集工具.Polling
 {
-    /// <summary>保持连接所需的参数快照，供自动重连复用。</summary>
+    /// <summary>
+    /// 保持连接所需的参数快照，供自动重连复用（P4.4 起同时表达以太网与串口两种目标）。
+    /// <para>
+    /// **为什么用一个 record 装两种目标、而不是两个子类**：重连循环、状态栏文案、
+    /// 表单锁定这些逻辑都只有一份，它们只关心「怎么连回去」这一个问题。
+    /// 拆成继承层次会逼着每个调用点对类型做判断；而这里真正有分歧的只有
+    /// <see cref="DescribeEndpoint"/> 和建连那一步。
+    /// </para>
+    /// </summary>
     public sealed record ReconnectTarget(string Ip, int Port, CommDriver Driver, IPEndPoint? LocalEndPoint)
     {
-        public string Endpoint => $"{Ip}:{Port}";
+        /// <summary>串口参数；为 <c>null</c> 表示这是以太网目标。</summary>
+        public SerialSettings? Serial { get; init; }
+
+        /// <summary>是否串口（Modbus RTU）目标。</summary>
+        public bool IsSerial => Serial != null;
+
+        /// <summary>日志与底栏里显示的端点描述：以太网是 <c>ip:端口</c>，串口是 <c>COM3 9600 8N1</c>。</summary>
+        public string Endpoint => IsSerial ? Serial!.Describe() : $"{Ip}:{Port}";
+
+        /// <summary>构造一个串口目标。<paramref name="driver"/> 与以太网共用同一份地址表。</summary>
+        public static ReconnectTarget ForSerial(SerialSettings serial, CommDriver driver) =>
+            new(string.Empty, 0, driver, null) { Serial = serial };
     }
 
     /// <summary>
@@ -26,14 +45,14 @@ namespace DSH_Modbus采集工具.Polling
     /// </summary>
     public sealed class ConnectionSession
     {
-        private ModbusTcpClient? _client;
+        private IModbusClient? _client;
         private CancellationTokenSource? _connectCts;
         private CancellationTokenSource? _reconnectCts;
         private ReconnectTarget? _target;
         private int _attempt;
 
         /// <summary>当前客户端；未连接时为 null。</summary>
-        public ModbusTcpClient? Client => _client;
+        public IModbusClient? Client => _client;
 
         /// <summary>是否已连接。</summary>
         public bool IsConnected { get; private set; }
@@ -54,7 +73,7 @@ namespace DSH_Modbus采集工具.Polling
         /// 这条连接是否仍是「当前连接」：未关窗 && token 未取消 && 仍连着 && 同一个客户端实例。
         /// 旧连接的后台回调靠它失效。
         /// </summary>
-        public bool IsCurrent(ModbusTcpClient client, CancellationToken token, bool windowClosed) =>
+        public bool IsCurrent(IModbusClient client, CancellationToken token, bool windowClosed) =>
             !windowClosed && !token.IsCancellationRequested && IsConnected
             && ReferenceEquals(_client, client);
 
@@ -79,7 +98,7 @@ namespace DSH_Modbus采集工具.Polling
         }
 
         /// <summary>连接成功：接管客户端、记住期望目标、清零退避计数。</summary>
-        public void MarkConnected(ModbusTcpClient client, ReconnectTarget target)
+        public void MarkConnected(IModbusClient client, ReconnectTarget target)
         {
             _client = client;
             IsConnected = true;

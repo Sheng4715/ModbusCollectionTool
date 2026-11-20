@@ -36,7 +36,7 @@ internal sealed class ModbusPoller
     private readonly ICollectorHost _host;
 
     /// <summary>记下计数所属的客户端；重连/换设备时据此清空下面的计数。</summary>
-    private ModbusTcpClient? _streakOwner;
+    private IModbusClient? _streakOwner;
 
     /// <summary>每块的连续异常码计数，键 = 块的地址范围（如 "20480-20543"）。读成功一次即清零。</summary>
     private readonly Dictionary<string, int> _blockExceptionStreaks = new();
@@ -46,7 +46,7 @@ internal sealed class ModbusPoller
     /// <summary>
     /// 轮询主循环。异常分类与 IO / 自由监控两条支路都在这里收敛。
     /// </summary>
-    public async Task PollLoopAsync(ModbusTcpClient client, CommDriver driver, CancellationToken token)
+    public async Task PollLoopAsync(IModbusClient client, CommDriver driver, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
@@ -92,7 +92,7 @@ internal sealed class ModbusPoller
     /// <summary>
     /// 一拍采集。按可见性分流：自由监控走 <see cref="PollFreeMonitorAsync"/>，否则读 IO 当前页。
     /// </summary>
-    public async Task PollOnceAsync(ModbusTcpClient modbus, CommDriver driver, CancellationToken token)
+    public async Task PollOnceAsync(IModbusClient modbus, CommDriver driver, CancellationToken token)
     {
         PollSnapshot snap = _host.CaptureSnapshot();
 
@@ -179,7 +179,7 @@ internal sealed class ModbusPoller
                     {
                         // 措辞：原因（地址 xxx 异常码 N）
                         _host.ReportCommunicationWarning(modbus, token,
-                            $"{ModbusTcpClient.DescribeException(ex.ExceptionCode)}（地址 {min}-{max} 异常码 {ex.ExceptionCode}）");
+                            $"{ModbusPdu.DescribeException(ex.ExceptionCode)}（地址 {min}-{max} 异常码 {ex.ExceptionCode}）");
                     }
                 }
             }
@@ -222,7 +222,7 @@ internal sealed class ModbusPoller
     /// 上的 <c>ByteOrders</c> 走，回填时直接取那份快照。
     /// </para>
     /// </summary>
-    public async Task PollFreeMonitorAsync(ModbusTcpClient modbus, CancellationToken token)
+    public async Task PollFreeMonitorAsync(IModbusClient modbus, CancellationToken token)
     {
         // 读计划涉及遍历 _monitorSet（UI 线程维护的 ObservableCollection），
         // 不能在采集线程裸枚举 —— 用户此刻增删行 / 改字节顺序会抛
@@ -338,7 +338,7 @@ internal sealed class ModbusPoller
     /// </para>
     /// </summary>
     public async Task PollMachineGlobalsAsync(
-        ModbusTcpClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
+        IModbusClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
     {
         List<GlobalReadBlock> plan = GlobalReadPlan.Build(variables);
         if (plan.Count == 0)
@@ -386,7 +386,7 @@ internal sealed class ModbusPoller
     /// </para>
     /// </summary>
     public async Task PollAcquisitionGlobalsAsync(
-        ModbusTcpClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
+        IModbusClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
     {
         List<GlobalReadBlock> plan = GlobalReadPlan.Build(variables);
         if (plan.Count == 0)
@@ -425,7 +425,7 @@ internal sealed class ModbusPoller
     /// </para>
     /// </summary>
     public async Task PollScannerGlobalsAsync(
-        ModbusTcpClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
+        IModbusClient modbus, IReadOnlyList<GlobalVariable> variables, CancellationToken token)
     {
         List<GlobalReadBlock> plan = GlobalReadPlan.Build(variables);
         if (plan.Count == 0)
@@ -458,7 +458,7 @@ internal sealed class ModbusPoller
     /// </summary>
     private async Task<List<(GlobalReadBlock Block, bool[]? Coils, ushort[]? Registers, string? Error)>>
         ReadGlobalBlocksAsync(
-            ModbusTcpClient modbus,
+            IModbusClient modbus,
             List<GlobalReadBlock> plan,
             CancellationToken token,
             Func<bool> stillWanted)
@@ -535,7 +535,7 @@ internal sealed class ModbusPoller
     /// <summary>
     /// 异常断线：记日志 → 带参 <c>Disconnect</c>（保留重连目标）→ 启动自动重连。
     /// </summary>
-    public void NotifyConnectionLost(ModbusTcpClient client, CancellationToken token, string reason)
+    public void NotifyConnectionLost(IModbusClient client, CancellationToken token, string reason)
     {
         if (token.IsCancellationRequested)
         {

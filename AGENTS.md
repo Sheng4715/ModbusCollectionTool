@@ -1,6 +1,6 @@
 # AGENTS.md — DSH_Modbus采集工具
 
-基于 **WPF / .NET 8** 的 Modbus 数据采集上位机 Demo，界面参考 Windows 11 Fluent（自定义标题栏 + 左侧导航 + 卡片式内容）。**无第三方 NuGet 依赖。**
+基于 **WPF / .NET 8** 的 Modbus 数据采集上位机 Demo，界面参考 Windows 11 Fluent（自定义标题栏 + 左侧导航 + 卡片式内容）。**仅一个 NuGet 依赖：微软官方 `System.IO.Ports`（串口 Modbus RTU，P4.4）。**
 
 > 需求与优先级见 `Brief.md`；技术设计与决策理由见 `Design.md`；本文件只讲**代码在哪、怎么改**。
 >
@@ -106,7 +106,7 @@ Window
 
 - **总览**：标题 + 右侧「当前视图」下拉框（三项，§3.1）。下方固定**运行日志卡**占本页 1/4（`3*`/`1*` 两行），故**本页自身不滚动**（其余四页照滚）。`数据采集` 视图是卡片内第二层（顶栏顺序：任务组下拉框 → 实时-历史页签 → 文件路径 / 分隔线 / 表格；画布见 §5.8.1），见 §5.8
 - **设备监控**：见 §5 IO 监控 / §5.1 自由监控
-- **设备连接**：连接方式 / 协议 / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（§8.1）。连接中锁定表单（`SetInputsEnabled`）—— **例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍生效，锁上反而挡住现场纠正。串口模式仅隐藏以太网面板，**功能未实现**
+- **设备连接**：连接方式 / 协议 / **从站站号** / 设备类型 / 采集周期 + 网卡 / IP / 端口 / 连接按钮；**设备通讯区域**另有左「字节顺序」3 个下拉框（32 位整数 / 浮点 / 字符串）+ 竖分隔线 + 右「地址表元件」（§8.1）。连接中锁定表单（`SetInputsEnabled`）—— **例外是三个字节顺序下拉框**：它们不改报文、不改连接参数，只决定怎么解释寄存器，改完下一拍生效，锁上反而挡住现场纠正。**串口模式（P4.4，2026-11-18 已实现）**：与以太网面板**互斥显隐**，见下
 
 **连接参数会被记住**（`app-settings.json`）：`TargetNic` / `TargetIp` / `TargetPort`，下次启动回填。
 
@@ -200,7 +200,7 @@ Window
 | **自由监控 / 全局变量 / 系统变量** | 处理器清单见 `AGENTS-细节.md` §5.1 / §5.2 / §5.3（系统变量**没有任何编辑处理器**，只有 `AcqView_Checked` 切面板 + 构造期一次绑定） |
 | 持久化 | `LoadComments` / `SaveComments`（薄包装 → `IoPointSet.Load` / `Save`） |
 | 网卡 | `ScanNetworkAdapters`（闸门 + 填下拉框）/ `TargetNicComboBox_SelectionChanged`；扫描与还原规则在 `Net/NicScanner.cs`，持久化见 §3.4 / `AGENTS-细节.md` §8.2 |
-| 日志 | 窗口侧只留三处**控件**动作：`AppendDeviceLog`（追加 + `ScrollIntoView` + 设置页失败提示）、`ClearDeviceLogButton_Click`、`RefreshDeviceLogColors`（薄包装）；**编排与规则在 `Ui/DeviceLogPresenter.cs`**（内存集合 / 上限 200 / 落盘旁路 / **界面与文件共用时间戳** / 界面级别 → 落盘级别）；`ClassifyDisconnectReason` 仍是薄包装 |
+| 日志 | 窗口侧只留三处**控件**动作：`AppendDeviceLog`（追加 + `ScrollIntoView` + 设置页失败提示）、`ClearDeviceLogButton_Click`、`RefreshDeviceLogColors`（薄包装）；**编排与规则在 `Ui/DeviceLogPresenter.cs`**（内存集合 / 上限 1000 / 落盘旁路 / **界面与文件共用时间戳** / 界面级别 → 落盘级别）；`ClassifyDisconnectReason` 仍是薄包装 |
 | 底栏 / 最大化 | `SetStatus` / `UpdateOverviewStatus` / `BuildConnectionDetail` → `Ui/StatusBarPresenter.cs`；`UpdateMaximizedInset` → `Ui/MaximizedInset.cs` |
 | **主题（P5.1）** | `Themes/ThemeManager.cs`；窗口侧 `ThemeSegment_Checked` / `SyncThemeSegments` / `OnThemeChanged`（底栏状态色映射在 `Ui/StatusBarPresenter.cs`） |
 | **日志落盘（P5.2）** | `Logging/DeviceLogFileWriter.cs`（按天追加 / 跨天换文件 / 失败自愈）；窗口侧 `_logWriter` / `LogSaveToggle_Changed` / `SyncLogSaveToggle` / `LogDirectoryTextBox_LostFocus` / `LogBrowseButton_Click` / `LogOpenFolderButton_Click` / `LogResetDirectoryButton_Click` / `ApplyLogDirectory` / `RefreshLogSaveStatus`（§7.1） |
@@ -377,7 +377,8 @@ public sealed class MyDialog : DialogWindow
 | **字节顺序（字序/字符串序）** | `Modeling/ByteOrderSettings.cs`（三套值）+ 设备连接页三个下拉框 + `ApplyByteOrders` / `SyncByteOrderCombos`（§8.1）；读取用 `MonitorItemSet.ByteOrders` |
 | **类型值编解码与显示格式化** | `Modeling/ValueCodec.cs`（入参传字节顺序，不读全局状态） |
 | **ARRAY 数组类型（P6.4）** | `Modeling/DataTypeEnums.cs`（枚举，零依赖）+ `ArrayRules.cs`（声明规则，零依赖）+ `ArrayValueCodec.cs`（逐元素寻址/编解码）+ `Ui/ArrayDeclareDialog.cs`；子行模型 `MonitorElement` 与 `TryBuildElementWrite` 在 `MonitorItem.cs`。⚠️ 显示名写 `INT[20]`（元素类型+个数）、**不做整组聚合**、**只能对元素写**、占用按「个数 × 单元素单元数」算 —— 见 §5.2.3 |
-| Modbus 报文/超时、心跳 | `Drivers/ModbusTcpClient.cs`；`Drivers/ModbusHeartbeat.cs` → `RunAsync`、`HeartbeatIfIdleAsync` |
+| Modbus 报文/超时、心跳 | `Drivers/ModbusTcpClient.cs`（TCP）/ `Drivers/ModbusRtuClient.cs`（串口 RTU）；**两者共用** `Drivers/ModbusPdu.cs`（PDU）与 `Drivers/IModbusClient.cs`（接口）；`Drivers/ModbusHeartbeat.cs` → `RunAsync`、`HeartbeatIfIdleAsync` |
+| **串口 Modbus RTU（P4.4，2026-11-18）** | `Drivers/ModbusRtuClient.cs` + `Drivers/Crc16.cs`（0xA001 / 初值 0xFFFF / **帧尾低字节在前**）+ `Drivers/SerialSettings`（默认 **9600 8N1**，`Describe()` 出 `COM3 9600 8N1`）。⚠️ **RTU 没有长度字段**，收帧靠「站号 + 功能码」推算（`ReadFrame`）；⚠️ **站号参与 CRC**；⚠️ **站号 TCP/RTU 共用**一个 `StationNumber`。UI 在设备连接页 `SerialOptionsPanel`（与 `EthernetOptionsPanel` **互斥显隐**）；**连接按钮两个**（`ConnectButtonEthernet` / `ConnectButtonSerial`，各贴自家「刷新」右侧，状态必须成对走 `SetConnectButtonText`/`SetConnectButtonEnabled`）+ `Net/SerialPortScanner.cs`（下拉显示「COM4 · 设备名」，设备名取自注册表、零依赖；⚠️ 下拉装的是对象，取端口名走 `SelectedPortName()`）+ `ScanSerialPorts` / `SerialSetting_Changed` / `ReadSerialSettings`；**协议类型由连接方式唯一决定、下拉只列对应一项**（`SyncProtocolOptions`；⚠️ 启动时要在构造函数里显式调一次，条目是运行时填的）。持久化 `ThemeManager.Serial*`。✅ **真机验收通过**（汇川 Easy @ COM4，19 项）＋ 离线 `56 项` —— 见 `AGENTS-细节.md` §8.3（含 §8.3.2b 写应答 8 字节的坑） |
 | 轮询与断线逻辑 | `Polling/ModbusPoller.cs` 的 `PollLoopAsync` / `PollOnceAsync` + `Disconnect(status,color)` |
 | **IO 合法异常码不再断开（连续 5 次才记日志）** | `PollOnceAsync` 的 `catch (ModbusResponseException)` + `ConsecutiveExceptionThreshold` + `_blockExceptionStreaks`；告警通道 `ICollectorHost.ReportCommunicationWarning` → 窗口 `ReportCommunicationWarning`（§5，证据 `Design.md` §10.2） |
 | 网卡扫描/绑定/记忆 | `Net/NicScanner.cs`（`NicInfo` / `Scan` / `IndexOf` / `RestoreIndex`）；窗口侧 `ScanNetworkAdapters` / `TargetNicComboBox_SelectionChanged` / `ConnectButton_Click`（§3.4、§8.2） |

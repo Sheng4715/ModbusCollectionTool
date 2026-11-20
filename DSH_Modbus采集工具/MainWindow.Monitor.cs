@@ -862,7 +862,7 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private async Task CommitMonitorValueAsync(TextBox box, MonitorItem item)
         {
-            ModbusTcpClient? modbus = _session.Client;
+            IModbusClient? modbus = _session.Client;
             CommDriver? driver = _currentDriver;
 
             string text = box.Text;
@@ -1003,7 +1003,7 @@ namespace DSH_Modbus采集工具
         /// </summary>
         private async Task CommitMonitorElementAsync(TextBox box, MonitorElement element)
         {
-            ModbusTcpClient? modbus = _session.Client;
+            IModbusClient? modbus = _session.Client;
             string text = box.Text;
 
             // 回车与失焦先后各触发一次，同一次编辑只写一次
@@ -1050,7 +1050,7 @@ namespace DSH_Modbus采集工具
         }
 
         /// <summary>按存储区选择写功能码：线圈 FC05，寄存器按长度选 FC06（单）或 FC16（多）。</summary>
-        private static Task WriteToDeviceAsync(ModbusTcpClient modbus, WritePlan plan)
+        private static Task WriteToDeviceAsync(IModbusClient modbus, WritePlan plan)
         {
             if (plan.Address < 0)
             {
