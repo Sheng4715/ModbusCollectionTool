@@ -345,6 +345,31 @@ namespace DSH_Modbus采集工具.Themes
             Save(_settings);
         }
 
+        // ==== MES 连接（P4.7） ====
+        // 与 TargetIp 同一口径：空串 = 没保存过，界面用默认空。
+        // ⚠️ MesMethod 的默认 "POST" 是**合法持久化值**，不要加「等于默认就归空」的归一化。
+
+        /// <summary>MES 服务端 URL；空串 = 没保存过，界面用默认空。</summary>
+        public static string MesUrl => _settings.MesUrl;
+
+        /// <summary>设置 MES URL（失焦时落盘，与 TargetIp 同一口径：Trim 后存）。</summary>
+        public static void SetMesUrl(string? url)
+        {
+            _settings.MesUrl = (url ?? string.Empty).Trim();
+            Save(_settings);
+        }
+
+        /// <summary>MES 请求方法（POST / PUT）。</summary>
+        public static string MesMethod => _settings.MesMethod;
+
+        /// <summary>设置 MES 请求方法；只接受 POST / PUT，其余忽略并回退 POST。</summary>
+        public static void SetMesMethod(string? method)
+        {
+            string m = (method ?? string.Empty).Trim().ToUpperInvariant();
+            _settings.MesMethod = m is "POST" or "PUT" ? m : "POST";
+            Save(_settings);
+        }
+
         /// <summary>
         /// 显式选了默认目录时，存空串而非绝对路径（见 <see cref="SetMode"/>）。
         /// 由 <see cref="Save"/> 统一调用，**不放在各个 Setter 里**。
@@ -611,6 +636,17 @@ namespace DSH_Modbus采集工具.Themes
             /// <para>⚠️ 不能用 0 当哨兵：<c>StringByteOrder.Order12</c> 的枚举值就是 0。</para>
             /// </summary>
             public int StringByteOrder { get; set; } = -1;
+
+            // ==== MES 连接（P4.7） ====
+            // ⚠️ 与串口那几项**不同**：MesMethod 的默认 "POST" 是**合法持久化值**，
+            // 不要在 Save() 里给它加「等于默认就归空」的归一化 —— 归空会让「用户没选过」
+            // 与「用户明确选了 POST」混为一谈，下次读出空串还要再兜一层。
+
+            /// <summary>MES 服务端 URL（P4.7）。空串 = 没保存过。</summary>
+            public string MesUrl { get; set; } = string.Empty;
+
+            /// <summary>MES 请求方法（POST / PUT）。默认 POST。</summary>
+            public string MesMethod { get; set; } = "POST";
         }
 
         private static AppSettings Load()

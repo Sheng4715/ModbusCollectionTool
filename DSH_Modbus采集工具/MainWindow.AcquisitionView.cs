@@ -174,6 +174,14 @@ namespace DSH_Modbus采集工具
         /// 「该任务组还没有保存的数据」这种说了等于没说的空状态。
         /// </para>
         /// <para>
+        /// **HTTP数据上报（Report）类型的组一律不列**（2026-11-24）：上报不落 CSV
+        /// （报文由 <c>MesReport</c> 拼成平铺 JSON 直接发给 MES 服务端），
+        /// 来源变量也不在实时卡片上展示 —— 它在本视图里既没有历史文件、也没有实时内容，
+        /// 列出来点进去只会是一片空占位，让用户以为功能坏了。
+        /// 注意<b>不能</b>只靠 <c>RecordEnabled</c> 挡：上报类型在对话框里没有
+        /// 「数据记录」这一行，那个值可能是真，必须显式按类型排除。
+        /// </para>
+        /// <para>
         /// ⚠️ 与历史数据页签**共用**这个下拉框，所以历史数据也只能看能采的组 ——
         /// 这是同一处改动的副作用，已确认可接受（停用的组不产新数据，看旧文件的诉求走文件系统）。
         /// </para>
@@ -193,15 +201,19 @@ namespace DSH_Modbus采集工具
             string previous = _acqHistoryGroup;
 
             // 可采集的组：启用且无配置错误（EffectiveEnabled 同时覆盖两者），
-            // **且打开了「数据记录」**（2026-11-11 用户要求）。
+            // **且打开了「数据记录」**（2026-11-11 用户要求），
+            // **且不是 HTTP数据上报类型**（2026-11-24）。
             // 理由：本视图展示的是**落盘的 CSV**（实时卡片读变量、历史表格读文件），
             // 不记录数据的组在这里既没有历史文件、也不该占一个下拉项 ——
             // 选中它只会得到「该任务组还没有保存的数据」这种说了等于没说的空状态。
+            // 上报类型更彻底：它根本不产生 CSV，也没有实时卡片。
             var usable = new List<AcquisitionTaskItem>();
             for (int i = 0; i < total; i++)
             {
                 AcquisitionTaskItem candidate = items![i];
-                if (candidate.EffectiveEnabled && candidate.Model.RecordEnabled)
+                if (candidate.EffectiveEnabled
+                    && candidate.Model.RecordEnabled
+                    && candidate.Model.Kind != AcquisitionTaskKind.Report)
                 {
                     usable.Add(candidate);
                 }

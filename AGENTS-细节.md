@@ -146,7 +146,7 @@
 - ⚠️ `MonitorItemSet.SetVariableLookup` 必须在 `Load()` **之前**调用，
   否则第一轮会把变量行当成元件行标红
 
-- ⏳ **未实现**：**串口（Modbus RTU）** —— 设备连接页的串口模式只隐藏以太网面板，功能未做
+- ✅ **串口（Modbus RTU）已实现**（2026-11-18，P4.4）：串口模式与以太网面板互斥显隐，参数面板 / 持久化 / 探测读 / 断线重连俱全，详见 §8.3
 
 ### 5.2 全局变量（P3.3，数据管理页第二分段）
 
@@ -798,7 +798,7 @@
 | 列 | 内容 | 可编辑 |
 |---|---|---|
 | 任务名称 | `任务组N`（默认名，重名会被拒） | 走「…」对话框 |
-| 任务类型 | 数据读取 / 数据写入（默认**数据读取**） | 走「…」对话框 |
+| 任务类型 | 数据读取 / 数据写入 / HTTP数据上报（默认**数据读取**；上报见 §5.7.3） | 走「…」对话框 |
 | 执行方式 | `周期` / `触发`（**只有两个字**，用户定案 2026-10-29；秒数与上升沿语义在「…」对话框里看） | 走「…」对话框 |
 | 启用 | `AcqEnableSwitch` | 行内开关，即时落盘 |
 | # | 序号（1 起，**不落盘**） | 只读 |
@@ -811,6 +811,13 @@
 > 详见 `AGENTS.md` §9.3 第 8 条 —— 改行距/加行前先读。
 > ⚠️ 标签列宽 **112**（不再是 68）：「执行完成输出变量」8 个字，68 会硬裁断；
 > 对话框宽度同步从 442 → 500，否则右列被压得放不下按钮行。
+> ⚠️ **行高会按任务类型动态归零**（2026-11-24）：任务类型选「HTTP数据上报」时，
+> 「数据记录」「保存路径」「实时背景图」三组**整行隐藏** —— `SyncKindRows` 把这三行的
+> `RowDefinition.Height` 在 `FormRowHeight`(40) 与 `0` 之间切，同时切 label 与内容控件的
+> `Visibility`。**只设 Visibility 不够**：固定行高的行会留下 40 高的空洞。
+> ⚠️ **必须跟着下拉实时切**，不能在构造时判一次就完 —— 任务类型下拉就在本对话框里，
+> 用户改成上报的当场就该看到三行消失（2026-11-24 修：原先只在构造时判 `task.Kind`，
+> 于是「打开后改成上报」三行不消失，即用户截图那个 bug）。
 | 数据项 | `共 N 项`（只报数量，**不放按钮**） | 只读 |
 | 操作 | … ↑↓ | 行内 |
 
@@ -827,8 +834,10 @@
 - ⚠️ **两个 `+` 不是一回事**：页面表头那个加的是**任务组**，子表表头那个加的是**数据项**。
   靠位置区分（一个在页头、一个在组内），别把它们的 Click 接错
 - **子表的列随任务类型变**：读取 4 列（#/项名称/读取变量/数据类型），
-  写入 5 列（#/项名称/**来源变量**/写入变量/数据类型）。⚠️ 来源列**不是**用
-  `Visibility` 藏的 —— 列宽由 `ColumnDefinition.Style` 的 DataTrigger 在 0 与 150 之间切；
+  写入 5 列（#/项名称/**来源变量**/写入变量/数据类型），
+  上报 4 列（#/**字段名称**/来源变量/数据类型，无「读取/写入变量」列）。
+  ⚠️ 来源列与「读取/写入变量」列都**不是**用 `Visibility` 藏的 —— 列宽由
+  `ColumnDefinition.Style` 的 DataTrigger 在 0 与 150/180 之间切；
   用 Visibility 的话列宽仍占着，读取类型下会凭空空出一截。`Width` 只能写在 Style 里，
   写成属性就是局部值，会压过触发器
 - **任务组名称要当文件夹名用**，故名称校验除长度/重名外还挡：非法字符 `\ / : * ? " < > |`、
@@ -1018,8 +1027,9 @@
 - ⚠️ 「先填来源」这句提示要**跟着来源改口**：判据是 `_isWriteTask && SourceVariable == null`。
   首版写成 `_isWriteTask ? …`，实机里来源填好后置灰解除了、提示还在催「先填写来源变量」，等于骗人
 - ⚠️ **行自己看不出所属任务是读还是写**（读取类型下来源列宽为 0，行上没有那个信号），
-  所以 `SetWriteTask` 由**父行注入**，三处都要：构造函数、`AddItem()`、`RefreshFromModel()`。
-  漏掉 `RefreshFromModel` 的话，读写类型互切后整张子表还留着上一档的置灰状态
+  所以 `SetWriteTask` / `SetReportTask` 由**父行注入**，三处都要：构造函数、`AddItem()`、`RefreshFromModel()`。
+  漏掉 `RefreshFromModel` 的话，读写/上报类型互切后整张子表还留着上一档的置灰状态。
+  上报的「数据类型」列反推自**来源变量**（`AcquisitionItemRow.TypeDisplayName`），不是写入变量
 - 样式顺序同 10.27 的坑：`AcquisitionTargetBox` 的 `BasedOn` 指向 `MonitorInlineTextBox`，
   必须定义在它**之后**
 - 变量没填 / 找不到 ⇒ **空单元格**，不写占位符：表格是给下游（Excel、MES）读的，
@@ -1028,7 +1038,8 @@
 - **每次执行都写一条运行日志**（用户定案），文案由 `AcquisitionTaskRules.DescribeLogSuccess` /
   `DescribeLogFailure` 生成，形如 `任务组1（压力采集）：触发读取任务执行完成`。
   三个要点：短词（`读取`/`写入`，不是界面上的 `数据读取`）、**成功不带原因也不带冒号**、
-  序号给当下定位而名称给事后可读（名称是写日志那刻的快照，改名不回溯）
+  序号给当下定位而名称给事后可读（名称是写日志那刻的快照，改名不回溯）。
+  ⚠️ 上报（Report）的动作名是「触发/周期HTTP数据上报」，**不带「任务」后缀**（用户原需求文案）
 - ⚠️ **组级「日志记录」关掉就整组不记**（用户定案 2026-10-30，默认开）。判定**只有一个出口**
   `LogTaskActivity(task, message, level)`（`MainWindow.Acquisition.cs`），四个调用点
   （只跑不记 / 记录成功 / 记录失败 / 写入异常兜底）都走它 —— 在调用点各自判 `task.LogEnabled`
@@ -1785,7 +1796,8 @@ ScrollViewer                        ← 画布放不下就滚
 - 开关文案在 `AutoConnectPlcToggle_Changed` / `SyncAutoConnectToggle` 里由代码切 —— 与日志保存开关同一个坑：模板触发器里的 `Setter` 赢不过局部 `Content`
 - **启动时机**：`Window_Loaded` 末尾用 `Dispatcher.InvokeAsync(TryAutoConnect, DispatcherPriority.ApplicationIdle)` ——
   先让首帧画出来，再发起连接（连接是异步的，失败原因要能落到界面上）
-- `TryAutoConnect` 的跳过条件：开关关 / 窗口已关 / 已连接或正在连 / **不是以太网模式**（串口未实现）/ IP 为空
+- `TryAutoConnect` 的跳过条件：开关关 / 窗口已关 / 已连接或正在连 / **配置不全**（串口模式未选端口、以太网模式 IP 为空）。
+  ⚠️ **串口也是一等公民**（2026-11-18 起）：早先「不是以太网模式就跳过」的分支已删除
 - **失败不重试**：与手动连接一致，首次连接失败交还控制权给用户
 - ⚠️ **不写设备日志**（需求）：自动连接是后台行为，成功由 `TryConnectAsync` 记「已连接」、失败记「连接失败」，不必再加一条
 
@@ -1808,7 +1820,7 @@ ScrollViewer                        ← 画布放不下就滚
 
 ### 7.3 项目信息（P5.3）
 
-设置页第三张卡，显示 **名称 / 版本 / 构建日期 / 运行环境**。全是常量，在 `Window_Loaded` 里 `RefreshProjectInfo()` 填一次。
+设置页第五张卡，显示 **名称 / 版本 / 构建日期 / 运行环境**。全是常量，在 `Window_Loaded` 里 `RefreshProjectInfo()` 填一次。
 
 | 项 | 来源 |
 |---|---|
@@ -1830,7 +1842,7 @@ ScrollViewer                        ← 画布放不下就滚
 
 ### 7.4 开机自启动（P5.5，2026-11-08）
 
-设置页第三张卡（在「日志保存」与「项目信息」之间），右边是 `AutoStartToggle`（`ToggleSwitch`）。
+设置页第三张卡（顺序：应用标题 → 显示外观 → **开机自启动** → 日志保存 → 项目信息），右边是 `AutoStartToggle`（`ToggleSwitch`）。
 
 **实现位置**：`Startup/AutoStartCommand.cs`（**纯逻辑**，无 WPF/无注册表）+ `Startup/AutoStartRegistry.cs`（只做注册表 IO）。
 窗口侧三个处理器在 `MainWindow.xaml.cs`：`AutoStartToggle_Changed` / `SyncAutoStartToggle` / `RefreshAutoStartStatus`。
@@ -2570,7 +2582,7 @@ DSH_Modbus采集工具/
 | `NavRadioButton` | 导航项（灰底背板，选中加粗） |
 | `AccountButton` | 导航底部的账户入口（头像 18 + 用户名）。**比 `NavRadioButton` 紧凑**（Padding 10 / 头像 18 / 间距 8）：导航列 112 DIP 放不下「技术员」三个汉字，按 `NavRadioButton` 的 14+20+10+14 只剩 38 DIP（需约 42）。⚠️ `Margin` 左边距仍是 8，左缘才与其余导航项齐平 |
 | `NavItemTemplate` | 导航项共享 `ControlTemplate`：外距/内距/高度全从 Style 传。要做不同缩进改 Style，别复制模板 |
-| `IoSegmentRadioButton` | 分段控件，**14 处**：IO 页输入监控 / 输出监控 / 自由监控 / 系统变量、数据管理三档、设置页主题两档、设备连接两档（PLC / 扫码器） |
+| `IoSegmentRadioButton` | 分段控件，**15 处**：IO 页输入监控 / 输出监控 / 自由监控 / 系统变量、数据管理三档、设置页主题三档、设备连接三档（PLC / 扫码器 / MES，2026-11-24） |
 | `ToggleSwitch` | **开关**（Win11 式）：轨道 40×20、柄 12、内缩 4；关＝`Control.Background`、开＝`Accent.Fill`；**状态文字在轨道左侧**，由代码按 `IsChecked` 改写 `Content`（「开」/「关」） |
 | `IoItemTemplate` | IO 点位单元格（灯 10×10、注释 MinWidth 144；`Comment` 为 INPC） |
 | `IoItemsControlStyle` | IO 条目横向拉伸 |

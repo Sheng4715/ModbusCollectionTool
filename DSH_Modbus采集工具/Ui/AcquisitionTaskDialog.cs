@@ -24,6 +24,7 @@ namespace DSH_Modbus采集工具.Ui
         {
             ("数据读取", AcquisitionTaskKind.Read),
             ("数据写入", AcquisitionTaskKind.Write),
+            ("HTTP数据上报", AcquisitionTaskKind.Report),
         };
 
         /// <summary>
@@ -89,6 +90,21 @@ namespace DSH_Modbus采集工具.Ui
         private string _liveImagePath = string.Empty;
         private readonly Button _browseButton;
         private readonly TextBlock _error;
+
+        // 「数据记录 / 保存路径 / 实时背景图」三组：HTTP数据上报（Report）时要整行隐藏。
+        // ⚠️ **必须能来回切**（2026-11-24 修）：原先只在构造时判一次，于是「对话框里把
+        // 任务类型改成 HTTP数据上报」时三行不消失 —— 而需求写的是「选中它时整行隐藏」，
+        // 下拉就在同一个对话框里，用户改完就该立刻看到变化。
+        // 存行号 + 标签 + 内容控件，TypeChanged 时统一折叠 / 展开。
+        private readonly int _recordRow;
+        private readonly int _pathRow;
+        private readonly int _imageRow;
+        private readonly TextBlock _recordLabel;
+        private readonly TextBlock _pathLabel;
+        private readonly TextBlock _imageLabel;
+        private readonly UIElement _recordContent;
+        private readonly UIElement _pathContent;
+        private readonly UIElement _imageContent;
 
         private AcquisitionTaskDialog(
             AcquisitionTask task,
@@ -160,7 +176,11 @@ namespace DSH_Modbus采集工具.Ui
 
             Place(root, logLine, row++, new Thickness(0), stretch: true);
 
-            AddLabel(root, "数据记录", row, bottomMargin: 0);
+            // P3.1b：HTTP数据上报不落 CSV、也不画实时背景图，所以「数据记录」
+            // 「保存路径」「实时背景图」三组要**整行隐藏** —— 故这里留住标签、内容控件
+            // 与行号，构造末尾按当前类型折叠一次，之后随下拉切换同步（见 SyncKindRows）。
+            _recordRow = row;
+            _recordLabel = AddLabel(root, "数据记录", row, bottomMargin: 0);
 
             // 「记录不记录」用两个单选而不是一个开关：与下面「执行方式」的形态一致，
             // 用户扫一眼就是一组二选一，不用先判断这个开关是「开」还是「关」。
@@ -177,9 +197,11 @@ namespace DSH_Modbus采集工具.Ui
             recordLine.Children.Add(_recordOnRadio);
 
             Place(root, recordLine, row++, new Thickness(0), stretch: true);
+            _recordContent = recordLine;
 
             // 路径单独一行：路径本身很长，和单选挤在一行会把路径框压得只剩几十像素
-            AddLabel(root, "保存路径", row, bottomMargin: 0);
+            _pathRow = row;
+            _pathLabel = AddLabel(root, "保存路径", row, bottomMargin: 0);
 
             var pathLine = new Grid();
             pathLine.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -221,6 +243,7 @@ namespace DSH_Modbus采集工具.Ui
             pathLine.Children.Add(_browseButton);
 
             Place(root, pathLine, row++, new Thickness(0), stretch: true);
+            _pathContent = pathLine;
 
             AddLabel(root, "执行方式", row, bottomMargin: 0);
 
@@ -278,8 +301,8 @@ namespace DSH_Modbus采集工具.Ui
             // 选了之后会**拷贝**进 exe 旁的 Images\ 并只存相对路径 ——
             // 存绝对路径的话对方机器换个盘符图就没了，而且用户完全不知道
             // （表现为实时页一片空白）。
-            AddLabel(root, "实时背景图", row, bottomMargin: 0);
-
+            _imageRow = row;
+            _imageLabel = AddLabel(root, "实时背景图", row, bottomMargin: 0);
             _liveImagePath = task.LiveImagePath ?? string.Empty;
             _liveImageBox = MakeTextBox(_liveImagePath)
             ;
@@ -313,6 +336,7 @@ namespace DSH_Modbus采集工具.Ui
             }
 
             Place(root, imageLine, row++, new Thickness(0), stretch: true);
+            _imageContent = imageLine;
 
             // 执行完成输出变量（2026-11-10）：口径照扫码器的「执行结果输出变量」——
             // 正常执行完成写 1、异常执行完成写 2，两个值固定不可配，框下用一行小字说明。
@@ -418,6 +442,50 @@ namespace DSH_Modbus采集工具.Ui
 
             SyncModeEnabled();
             SyncRecordEnabled();
+
+            // P3.1b：HTTP数据上报（Report）只把「字段名 + 来源变量值」拼成 JSON 发走，
+            // 不落 CSV、也没有实时背景图 —— 「数据记录」「保存路径」「实时背景图」三组
+            // **整行隐藏**（标签与内容控件都折叠）。
+            // ⚠️ 只折叠控件还不够：表单行是**固定行高 40** 的，空行会留下 40 高的洞，
+            // 所以还要把这三行的 RowDefinition.Height 压成 0。
+            // ⚠️ **必须跟着下拉实时切**（2026-11-24 修）：任务类型下拉就在本对话框里，
+            // 用户改成「HTTP数据上报」的当场就该看到三行消失，而不是等到下次打开。
+            _kindCombo.SelectionChanged += (_, _) => SyncKindRows(root);
+
+            // 初始按传入的类型折叠一次（RecordEnabled 那组单选的事件已挂完，不会打架）
+            SyncKindRows(root);
+        }
+
+        /// <summary>
+        /// 按当前「任务类型」折叠 / 展开「数据记录 / 保存路径 / 实时背景图」三组。
+        /// <para>Report 一律隐藏（它不落 CSV、没有背景图）；读取 / 写入显示。</para>
+        /// </summary>
+        private void SyncKindRows(Grid root)
+        {
+            bool report = KindValue == AcquisitionTaskKind.Report;
+
+            SetRowVisible(root, _recordRow, _recordLabel, _recordContent, !report);
+            SetRowVisible(root, _pathRow, _pathLabel, _pathContent, !report);
+            SetRowVisible(root, _imageRow, _imageLabel, _imageContent, !report);
+        }
+
+        /// <summary>
+        /// 显示 / 隐藏一个表单行：行高在 40 与 0 之间切 + 标签与内容控件切 Visibility。
+        /// <para>只设 <c>Visibility</c> 不够 —— 固定行高的行会留下一个 40 高的空洞。</para>
+        /// </summary>
+        private static void SetRowVisible(
+            Grid root, int row, TextBlock label, UIElement content, bool visible)
+        {
+            if (row >= 0 && row < root.RowDefinitions.Count)
+            {
+                root.RowDefinitions[row].Height = visible
+                    ? new GridLength(FormRowHeight)
+                    : new GridLength(0);
+            }
+
+            Visibility state = visible ? Visibility.Visible : Visibility.Collapsed;
+            label.Visibility = state;
+            content.Visibility = state;
         }
 
         public string TaskName => _nameBox.Text;
@@ -579,7 +647,8 @@ namespace DSH_Modbus采集工具.Ui
 
             // 路径留空是合法的（走默认 DeviceData），但填了就得是个能用的路径 ——
             // 等点「启用」之后才发现写不进去，那时人已经离开这个对话框了
-            if (RecordEnabledValue)
+            // P3.1b：HTTP数据上报没有「记录」概念（整行已隐藏），跳过路径检查。
+            if (RecordEnabledValue && KindValue != AcquisitionTaskKind.Report)
             {
                 string path = SavePathValue;
                 if (path.Length > 0 && !IsUsableFolder(path, out string pathError))

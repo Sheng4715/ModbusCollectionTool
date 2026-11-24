@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **56231 B / 余量约 9 KB**（2026-11-20 校）；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **56892 B / 余量约 8.4 KB**（2026-11-24 校）；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 > 📦 **已搬到细节档的查阅型大表**：§15 完整目录树、§16 样式键全表（53 个 `x:Key`）。
@@ -76,7 +76,7 @@ Window
 | `OverviewNav` 总览 | `OverviewPanel` | 页头右侧下拉框「当前视图」（`FormComboBox`）**三项**：`PLC状态机`（P1.2）/ `生产数据`（占位）/ `数据采集`（P1.4，见 §5.5、§5.8）；卡片内是当前视图 + 底部运行日志卡。⚠️ 选择会记住（`app-settings.json` → `OverviewView`，存**枚举名**，`Modeling/OverviewViewSetting.cs`，见细节 §5.5） |
 | `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入监控 / 输出监控 / 自由监控 / 系统变量）+ 分页 |
 | `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，见 §5.7）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5 只读清单，见 §5.3）。⚠️ 第四档「扫码器」已于 2026-11-04 删除，并入设备连接页 |
-| `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **两档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接 / 右交互，见 §5.9） |
+| `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **三档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接 / 右交互，见 §5.9）/「MES连接」（P4.7，连接方式 HTTP + 请求方法 POST/PUT + 数据模式 JSON_RAW + 服务端 URL，2026-11-24 实现） |
 | `SettingsNav` 设置 | `SettingsPanel` | **卡片顺序（2026-11-08 定案）**：应用标题（P5.6）→ 显示外观（P5.1）→ 开机自启动（P5.5）→ 日志保存（P5.2）→ 项目信息（P5.3）。⚠️ 「自动连接」卡已于 2026-11-05 删除：PLC 的搬去设备连接页，扫码器改用行上「启用」（§7.2） |
 
 切换逻辑：`NavRadioButton` 样式里的 `EventSetter Checked=Nav_Checked`，按 sender 显隐面板。
@@ -163,7 +163,7 @@ Window
 - **左右 Padding 必须同值**，卡片才会在内容区里居中（左以分隔线为基准、右以窗口右缘为基准，两者都只是 Padding，同值即对称）。曾左 20 / 右 36 是历史遗留的不对称，已统一为 20
 - ⚠️ **`Margin` 与 `Padding` 分工不同**：`Margin` 管「让开导航」、`Padding` 管「卡片缩进」；分隔线位置只由 `Margin` 决定，改 `Padding` 不会动线
 - ⚠️ 改 `Margin.Left` 必须**同时**改导航 `Border` 的右边距（两个 112 成对，见 §3.5）；只改一个会让分隔线与内容起点脱节
-- 卡片**外框**已与页面大标题左对齐；卡片**内容**再往内缩各自 `Padding.Left`（设置页三卡 24、设备监控 / 数据管理 / 设备连接 12、总览日志卡无）—— 这是卡片内边距，不是错位
+- 卡片**外框**已与页面大标题左对齐；卡片**内容**再往内缩各自 `Padding.Left`（设置页五卡一律 24、设备监控 / 数据管理 / 设备连接 12、总览日志卡无）—— 这是卡片内边距，不是错位
 - ⚠️ **带分段控件的页面，卡内边距必须是 12**：分段条（`IoSegmentRadioButton` 所在那层 `Border`）靠卡内边距定位，设备连接页曾写 20，导致「PLC连接 / 扫码器连接」比设备监控页往右错 8 DIP（2026-11-04 已统一为 12，UIA 实测两页分段条左缘同为 x=413）
 
 ### 3.8 窗口圆角与边缘线（DWM 绘制）
@@ -357,6 +357,7 @@ public sealed class MyDialog : DialogWindow
 | **PLC 状态机（P1.2）+ Error / Fault 指示灯** | `Expressions/` + `Modeling/MachineState.cs`（布局/模型/持久化 + `MachineStateLamp` + `MachineStateLayout.Lamps` / `LampDotSize` / `LampFontSize`）+ `Ui/MachineStateView.xaml(.cs)`（`BuildLamps` / `ApplyLampState` / `LampVisual`）+ `Ui/MachineStateEditDialog.cs` / `MachineLampEditDialog.cs` + 窗口 `RefreshMachineStates` / `SyncMachineTimer`（§5.5） |
 | **全局变量（P3.3，只管理定义）** | `Modeling/GlobalVariable.cs`（模型/规则/持久化/`GlobalVariableSet.Move`）+ `GlobalVarItem.cs`（`GlobalVarItemSet.Move`）+ 窗口 `GlobalVar*`；**排序** = 表头 ↑↓ 作用于选中行（§5.2；不读不写）。⚠️ **改名会连带改所有引用**（`VariableRenamer` + 四个集合的 `RenameVariableReferences`，见 §5.2.2） |
 | **数据采集（P3.1）** | 模型 `Modeling/AcquisitionTask.cs`（+ `AcquisitionTaskRules`）+ 行包装 `AcquisitionTaskItem.cs` + 对话框 `Ui/AcquisitionTaskDialog.cs`；执行与落盘 `Modeling/AcquisitionCsv.cs` + 窗口 `RunAcquisitionTick` / `RefreshAcquisitionGlobals`（50ms 常驻定时器，**不随页面可见性停**，§5.7） |
+| **HTTP数据上报（P3.1b，✅ 2026-11-24）** | `AcquisitionTaskKind.Report`；`Ui/AcquisitionTaskDialog.cs` 隐藏「数据记录/保存路径/实时背景图」三行；子表列＝字段名 + 来源变量（无读取/写入变量列）；序列化 `Modeling/MesReport.cs`；`MainWindow.Acquisition.cs` 的 `RunReportTaskAsync` 发报（POST/PUT，`ThemeManager.MesUrl`）；`MainWindow.AcquisitionView.cs` 总览排除该类型 |
 | **采集任务「配置错误」关开关/拦截** | 判据 `Modeling/AcquisitionTaskCheck.cs` + 行属性 `HasConfigError` / `EffectiveEnabled`（**必须可写**）/ `CanToggleEnabled`；执行侧只判 `EffectiveEnabled`（§5.7） |
 | **采集「执行完成输出变量」** | 模型 `AcquisitionTask.CompletionVariableName` + 规则 `AcquisitionTaskRules.TryValidateCompletionVariable`（对话框与配置检查共用）；执行侧 `QueueCompletionWrite` / `DrainCompletionWritesAsync`（先回填内存、有地址再 FC06/FC16；**固定 `DisplayFormat.Dec`**）；1=正常、2=异常，固定不可配（§5.7） |
 | **数组只能引用元素（带下标）** | 统一出口 `Modeling/VariableName.cs`（拆写法）+ `VariableReference.cs`（查变量表 / 下标范围 / **变量自身 `ResolveError`** / `Describe` / `ReadValue`）。数组整条（`var1`）在**所有**引用框一律被拒；正确写法 `var1[0]`（0 基）。词法器把 `[数字]` 并入变量名；`TryValidateNames` 改收「返回原因」的委托；`GlobalReadPlan.Apply` 逐元素回填；`AcquisitionWrite.TryBuild(..., elementIndex, ...)` 按元素类型编码（§5.2.3） |
@@ -396,7 +397,7 @@ public sealed class MyDialog : DialogWindow
 ## 12. 发布与交付
 
 > **这一章已整段移到 [AGENTS-发布.md](AGENTS-发布.md)。**
-> 内容：框架依赖发布的产物构成 / 发布命令 / 目录可写性验证 / 覆盖更新只替换 exe 与其配置 /
+> 内容：框架依赖发布的产物构成（**5 个文件，含 `System.IO.Ports.dll`**）/ 发布命令 / 目录可写性验证 / 覆盖更新只替换程序本体、配置与 `Images\` `Log\` 原样保留 /
 > 目标机 .NET 8 Desktop Runtime 前置条件。
 >
 > 要发版、改发布参数、或排查「现场机双击没反应」时先打开那份。

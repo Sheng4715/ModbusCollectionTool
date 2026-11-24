@@ -1308,6 +1308,50 @@ namespace DSH_Modbus采集工具
 
             ApplySerialSettings();
             ApplyStationNumber();
+
+            // P4.7：MES 连接参数（HTTP 数据上报的服务端地址与请求方法）
+            ApplyMesSettings();
+        }
+
+        /// <summary>
+        /// 回填 MES 连接参数（P4.7）。
+        /// <para>URL 空串 = 没保存过，界面保持 XAML 默认（空）；方法用保存值，缺省 POST。</para>
+        /// </summary>
+        private void ApplyMesSettings()
+        {
+            if (MesUrlTextBox != null && ThemeManager.MesUrl.Length > 0)
+            {
+                MesUrlTextBox.Text = ThemeManager.MesUrl;
+            }
+
+            if (MesMethodComboBox != null)
+            {
+                // 程序化回填会触发 SelectionChanged → MesMethodComboBox_SelectionChanged，
+                // 而 ThemeManager.SetMesMethod 是幂等的（写入的就是刚读出来的值），
+                // 所以不必像串口那样加「回填中」闸门。
+                string method = ThemeManager.MesMethod;
+                MesMethodComboBox.SelectedIndex = string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+            }
+        }
+
+        /// <summary>MES 请求方法变更：POST / PUT 落盘（与连接方式无关，随时可改）。</summary>
+        private void MesMethodComboBox_SelectionChanged(object sender, RoutedEventArgs e)
+        {
+            if (MesMethodComboBox == null)
+            {
+                return;
+            }
+
+            ThemeManager.SetMesMethod(MesMethodComboBox.SelectedIndex == 1 ? "PUT" : "POST");
+        }
+
+        /// <summary>MES 服务端 URL 失焦落盘（与 IP / 端口同一约定：失焦而非逐字符）。</summary>
+        private void MesUrlTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is TextBox box)
+            {
+                ThemeManager.SetMesUrl(box.Text);
+            }
         }
 
         /// <summary>

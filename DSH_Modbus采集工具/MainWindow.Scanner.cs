@@ -156,20 +156,22 @@ namespace DSH_Modbus采集工具
         private static bool HasUsableScannerEndpoint(ScannerDefinition def) =>
             !string.IsNullOrWhiteSpace(def.Ip) && def.Port is > 0 and <= 65535;
 
-        // ---------- P4.5：PLC 连接 / 扫码器连接 两档页签 ----------
+        // ---------- P4.5 / P4.7：PLC 连接 / 扫码器连接 / MES 连接 三档页签 ----------
 
         private void DeviceView_Checked(object sender, RoutedEventArgs e)
         {
-            if (PlcConnectionSegment == null || ScannerConnectionSegment == null
-                || PlcConnectionPanel == null || ScannerConnectionPanel == null)
+            if (PlcConnectionSegment == null || ScannerConnectionSegment == null || MesConnectionSegment == null
+                || PlcConnectionPanel == null || ScannerConnectionPanel == null || MesConnectionPanel == null)
             {
                 return;
             }
 
             bool scannerView = ScannerConnectionSegment.IsChecked == true;
+            bool mesView = MesConnectionSegment.IsChecked == true;
 
-            PlcConnectionPanel.Visibility = scannerView ? Visibility.Collapsed : Visibility.Visible;
+            PlcConnectionPanel.Visibility = (scannerView || mesView) ? Visibility.Collapsed : Visibility.Visible;
             ScannerConnectionPanel.Visibility = scannerView ? Visibility.Visible : Visibility.Collapsed;
+            MesConnectionPanel.Visibility = mesView ? Visibility.Visible : Visibility.Collapsed;
 
             if (scannerView)
             {

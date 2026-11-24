@@ -73,7 +73,8 @@ namespace DSH_Modbus采集工具.Ui
         /// 标签下边距。默认 10 配「Auto 行高 + 行内 10 下边距」的老写法；
         /// 行高固定时传 0 —— 否则标签会被这 10 顶上去，比同行控件高半个边距。
         /// </param>
-        protected void AddLabel(
+        /// <returns>创建的标签（P3.1b 起返回引用：上报类型要整行隐藏，调用方好拿它设 Visibility）。</returns>
+        protected TextBlock AddLabel(
             Grid root, string text, int row, bool topAlign = false, double topMargin = 4,
             double bottomMargin = 10)
         {
@@ -90,6 +91,7 @@ namespace DSH_Modbus采集工具.Ui
             Grid.SetRow(label, row);
             Grid.SetColumn(label, 0);
             root.Children.Add(label);
+            return label;
         }
 
         protected static void Place(Grid root, UIElement element, int row, Thickness margin, bool stretch = false)

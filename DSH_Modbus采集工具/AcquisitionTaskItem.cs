@@ -19,6 +19,7 @@ namespace DSH_Modbus采集工具
     {
         private readonly Func<string, GlobalVariable?> _findVariable;
         private bool _isWriteTask;
+        private bool _isReportTask;
         private bool _isSelected;
         private int _index;
 
@@ -122,6 +123,9 @@ namespace DSH_Modbus采集工具
                 Raise();
                 Raise(nameof(HasSourceError));
                 Raise(nameof(SourceHint));
+
+                // 上报类型的「数据类型」列反推自来源变量，来源一变类型列就要跟着变
+                Raise(nameof(TypeDisplayName));
 
                 // 来源一改，两件事跟着变：写入变量这一格能不能编辑；已填的写入变量还合不合法
                 Raise(nameof(CanEditVariable));
@@ -230,6 +234,13 @@ namespace DSH_Modbus采集工具
         public bool IsWriteTask => _isWriteTask;
 
         /// <summary>
+        /// 所属任务组是不是**上报类型**（P3.1b）。由父行统一设置。
+        /// <para>上报类型的「数据类型」列反推自**来源变量**（不是写入变量），
+        /// 见 <see cref="TypeDisplayName"/>。</para>
+        /// </summary>
+        public bool IsReportTask => _isReportTask;
+
+        /// <summary>
         /// 写入变量这一格**能不能打字**（用户定案 2026-10-27）。
         /// <para>
         /// 读取类型：恒可编辑。
@@ -240,7 +251,7 @@ namespace DSH_Modbus采集工具
         /// </summary>
         public bool CanEditVariable => !_isWriteTask || SourceVariable != null;
 
-        /// <summary>父行设置写入类型，并刷新所有随之变化的列。</summary>
+        /// <summary>父行设置写入/上报类型，并刷新所有随之变化的列。</summary>
         internal void SetWriteTask(bool value)
         {
             if (_isWriteTask == value)
@@ -253,6 +264,23 @@ namespace DSH_Modbus采集工具
             Raise(nameof(CanEditVariable));
             Raise(nameof(HasVariableError));
             Raise(nameof(VariableHint));
+        }
+
+        /// <summary>
+        /// 父行设置**上报**类型（P3.1b）。上报与写入分开：上报没有「写入变量」列，
+        /// 不参与写入任务的那套置灰 / 类型匹配 / 只读区判据；只影响
+        /// <see cref="TypeDisplayName"/>（反推自来源变量）。
+        /// </summary>
+        internal void SetReportTask(bool value)
+        {
+            if (_isReportTask == value)
+            {
+                return;
+            }
+
+            _isReportTask = value;
+            Raise(nameof(IsReportTask));
+            Raise(nameof(TypeDisplayName));
         }
 
         /// <summary>来源变量填了、但系统变量表与全局变量表里都没有 → 标红提示。</summary>
@@ -291,11 +319,31 @@ namespace DSH_Modbus采集工具
         /// 数据类型列（**只读**，由变量反推）。
         /// <para>数组元素显示**元素类型**（如 <c>INT</c>）—— 这一格的值就是一个元素。
         /// 没填变量、或变量名不存在时给一个短横占位 —— 留空白会让人以为这列坏了。</para>
+        /// <para>
+        /// ⚠️ **上报类型反推自「来源变量」**（P3.1b）：上报的数据项只有
+        /// 「字段名称 + 来源变量」，没有「读取变量 / 写入变量」，故类型列
+        /// 只能看来源。来源是常量时显示「常量」，是系统变量/全局变量/数组元素
+        /// 时显示对应的类型名。
+        /// </para>
         /// </summary>
         public string TypeDisplayName
         {
             get
             {
+                // 上报（P3.1b）：类型由「来源变量」决定，不是 VariableName。
+                if (_isReportTask)
+                {
+                    AcquisitionSource? reportSource = SourceVariable;
+                    if (reportSource == null)
+                    {
+                        return "—";
+                    }
+
+                    return reportSource.IsConstant
+                        ? "常量"
+                        : reportSource.TypeDisplayName;
+                }
+
                 if (!VariableReference.TryResolve(
                         Model.VariableName, _findVariable, allowWholeArray: false,
                         out GlobalVariable? variable, out int? elementIndex, out _)
@@ -513,6 +561,7 @@ namespace DSH_Modbus采集工具
             {
                 var row = new AcquisitionItemRow(item, findVariable);
                 row.SetWriteTask(IsWrite);
+                row.SetReportTask(IsReport);
                 AttachItem(row);
             }
 
@@ -567,6 +616,16 @@ namespace DSH_Modbus采集工具
 
         /// <summary>是否写入类型 —— 子表的列集合要跟着它变（写入多一列「来源变量」）</summary>
         public bool IsWrite => Model.Kind == AcquisitionTaskKind.Write;
+
+        /// <summary>
+        /// 是否「HTTP 数据上报」类型（P3.1b）。
+        /// <para>上报子表同写入任务一样有「来源变量」列，但没有「读取变量 / 写入变量」列；
+        /// 字段名直接取「项名称」，数据类型列由**来源变量**反推（见 <see cref="AcquisitionItemRow"/>）。</para>
+        /// </summary>
+        public bool IsReport => Model.Kind == AcquisitionTaskKind.Report;
+
+        /// <summary>是否显示「来源变量」列 —— 写入与上报都有，读取没有。</summary>
+        public bool HasSourceColumn => IsWrite || IsReport;
 
         /// <summary>
         /// 执行方式显示名（只读，改它走任务选项对话框）。
@@ -704,6 +763,7 @@ namespace DSH_Modbus采集工具
 
             var row = new AcquisitionItemRow(model, _findVariable);
             row.SetWriteTask(IsWrite);
+            row.SetReportTask(IsReport);
             AttachItem(row);
             ReindexItems();
             RaiseCount();
@@ -836,9 +896,10 @@ namespace DSH_Modbus采集工具
             Model.LiveImagePath = liveImagePath ?? string.Empty;
             Model.CompletionVariableName = completionVariableName ?? string.Empty;
 
-            // 从写入切回读取时，「来源变量」不再有意义。留着不清的话，切回写入会
+            // 切回**读取**时，「来源变量」不再有意义。留着不清的话，切回写入/上报会
             // 冒出上次的残留值，而用户中途早改过别的项了，看见只会困惑。
-            if (kind != AcquisitionTaskKind.Write)
+            // ⚠️ 上报（Report）**保留**来源变量：上报的字段值正是从来源变量取的。
+            if (kind == AcquisitionTaskKind.Read)
             {
                 foreach (AcquisitionItemRow row in Items)
                 {
@@ -857,11 +918,15 @@ namespace DSH_Modbus采集工具
             Raise(nameof(ScheduleDisplay));
             Raise(nameof(Enabled));
             Raise(nameof(IsWrite));
+            Raise(nameof(IsReport));
+            Raise(nameof(HasSourceColumn));
 
-            // 读写互切会改写每一行的规则：写入变量只在写入类型下受「先填来源变量」约束
+            // 读写/上报互切会改写每一行的规则：写入变量只在写入类型下受「先填来源变量」约束；
+            // 上报类型的「数据类型」列反推自来源变量。
             foreach (AcquisitionItemRow row in Items)
             {
                 row.SetWriteTask(IsWrite);
+                row.SetReportTask(IsReport);
             }
 
             // 读写互切会整套换掉判据（读取只查变量，写入还要查来源与类型）

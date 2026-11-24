@@ -11,12 +11,12 @@
 
 ## 12. 发布与交付（2026-11-03 定案）
 
-**形态：框架依赖（framework-dependent）**。产物只有 **4 个文件 / 约 638 KB**，目标机必须预装
+**形态：框架依赖（framework-dependent）**。产物只有 **5 个文件 / 约 731 KB**，目标机必须预装
 **\.NET 8 Desktop Runtime**。发布到 `Release\<程序集名>_<版本号>\`，`Release/` 已进 `.gitignore`。
 
 > 全部结论均为 2026-11-03 实测（发布 → 启动 → 改配置 → 覆盖更新 → 拷到"第二台机器" → 只读目录），
 > 不是推断。**唯独"目标机没装运行时"这条没实测**（本机 8/9/10 全装，且 apphost 会查注册表兜底）。
-> 体积于 2026-11-18 重新实测（dll 随功能增长 373 → 497 KB），**以本文数字为准**。
+> 体积于 **2026-11-24** 重新实测（dll 随功能增长 371 → 497 → 550 KB），**以本文数字为准**。
 
 ### 12.1 发布命令
 
@@ -47,9 +47,9 @@ dotnet publish "DSH_Modbus采集工具\DSH_Modbus采集工具.csproj" `
 ### 12.2 产物
 
 ```
-Release\DSH_Modbus采集工具_1.0.2\                       合计 5 个文件 / 约 718 KB（2026-11-18 实测）
-├── DSH_Modbus采集工具.exe                  140 KB   apphost，只负责找运行时、加载 dll
-├── DSH_Modbus采集工具.dll                537.5 KB   全部业务代码（含 XAML 编译出的 BAML）
+Release\DSH_Modbus采集工具_1.0.2\                       合计 5 个文件 / 约 731 KB（2026-11-24 实测）
+├── DSH_Modbus采集工具.exe                140.0 KB   apphost，只负责找运行时、加载 dll
+├── DSH_Modbus采集工具.dll                550.0 KB   全部业务代码（含 XAML 编译出的 BAML）
 ├── System.IO.Ports.dll                    34.7 KB   串口驱动（P4.4）—— ⚠️ 必须一起拷
 ├── DSH_Modbus采集工具.deps.json            5.9 KB   依赖清单（含 System.IO.Ports 条目）
 └── DSH_Modbus采集工具.runtimeconfig.json   0.4 KB   声明要 .NET 8 桌面运行时
@@ -109,10 +109,14 @@ Release\DSH_Modbus采集工具_1.0.2\                       合计 5 个文件 /
 **用户看到的是"改了主题，下次启动又变回去"，而且一条日志都没有**（写日志本身就失败了）。
 → 装到 `D:\Apps\...`、桌面或用户目录；**不要** `C:\Program Files\`。
 
-### 12.5 更新：只覆盖 4 个文件
+### 12.5 更新：只覆盖程序本体那 5 个文件
 
 实测：覆盖 exe/dll 后，`app-settings.json` 哈希与更新前**完全一致**，`Images\`、`Log\`、六个 json 原样保留。
-**不需要重装运行时**，也不需要动配置 —— 这是框架依赖相对自包含最实际的收益（497 KB vs 150 MB）。
+**不需要重装运行时**，也不需要动配置 —— 这是框架依赖相对自包含最实际的收益（731 KB vs 150 MB）。
+
+⚠️ **2026-11-18 起产物多一个 `System.IO.Ports.dll`**（串口驱动，P4.4）：只拷 exe 会得到一个
+「以太网能连、串口一点就报 `FileNotFoundException`」的包。下面的 `Copy-Item` 已用 `*.dll`
+通配符覆盖到它，**不要**手改成只拷 exe。
 
 ```powershell
 Get-Process -Name "DSH_Modbus采集工具" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -154,7 +158,7 @@ catch { return new List<AcquisitionTask>(); }
 
 | 方案 | 结论 | 理由 |
 |---|---|---|
-| 框架依赖 | ✅ **当前采用** | 638 KB；更新只换 497 KB |
+| 框架依赖 | ✅ **当前采用** | 731 KB；更新只换这 5 个文件（配置 json 不动） |
 | 自包含（`--self-contained true`） | ⚠️ 备选 | 150–180 MB；免装运行时，现场机器不可控时才用 |
 | 单文件（`PublishSingleFile`） | ❌ 不用 | 体积同自包含、首次启动要解压、`.deps.json`/`.runtimeconfig.json` 被吞进 exe 后无法在目标机改运行时绑定 |
 | 裁剪（`PublishTrimmed`） | ❌ **绝对不能开** | WPF 不支持裁剪，XAML 里靠反射/字符串的路径会被裁掉，症状是"某几个页面一点就崩"，且**只在发布版出现** |
@@ -242,7 +246,7 @@ dotnet publish "DSH_Modbus采集工具\DSH_Modbus采集工具.csproj" `
 
 ```powershell
 $dir = "Release\DSH_Modbus采集工具_1.0.2"
-Get-ChildItem $dir -Recurse -File            # ① 应为 4 个文件，无 pdb、无 Log
+Get-ChildItem $dir -Recurse -File            # ① 应为 5 个文件（含 System.IO.Ports.dll），无 pdb、无 Log
 (Get-Item "$dir\DSH_Modbus采集工具.exe").VersionInfo.ProductVersion   # ② 应为干净的 1.0.2+<sha>
 Get-Content "$dir\DSH_Modbus采集工具.runtimeconfig.json" | Select-String "Microsoft\."  # ③ 必须含 WindowsDesktop
 Start-Process "$dir\DSH_Modbus采集工具.exe"; Start-Sleep 6

@@ -6,8 +6,10 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -590,7 +592,23 @@ namespace DSH_Modbus采集工具
             // 照记的话 CSV 会连续出现同一个数（甚至初始值 0），事后看与「设备真的稳定输出 0」
             // 完全无法区分 —— 这比缺一段记录更糟，因为它是**假的**。
             // 断线本身另有日志与底栏提示，用户知道没在采。
-            if (!_session.IsConnected)
+            //
+            // ⚠️ **HTTP数据上报（Report）必须豁免这一条**（2026-11-24）：上报与 PLC 无关，
+            // 值取内存变量当前值、发的是本地 HTTP 请求。因未连接就整拍 return，
+            // 会让「只配上报表」的现场在 PLC 掉线时连上报一起停摆。
+            // 判据用 EffectiveEnabled（= 启用 且 无配置错误），与下面的主循环同口径；
+            // 早退扫描命中即 break，风格与下面的 needsSystemValues 一致。
+            bool hasReportTask = false;
+            foreach (AcquisitionTaskItem probe in _acqTaskSet.Items)
+            {
+                if (probe.EffectiveEnabled && probe.Model.Kind == AcquisitionTaskKind.Report)
+                {
+                    hasReportTask = true;
+                    break;
+                }
+            }
+
+            if (!_session.IsConnected && !hasReportTask)
             {
                 return;
             }
@@ -656,6 +674,15 @@ namespace DSH_Modbus采集工具
                 if (task.Kind == AcquisitionTaskKind.Write)
                 {
                     BeginWriteTask(item, task, state, now);
+                    continue;
+                }
+
+                // HTTP数据上报（P3.1b，2026-11-24）：同样必须在下面的 RecordEnabled
+                // 判断**之前** —— 上报没有「数据记录」这个概念（不落 CSV），
+                // 落到下面就会被当成「没开记录」而只写一条日志、根本不发报文。
+                if (task.Kind == AcquisitionTaskKind.Report)
+                {
+                    BeginReportTask(item, task, state, now);
                     continue;
                 }
 
@@ -919,6 +946,119 @@ namespace DSH_Modbus采集工具
             finally
             {
                 state.WriteInFlight = false;
+            }
+        }
+
+        /// <summary>
+        /// 起一次 HTTP 上报（fire-and-forget）。
+        /// <para>
+        /// ⚠️ **不能在这里 await**：本方法的调用点是 50ms 采集定时器回调，
+        /// 一 await 就把整个采集节拍卡在一次 HTTP 往返上，别的任务组跟着停。
+        /// </para>
+        /// <para>
+        /// 与写入任务不同，这里**不挡重入**（不设 <c>WriteInFlight</c>）：
+        /// 上报不涉及 Modbus 往返、不重试，一次发报就是一次本地 HTTP 请求，
+        /// 周期极短时最多几个请求并行，异常各自在 <see cref="RunReportTaskAsync"/> 里收掉。
+        /// </para>
+        /// </summary>
+        private void BeginReportTask(
+            AcquisitionTaskItem item, AcquisitionTask task, AcquisitionTaskState state, DateTime now)
+        {
+            _ = RunReportTaskAsync(item, task, now);
+        }
+
+        /// <summary>
+        /// 执行一次 HTTP 上报：把数据项拼成平铺 JSON，POST / PUT 到 MES 服务端。
+        /// <para>口径（2026-11-24 定案）：独立于 PLC，值取内存变量当前值；成功写输出变量 1、
+        /// 失败写 2 且不重试；报文无时间戳、无任务组名、无外层封装。</para>
+        /// <para>
+        /// ⚠️ 未连接 PLC **不影响**本方法：上报与 Modbus 无关（tick 顶部的未连接早退
+        /// 也已对 Report 豁免）。<c>GlobalVariable.Value</c> 停在最后一次读到的值是有意的 ——
+        /// MES 侧看到的是一个确定的历史值，而不是缺报。
+        /// </para>
+        /// </summary>
+        private async Task RunReportTaskAsync(AcquisitionTaskItem item, AcquisitionTask task, DateTime now)
+        {
+            // 与 RunWriteTaskAsync 同一纪律：正常分支已经排过结果变量之后又抛异常时，
+            // 不能再补一个 2 把 1 盖掉。
+            bool completionQueued = false;
+
+            try
+            {
+                // 来源变量可能是系统变量，要现算（只在真的用到系统变量时才付开销）。
+                IReadOnlyDictionary<string, string>? systemValues = null;
+                for (int i = 0; i < task.Items.Count; i++)
+                {
+                    AcquisitionSource? s = AcquisitionSource.Resolve(
+                        task.Items[i].SourceVariableName, _globalVarSet.FindByName);
+                    if (s is { IsSystemVariable: true })
+                    {
+                        systemValues = SystemVariableValues.Capture(now, _runClock.Elapsed);
+                        break;
+                    }
+                }
+
+                if (!MesReport.TryBuildBody(
+                        task, _globalVarSet.FindByName, systemValues,
+                        out string json, out string buildError))
+                {
+                    LogTaskActivity(task, AcquisitionTaskRules.DescribeLogFailure(task, item.Index, buildError),
+                        DeviceLogLevel.Warning);
+                    QueueCompletionWrite(task, AcquisitionTaskRules.ResultFailure);
+                    completionQueued = true;
+                    return;
+                }
+
+                string url = ThemeManager.MesUrl;
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    LogTaskActivity(task, AcquisitionTaskRules.DescribeLogFailure(task, item.Index, "未配置 MES 服务端 URL"),
+                        DeviceLogLevel.Warning);
+                    QueueCompletionWrite(task, AcquisitionTaskRules.ResultFailure);
+                    completionQueued = true;
+                    return;
+                }
+
+                string method = ThemeManager.MesMethod;
+                if (!MesReport.IsValidMethod(method))
+                {
+                    method = MesReport.DefaultMethod;
+                }
+
+                // 每次上报新建一个 HttpClient：上报是低频动作（周期通常在秒级），
+                // 复用实例还要管生命周期，不值得。固定 5 秒超时 —— 超时会抛
+                // TaskCanceledException，由下面的 catch 记成「执行失败：{原因}」。
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                HttpResponseMessage response = string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase)
+                    ? await http.PutAsync(url, content).ConfigureAwait(true)
+                    : await http.PostAsync(url, content).ConfigureAwait(true);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    LogTaskActivity(task, AcquisitionTaskRules.DescribeLogFailure(task, item.Index,
+                        "服务端返回 " + (int)response.StatusCode + " " + response.StatusCode),
+                        DeviceLogLevel.Warning);
+                    QueueCompletionWrite(task, AcquisitionTaskRules.ResultFailure);
+                    completionQueued = true;
+                    return;
+                }
+
+                LogTaskActivity(task, AcquisitionTaskRules.DescribeLogSuccess(task, item.Index),
+                    DeviceLogLevel.Neutral);
+                QueueCompletionWrite(task, AcquisitionTaskRules.ResultSuccess);
+                completionQueued = true;
+            }
+            catch (Exception ex)
+            {
+                // fire-and-forget 里漏出的异常没人接，必须自己收掉
+                LogTaskActivity(task, AcquisitionTaskRules.DescribeLogFailure(task, item.Index, ex.Message),
+                    DeviceLogLevel.Warning);
+                if (!completionQueued)
+                {
+                    QueueCompletionWrite(task, AcquisitionTaskRules.ResultFailure);
+                }
             }
         }
 

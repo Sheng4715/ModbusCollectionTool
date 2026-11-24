@@ -9,10 +9,16 @@ using System.Text.Json.Serialization;
 namespace DSH_Modbus采集工具.Modeling
 {
     /// <summary>
-    /// 任务组的类型（P3.1）：**数据读取** 或 **数据写入**。
+    /// 任务组的类型（P3.1 / P3.1b）：**数据读取**、**数据写入** 或 **HTTP数据上报（Report）**。
     /// <para>
-    /// ⚠️ 目前只影响界面显示与后续执行分支，**读写链路都还没接** ——
-    /// 需求要求「先做 UI 再实现功能」，所以这一层刻意只落地结构。
+    /// 读取与写入走 CSV 落盘链路；上报（P3.1b）**不写表格文件**，
+    /// 而是把数据项按「字段名称 + 来源变量」序列化成报文发给 MES（连接档见 P4.7）。
+    /// 故「数据记录」「实时背景图」两项对它没有意义，界面上整行隐藏。
+    /// </para>
+    /// <para>
+    /// ⚠️ <see cref="Report"/> **不落 CSV**：它的报文构造走
+    /// <see cref="MesReport"/>（纯平铺 JSON，无时间戳、无任务组名、无外层封装），
+    /// 与 <see cref="AcquisitionTaskRules.RecordExtension"/> 那条链路完全不相干。
     /// </para>
     /// </summary>
     public enum AcquisitionTaskKind
@@ -22,6 +28,9 @@ namespace DSH_Modbus采集工具.Modeling
 
         /// <summary>数据写入</summary>
         Write,
+
+        /// <summary>HTTP 数据上报（P3.1b）：把数据项拼成平铺 JSON 发给 MES，不写表格文件。</summary>
+        Report,
     }
 
     /// <summary>
@@ -424,7 +433,12 @@ namespace DSH_Modbus采集工具.Modeling
 
         /// <summary>任务类型显示名</summary>
         public static string DescribeKind(AcquisitionTaskKind kind) =>
-            kind == AcquisitionTaskKind.Write ? "数据写入" : "数据读取";
+            kind switch
+            {
+                AcquisitionTaskKind.Write => "数据写入",
+                AcquisitionTaskKind.Report => "HTTP数据上报",
+                _ => "数据读取",
+            };
 
         /// <summary>
         /// 执行方式的**短词**版（<c>周期</c> / <c>触发</c>）。
@@ -450,7 +464,12 @@ namespace DSH_Modbus采集工具.Modeling
         /// </para>
         /// </summary>
         public static string DescribeShortKind(AcquisitionTaskKind kind) =>
-            kind == AcquisitionTaskKind.Write ? "写入" : "读取";
+            kind switch
+            {
+                AcquisitionTaskKind.Write => "写入",
+                AcquisitionTaskKind.Report => "HTTP数据上报",
+                _ => "读取",
+            };
 
 
         /// <summary>
@@ -458,6 +477,10 @@ namespace DSH_Modbus采集工具.Modeling
         /// <para>
         /// 序号给**当下定位**，名称给**事后可读**（用户定案）。名称是写日志那一刻的快照，
         /// 之后改名历史行不跟着改 —— 那是历史，改了就查不清当时是哪个组了。
+        /// </para>
+        /// <para>
+        /// ⚠️ **上报类型的动作名不带「任务」后缀**：日志是「触发HTTP数据上报」/「周期HTTP数据上报」
+        /// （用户原始需求文案），而读取 / 写入才是「触发读取任务」/「周期写入任务」。
         /// </para>
         /// </summary>
         public static string DescribeLogPrefix(AcquisitionTask task, int index)
@@ -467,14 +490,26 @@ namespace DSH_Modbus采集工具.Modeling
                 return string.Empty;
             }
 
-            return "任务组" + index.ToString(CultureInfo.InvariantCulture)
+            string prefix = "任务组" + index.ToString(CultureInfo.InvariantCulture)
                 + "（" + (task.Name ?? string.Empty) + "）："
-                + DescribeShortTrigger(task.Trigger) + DescribeShortKind(task.Kind) + "任务";
+                + DescribeShortTrigger(task.Trigger);
+
+            // 上报类型的动作名是「HTTP数据上报」，本身不带「任务」后缀；
+            // 读取/写入才是「读取任务 / 写入任务」。
+            return task.Kind == AcquisitionTaskKind.Report
+                ? prefix + DescribeShortKind(task.Kind)
+                : prefix + DescribeShortKind(task.Kind) + "任务";
         }
 
-        /// <summary>执行成功的日志。成功**不带原因**（用户定案），也就不留冒号。</summary>
+        /// <summary>
+        /// 执行成功的日志。成功**不带原因**（用户定案），也就不留冒号。
+        /// <para>
+        /// ⚠️ 上报类型**恒不带「（未启用数据记录）」后缀**：它根本没有 RecordEnabled 这个概念
+        /// （不落 CSV），加了会让用户以为「开了记录就能写文件」。
+        /// </para>
+        /// </summary>
         public static string DescribeLogSuccess(AcquisitionTask task, int index) =>
-            DescribeLogPrefix(task, index) + (task != null && task.RecordEnabled
+            DescribeLogPrefix(task, index) + (task != null && (task.RecordEnabled || task.Kind == AcquisitionTaskKind.Report)
                 ? "执行完成"
                 : "执行完成（未启用数据记录）");
 
@@ -582,6 +617,36 @@ namespace DSH_Modbus采集工具.Modeling
         /// <summary>秒数格式化：整数不带小数点（5 而不是 5.0），小数最多三位。</summary>
         public static string FormatSeconds(double seconds) =>
             seconds.ToString("0.###", CultureInfo.InvariantCulture);
+
+        // ---------- HTTP 数据上报（P3.1b，2026-11-24 定案） ----------
+
+        /// <summary>字段名称最大长度（JSON key 给得宽松些）。</summary>
+        public const int MaxFieldNameLength = 128;
+
+        /// <summary>
+        /// 上报任务「字段名称」校验：非空、不超长。允许中文（JSON key 允许任意 Unicode）。
+        /// <para>⚠️ 组内**不重名**不在这里查 —— 那是跨数据项的比较，由
+        /// <see cref="AcquisitionTaskCheck"/> 做。</para>
+        /// </summary>
+        public static bool TryValidateFieldName(string? name, out string error)
+        {
+            error = string.Empty;
+            name ??= string.Empty;
+
+            if (name.Trim().Length == 0)
+            {
+                error = "字段名称不能为空";
+                return false;
+            }
+
+            if (name.Length > MaxFieldNameLength)
+            {
+                error = "字段名称最多 " + MaxFieldNameLength + " 个字符（当前 " + name.Length + "）";
+                return false;
+            }
+
+            return true;
+        }
 
         /// <summary>
         /// 任务名称校验：非空、不超长、**能当文件夹名**。

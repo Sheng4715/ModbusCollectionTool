@@ -103,16 +103,57 @@ namespace DSH_Modbus采集工具.Modeling
                 }
             }
 
-            for (int i = 0; i < task.Items.Count; i++)
+            // 按项检查：读取 / 写入共用 DescribeItem（各自内部分支）。
+            // ⚠️ 上报**不能**走它 —— 上报的数据项没有「读取变量 / 写入变量」这一说，
+            // 走进去只会被报「未填读取变量」。故上报另起一个并列分支（见下）。
+            if (task.Kind != AcquisitionTaskKind.Report)
             {
-                AcquisitionItem item = task.Items[i];
-                if (item == null)
+                for (int i = 0; i < task.Items.Count; i++)
                 {
-                    issues.Add("项" + (i + 1) + "：数据项为空");
-                    continue;
-                }
+                    AcquisitionItem item = task.Items[i];
+                    if (item == null)
+                    {
+                        issues.Add("项" + (i + 1) + "：数据项为空");
+                        continue;
+                    }
 
-                DescribeItem(task.Kind, i + 1, item, findVariable, issues);
+                    DescribeItem(task.Kind, i + 1, item, findVariable, issues);
+                }
+            }
+
+            // HTTP 上报（P3.1b）：字段名非空、组内不重名；来源变量可解析（含系统变量/常量/数组元素）。
+            if (task.Kind == AcquisitionTaskKind.Report)
+            {
+                var seenFields = new HashSet<string>(StringComparer.Ordinal);
+                for (int i = 0; i < task.Items.Count; i++)
+                {
+                    AcquisitionItem item = task.Items[i];
+                    if (item == null)
+                    {
+                        continue;
+                    }
+
+                    string prefix = DescribeItemPrefix(i + 1, item.Name);
+
+                    if (!AcquisitionTaskRules.TryValidateFieldName(item.Name, out string fieldError))
+                    {
+                        issues.Add(prefix + fieldError);
+                        continue;
+                    }
+
+                    if (!seenFields.Add(item.Name.Trim()))
+                    {
+                        issues.Add(prefix + "字段名称「" + item.Name.Trim() + "」重复（JSON 的 key 必须唯一）");
+                        continue;
+                    }
+
+                    // 来源变量（值从哪来）：复用与写入任务一致的解析口径。
+                    // 常量（# 开头）也是合法的来源（MesReport 按字面量序列化）。
+                    if (AcquisitionSource.Resolve(item.SourceVariableName, findVariable) == null)
+                    {
+                        issues.Add(prefix + AcquisitionSource.DescribeResolveError(item.SourceVariableName, findVariable));
+                    }
+                }
             }
 
             return issues;

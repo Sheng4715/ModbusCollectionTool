@@ -1688,14 +1688,14 @@
                         <ColumnDefinition Width="34"/>   <!-- 序号 -->
                         <ColumnDefinition Width="150"/>  <!-- 项名称 -->
 
-                        <!-- 来源变量：仅写入类型占位。Width 只在 Style 里给，不写属性 ——
-                             属性值是局部值，会压过 Style 触发器，列宽就切不动了 -->
+                        <!-- 来源变量：写入 / 上报类型占位（读取类型没有这一列）。Width 只在 Style 里给，
+                             不写属性 —— 属性值是局部值，会压过 Style 触发器，列宽就切不动了 -->
                         <ColumnDefinition>
                             <ColumnDefinition.Style>
                                 <Style TargetType="ColumnDefinition">
                                     <Setter Property="Width" Value="0"/>
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding DataContext.IsWrite,
+                                        <DataTrigger Binding="{Binding DataContext.HasSourceColumn,
                                                        RelativeSource={RelativeSource AncestorType=ItemsControl}}" Value="True">
                                             <Setter Property="Width" Value="150"/>
                                         </DataTrigger>
@@ -1704,7 +1704,21 @@
                             </ColumnDefinition.Style>
                         </ColumnDefinition>
 
-                        <ColumnDefinition Width="180"/>  <!-- 读取变量 / 写入变量 -->
+                        <!-- 读取变量 / 写入变量：读取与写入都有这一列，上报（Report）没有。
+                             Width 只在 Style 里给，Report 时压 0（与来源变量列同款手法）。 -->
+                        <ColumnDefinition>
+                            <ColumnDefinition.Style>
+                                <Style TargetType="ColumnDefinition">
+                                    <Setter Property="Width" Value="180"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DataContext.IsReport,
+                                                       RelativeSource={RelativeSource AncestorType=ItemsControl}}" Value="True">
+                                            <Setter Property="Width" Value="0"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ColumnDefinition.Style>
+                        </ColumnDefinition>
                         <ColumnDefinition Width="*"/>    <!-- 数据类型（只读） -->
                         <ColumnDefinition Width="30"/>   <!-- 删除 -->
                     </Grid.ColumnDefinitions>
@@ -1909,13 +1923,13 @@
                                     <ColumnDefinition Width="34"/>   <!-- 序号 -->
                                     <ColumnDefinition Width="150"/>  <!-- 项名称 -->
 
-                                    <!-- 来源变量：仅写入类型占位，Width 只由 Style 给 -->
+                                    <!-- 来源变量：写入 / 上报类型占位，Width 只由 Style 给 -->
                                     <ColumnDefinition>
                                         <ColumnDefinition.Style>
                                             <Style TargetType="ColumnDefinition">
                                                 <Setter Property="Width" Value="0"/>
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsWrite}" Value="True">
+                                                    <DataTrigger Binding="{Binding HasSourceColumn}" Value="True">
                                                         <Setter Property="Width" Value="150"/>
                                                     </DataTrigger>
                                                 </Style.Triggers>
@@ -1923,12 +1937,35 @@
                                         </ColumnDefinition.Style>
                                     </ColumnDefinition>
 
-                                    <ColumnDefinition Width="180"/>  <!-- 读取变量 / 写入变量 -->
+                                    <!-- 读取变量 / 写入变量：Report 压 0（没有这一列） -->
+                                    <ColumnDefinition>
+                                        <ColumnDefinition.Style>
+                                            <Style TargetType="ColumnDefinition">
+                                                <Setter Property="Width" Value="180"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsReport}" Value="True">
+                                                        <Setter Property="Width" Value="0"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ColumnDefinition.Style>
+                                    </ColumnDefinition>
                                     <ColumnDefinition Width="*"/>    <!-- 数据类型 -->
                                     <ColumnDefinition Width="30"/>   <!-- 行尾 × -->
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="#" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="项名称" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Text" Value="项名称"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsReport}" Value="True">
+                                                    <Setter Property="Text" Value="字段名称"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                                 <TextBlock Grid.Column="2" Text="来源变量" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center"/>
                                 <TextBlock Grid.Column="3" FontSize="11" Foreground="{DynamicResource Brush.Text.Tertiary}" VerticalAlignment="Center">
                                     <TextBlock.Style>
@@ -1937,6 +1974,9 @@
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding IsWrite}" Value="True">
                                                     <Setter Property="Text" Value="写入变量"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsReport}" Value="True">
+                                                    <Setter Property="Text" Value=""/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
@@ -3318,9 +3358,9 @@
                                 CornerRadius="8" Padding="12">
                             <StackPanel>
 
-                                <!-- 页签：PLC 连接 / 扫码器连接（P4.5）
-                                     两档都是「连接」，故用分段控件而不是开关；GroupName 显式给，
-                                     否则 WPF 会按逻辑父容器分组、两档各自成组可同时选中。
+                                <!-- 页签：PLC 连接 / 扫码器连接（P4.5）/ MES 连接（P4.7）
+                                     三档都是「连接」，故用分段控件而不是开关；GroupName 显式给，
+                                     否则 WPF 会按逻辑父容器分组、各档各自成组可同时选中。
                                      位置与间距照抄设备监控页：上 0 / 下 8，紧接一条分隔线。 -->
                                 <Grid Margin="0,0,0,8">
                                     <Border Background="{DynamicResource Brush.Control.Background}" CornerRadius="6" Padding="2"
@@ -3334,6 +3374,11 @@
                                                          Checked="DeviceView_Checked"/>
                                             <RadioButton x:Name="ScannerConnectionSegment"
                                                          Content="扫码器连接"
+                                                         GroupName="DeviceView"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="DeviceView_Checked"/>
+                                            <RadioButton x:Name="MesConnectionSegment"
+                                                         Content="MES连接"
                                                          GroupName="DeviceView"
                                                          Style="{StaticResource IoSegmentRadioButton}"
                                                          Checked="DeviceView_Checked"/>
@@ -4116,6 +4161,55 @@
                                          </Grid>
                                 </StackPanel>
                                 <!-- ===== /扫码器连接 ===== -->
+
+                                <!-- ===== MES 连接（P4.7，HTTP 数据上报的服务端） =====
+                                     上报任务的字段数值由采集侧拼成 JSON 后 POST/PUT 到这里。
+                                     三项下拉都是「只列一项」——只列一项不等于禁用：
+                                     仍可点开确认（同扫码器连接页口径）。
+                                     布局与 PLC 连接表单同款：标签 80 + 控件 200 + 行距 16。 -->
+                                <StackPanel x:Name="MesConnectionPanel" Visibility="Collapsed">
+
+                                    <!-- 连接方式：HTTP（唯一一项） -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="连接方式" Width="80" FontSize="14"
+                                                   Foreground="{DynamicResource Brush.Text.Primary}" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="MesConnectionTypeComboBox" Width="200" VerticalAlignment="Center"
+                                                  Style="{StaticResource FormComboBox}" SelectedIndex="0">
+                                            <ComboBoxItem Content="HTTP"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <!-- 请求方法：POST / PUT（默认 POST，无 GET） -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="请求方法" Width="80" FontSize="14"
+                                                   Foreground="{DynamicResource Brush.Text.Primary}" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="MesMethodComboBox" Width="200" VerticalAlignment="Center"
+                                                  Style="{StaticResource FormComboBox}"
+                                                  SelectionChanged="MesMethodComboBox_SelectionChanged">
+                                            <ComboBoxItem Content="POST"/>
+                                            <ComboBoxItem Content="PUT"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <!-- 数据模式：JSON_RAW（唯一一项） -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="数据模式" Width="80" FontSize="14"
+                                                   Foreground="{DynamicResource Brush.Text.Primary}" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="MesDataModeComboBox" Width="200" VerticalAlignment="Center"
+                                                  Style="{StaticResource FormComboBox}" SelectedIndex="0">
+                                            <ComboBoxItem Content="JSON_RAW"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <!-- 服务端URL -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <TextBlock Text="服务端URL" Width="80" FontSize="14"
+                                                   Foreground="{DynamicResource Brush.Text.Primary}" VerticalAlignment="Center"/>
+                                        <TextBox x:Name="MesUrlTextBox" Width="200" Style="{StaticResource FormTextBox}"
+                                                 LostFocus="MesUrlTextBox_LostFocus"/>
+                                    </StackPanel>
+                                </StackPanel>
+                                <!-- ===== /MES 连接 ===== -->
                             </StackPanel>
                         </Border>
                     </StackPanel>
