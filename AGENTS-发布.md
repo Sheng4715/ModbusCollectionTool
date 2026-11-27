@@ -258,26 +258,81 @@ Get-Process "DSH_Modbus采集工具" | Select-Object MainWindowTitle      # ④ 
 
 ### 12.11 GitHub Release 发布规范（2026-11-27 定案）
 
-发布到 GitHub Releases 时，**Release 标题与附件文件名统一用 `Modbus Collection Tool` + 版本号**：
+发布到 GitHub Releases 时，**Release 标题与附件文件名统一用 `Modbus Collection Tool` + `v` + 版本号**（2026-11-27 用户补充：版本号前**必须带 v**）：
 
 | 项 | 格式 | 示例 |
 |---|---|---|
-| Release 标题 | `Modbus Collection Tool <版本号>` | `Modbus Collection Tool 1.0.2` |
-| 附件文件名 | `Modbus-Collection-Tool-<版本号>.zip` | `Modbus-Collection-Tool-1.0.2.zip` |
-| Git tag | `v<版本号>` | `v1.0.2` |
+| Release 标题 | `Modbus Collection Tool v<版本号>` | `Modbus Collection Tool v1.1.0` |
+| 附件文件名 | `Modbus-Collection-Tool-v<版本号>.zip` | `Modbus-Collection-Tool-v1.1.0.zip` |
+| Git tag | `v<版本号>` | `v1.1.0` |
 
 ⚠️ **GitHub 会把文件名里的空格替换成点号**（实测 `Modbus Collection Tool 1.0.2.zip` 上传后变成 `Modbus.Collection.Tool.1.0.2.zip`），所以**附件名用连字符**，不要用空格；中文文件名也会被过滤（`DSH_Modbus采集工具_1.0.2.zip` → `DSH_Modbus._1.0.2.zip`）。
 
-**附件内容 = §12.2 那 5 个程序文件**，打成 zip 上传：
+#### ⚠️ 12.11.1 打包必须用 `-r win-x64`，不能只拷顶层文件（2026-11-27 实测踩坑）
+
+**这个坑非常隐蔽，发布前必读。**
+
+普通的 `dotnet publish`（不带 `-r`）产物是**平台无关**的：`System.IO.Ports.dll` 只是 `lib/net8.0/` 下的引用程序集（34.7 KB），真正可用的实现在
+`runtimes/win/lib/net8.0/System.IO.Ports.dll`（原生代码在里面）。运行时要靠 `runtimes\` 子目录才能找到它。
+
+**如果打包时只 `Copy-Item` 顶层文件、漏掉 `runtimes\` 子目录**，结果：
+
+- 应用**照常启动**，窗口能开，以太网一切正常（CLR 惰性解析程序集）
+- 但 `BuildConnectionDetail()` 里一碰串口相关的类型就抛 `FileNotFoundException: System.IO.Ports`
+- 该异常在 `Window_Loaded` → `UpdateOverviewStatus` → `RefreshDetail` 链路上，**每次启动都往 `crash.log` 写一条**
+- 界面表现可能只是底栏不显示，极易被忽略 —— 但串口功能实际已废
+
+**正确做法（二选一）**：
+
+```powershell
+# 方案 A（推荐）：指定 RID 发布，Ports.dll 会被扁平化到顶层，无需 runtimes\
+dotnet publish "DSH_Modbus采集工具\DSH_Modbus采集工具.csproj" `
+  -c Release -r win-x64 --self-contained false -p:DebugType=None -o "<输出目录>" -v q -nologo
+# 产物：System.IO.Ports.dll 变为 85.7 KB（含原生代码），无 runtimes\ 目录，可直接打包
+```
+
+方案 B 是不带 `-r` 发布，但打包时必须 `Copy-Item -Recurse` **连 `runtimes\` 一起拷贝**。
+方案 A 更省事、包也更小（少 6 个非 Windows 平台的 .so / .dylib），**建议统一用 A**。
+
+**发布前必做验证**：把 zip 解压到空目录，直接跑 exe，确认
+(a) 窗口出现 且 (b) **该目录下没有生成 `crash.log`**。只验「能启动」不够 —— 上面那个异常应用照样能启动。
+
+**附件内容 = 5 个程序文件**，打成 zip 上传：
 
 - ✅ 包含：exe / dll / `System.IO.Ports.dll` / deps.json / runtimeconfig.json
-- ❌ 排除：`*.json` 配置本身、`*.json.bak`、`*.bad-*`、`Log\`、`DeviceData\`、`Images\`、`.pdb`
-- 打包命令：`Compress-Archive -Path "<暂存目录>\*" -DestinationPath "<名>.zip"`（先复制到独立暂存目录，不要在 `Release\` 原地压）
+- ❌ 排除：`*.json` 配置本身、`*.json.bak`、`*.bad-*`、`Log\`、`DeviceData\`、`Images\`、`.pdb`、`crash.log`
+- 打包命令：`Compress-Archive -Path "<暂存目录>\*" -DestinationPath "<名>.zip"`
+- ⚠️ **暂存目录要新建、逐个文件拷**：`Copy-Item "out\*"` 会把上一次冒烟测试留下的
+  `app-settings.json` / `crash.log` 一起带进包里（幂等复制的通病，实测踩过）
 
 **上传通道**：用 GitHub REST API（`POST /repos/{owner}/{repo}/releases` 建 Release，
 `POST https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name=<文件名>` 上传附件）。
 ⚠️ 本机需带代理：`Invoke-RestMethod -Proxy http://127.0.0.1:7897`，否则连不上 github.com（见 `AGENTS.md` §11）。
 凭据从 `git credential fill` 取（`protocol=https` / `host=github.com`），不要明文写在脚本里。
+
+#### 12.11.2 版本号必须与产物一致（2026-11-27 定案）
+
+⚠️ **发版前先确认目标提交的 `csproj` 里 `<VersionPrefix>` 就是待发的版本号**。
+
+实测踩过两次同类问题：
+
+- `v1.0.2` 那次是**产物版本 1.0.2、对应提交里却是 1.0.1**（本地未提交的改动编译的）→ 从 tag 复现不出这个产物
+- `v1.1.0` 那次则相反：目标提交 `5c80c2d` 的 `VersionPrefix` 仍是 `1.0.2`，若直接打 tag 就会「exe 显示 1.0.2、tag 叫 v1.1.0」
+
+**正确流程**（在独立 worktree 里做，不污染 `main`）：
+
+```powershell
+git worktree add .tmp\release-wt <目标提交> --detach
+cd .tmp\release-wt
+git checkout -b release/v<版本号>
+# 改 csproj 的 VersionPrefix / AssemblyVersion / FileVersion 三处
+git commit -am "版本号提至 <版本号>，准备发布"
+dotnet publish ... -r win-x64 ...        # ★ 必须在改版本并提交【之后】构建
+git tag -a v<版本号> -F <说明文件>
+git push origin v<版本号> release/v<版本号>
+```
+
+⚠️ **构建必须在提交版本号之后**：`ProductVersion` 里嵌的是 `+<git sha>`，先构建后提交会让产物记的 sha 与 tag 指向的提交不一致（实测 1.1.0 首次构建记的是 `5c80c2d`，重编后才对 `3e758d6`）。
 
 **Release 说明写什么**：按功能模块分节，突出本版**实际具备**的能力（尤其数据采集与设备连接）；
 **不要**罗列「本版不包含 XX」——读者只关心这一版能做什么。安装步骤、运行时前置条件、
