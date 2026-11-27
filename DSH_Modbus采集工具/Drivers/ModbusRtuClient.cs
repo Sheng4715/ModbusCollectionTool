@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Ports;
 using System.Threading;
 using System.Threading.Tasks;
+using DSH_Modbus采集工具.Monitoring;
 
 namespace DSH_Modbus采集工具.Drivers
 {
@@ -263,6 +264,9 @@ namespace DSH_Modbus采集工具.Drivers
                     port.BaseStream.Flush();
                 }, timeout.Token).ConfigureAwait(false);
 
+                // P2.4 通讯监控：发送帧 = 站号 + PDU + CRC（Crc16.Append 后的完整帧）
+                TrafficTap.Frame(TrafficKeys.Plc, TrafficDirection.Send, frame);
+
                 byte[] response = await Task.Run(
                     () => ReadFrame(port, pdu[0], UnitId, isWrite, deadline, timeout.Token), timeout.Token)
                     .ConfigureAwait(false);
@@ -441,6 +445,7 @@ namespace DSH_Modbus采集工具.Drivers
             {
                 byte[] rest = ReadExact(port, 3, deadline, ct);
                 byte[] exceptionFrame = { unit, function, rest[0], rest[1], rest[2] };
+                CaptureIncoming(exceptionFrame);
                 ValidateFrame(exceptionFrame, unit, expectedUnit);
                 return exceptionFrame;
             }
@@ -459,6 +464,7 @@ namespace DSH_Modbus采集工具.Drivers
                 echoFrame[0] = unit;
                 echoFrame[1] = function;
                 Buffer.BlockCopy(echoTail, 0, echoFrame, 2, 6);
+                CaptureIncoming(echoFrame);
                 ValidateFrame(echoFrame, unit, expectedUnit);
                 return echoFrame;
             }
@@ -476,8 +482,25 @@ namespace DSH_Modbus采集工具.Drivers
             full[2] = countByte[0];
             Buffer.BlockCopy(tail, 0, full, 3, dataBytes + 2);
 
+            CaptureIncoming(full);
             ValidateFrame(full, unit, expectedUnit);
             return full;
+        }
+
+        /// <summary>
+        /// P2.4 通讯监控：把刚读回的完整 RTU 帧（站号 + PDU + CRC）交给抓包缓冲。
+        /// <para>
+        /// 刻意放在 <see cref="ValidateFrame"/> **之前**：CRC 错 / 站号不符的帧恰恰是现场最想看的，
+        /// 放到校验之后就永远抓不到坏帧（校验一失败直接抛异常）。未选中 PLC 目标时两次
+        /// volatile 读即返回，不影响热路径。
+        /// </para>
+        /// </summary>
+        private static void CaptureIncoming(byte[] frame)
+        {
+            if (TrafficTap.Wants(TrafficKeys.Plc))
+            {
+                TrafficTap.Frame(TrafficKeys.Plc, TrafficDirection.Receive, frame);
+            }
         }
 
         /// <summary>

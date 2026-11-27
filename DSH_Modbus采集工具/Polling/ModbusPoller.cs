@@ -177,7 +177,15 @@ internal sealed class ModbusPoller
             return;
         }
 
-        // 设备监控页的三个分段**都跟随可见性**：输入 X / 输出 Y 走 IO 点位集，
+        // 通讯监控（P2.4）：它把前四个分段全遮住了，按「跟随可见性」口径 IO / 自由监控都不采。
+        // 采集任务组 / 扫码器触发 / 心跳 / 扫码器收发 / HTTP 上报在上面的常驻分支里照旧。
+        // ⚠️ 不能落到下面「读当前页 IO 点位」那一条：_visiblePage 仍是上一次 X/Y 的页快照。
+        if (snap.TrafficViewActive)
+        {
+            return;
+        }
+
+        // 设备监控页的四个分段**都跟随可见性**：输入 X / 输出 Y 走 IO 点位集，
         // 自由监控走 _monitorSet —— 只有当前显示的那一个才读，其余不读也不清值。
         if (snap.FreeViewActive)
         {

@@ -19,7 +19,11 @@
 - 导入校验：**仅接受 X / Y 元件**，地址须落在当前驱动范围内；结果**一律用 `ThemeMessageDialog`** 汇报（0 项有效则警告框且拒绝替换）
 - **分页**：每页 4 列 × `IoPager.RowsPerColumn`(16) = 64 点，X/Y 各自独立页号；单页时整体隐藏。列宽 `*` 等分；行高 22、行距 2、列距 4
 - **采集跟随可见性**：只读**当前显示分段 + 当前页**（`_visiblePage` 快照，按所属地址区分块 FC01，同区跨度超 2000 点切窗，默认 100ms）；**离开本页停止 IO 采集，独立心跳继续**；断线不清灯色（`IsOn` 保持上次值）
-- **三个分段统一「跟随可见性」**（输入监控 / 输出监控 / 自由监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开设备监控页则全停）。详见 §5.1 与 `Design.md` §5.6
+- **五个分段统一「跟随可见性」**（输入监控 / 输出监控 / 自由监控 / 系统变量 / 通讯监控）：只有当前显示的才读，离开者**保留上次值、不清空、不断线**。外层另有页面级闸门 `_ioPageActive`（离开设备监控页则全停）。详见 §5.1 与 `Design.md` §5.6
+  ⚠️ **第五分段「通讯监控」（P2.4，已实现 2026-11-26）同样遵循这条**：它一选中，前四个分段全被遮住，
+  于是 IO 与自由监控的轮询本就会停（用户 2026-11-25 定案接受这点）。此时仍能看到的是
+  **不看可见性**的那几类流量：采集任务组变量、扫码器触发变量、心跳、扫码器收发、HTTP 上报。
+  不要为了「让通讯监控看到 IO 报文」去给轮询加例外 —— 那会破坏这条统一口径，见 `Design.md` ADR-45
 - **卡片内同一时刻只有一条滚动条**：Row=2 的 `Grid` 下，X/Y 共用一个 `IoScrollViewer`（每页固定 64 点，见 §5 分页），自由监控则让 `FreeMonitorPanel` 自己填满该格、只让列表滚动（表头常驻 —— 它是「+」的落点）。⚠️ **列表不要写 `MaxHeight`**：面板整体已绑 `ViewportHeight`，写死高度会让「里层先滚、里层滚不动了外层再滚」，两条滚动条并存（历史缺陷：527f2e2 给自由监控列表套了 `MaxHeight="380"`）
 - **合法异常码不算断线**（2026-10-16）：IO 分块读**单独捕 `ModbusResponseException`** 并与成功路径分开 —— 跳过该块、其余块照读、该块的点保持上次值，**不断开也不重连**；某块**连续** `ModbusPoller.ConsecutiveExceptionThreshold`（**5**）次才记一条琥珀「通讯异常」（措辞 `原因（地址 xxx 异常码 N）`），**只记一次、读通即清零**（不这么做，100ms 一拍会让 1000 条日志 100 秒内刷满）。**超时 / IO 异常仍照旧断开**。详见 §5.1 / §6 与 `Design.md` §8-12
 
@@ -34,7 +38,7 @@
 ### 5.1 自由监控（P2.2，第三分段）
 
 设备监控页第三个分段（`FreeViewSegment`），列表式监控项：**元件名称 / 数据类型 / 显示格式 / 当前值 / 删除**
-（第四分段「系统变量」见 §5.4）。
+（第四分段「系统变量」见 §5.4；第五分段「通讯监控」见 §5.10，2026-11-26 已实现）。
 
 **账户权限（P 权限，2026-11-06）**：这一页是**全应用唯一受权限管控的地方** ——
 「当前值」可以对 PLC 随意写入，故技术员账户下整列置灰。
@@ -1694,6 +1698,32 @@ ScrollViewer                        ← 画布放不下就滚
 - `StopPolling` 只取消并置 null，**释放交给任务自身 `finally`**（确认自己仍是当前连接后）；`OnClosed` 统一取消连接尝试、停任务并释放
 - **连接的身份与生命周期状态**（当前客户端 / 是否连着 / 期望目标 / 在途取消源 / 重连计数）在 `Polling/ConnectionSession.cs`，**async 编排留在窗口** —— 等待循环里逐秒刷状态栏、锁表单、改按钮文案全是界面驱动的东西。两种「断开」语义也在那里落了地：`ForgetTarget()` = 用户主动断开（目标清掉 → 不重连），只 `ReleaseClient()` = 异常断开（目标留着 → 才能重连）
 
+### 5.10 通讯监控（P2.4，设备监控页第五分段，已实现 2026-11-26）
+
+需求见 `Brief.md` P2.4，取舍见 `Design.md` ADR-45 / ADR-46，验证见 `Design.md` §10.46。实现分三层：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 抓包 | `Monitoring/TrafficTrace.cs`（无 WPF） | 目标身份 / 方向 / 环形缓冲 1000 条 / 全局 `TrafficTap`（只在「选中目标 + 可见」时入缓冲） |
+| 呈现 | `Ui/TrafficMonitorPresenter.cs` | 200ms 增量刷新 / 目标下拉重建 / HEX-TEXT / 跟随滚底 / 清空 |
+| 接线 | `MainWindow.Traffic.cs` | `BuildTrafficTargets`（每拍按状态重算）+ 三个控件处理器 |
+
+- 抓包点（**只用已经算好的原始字节**，不另拼一遍帧）：
+  - TCP：`ModbusTcpClient.RequestAsync` 的 `frame`（发送）与 `header + body`（接收，拼回完整 MBAP）
+  - RTU：`Crc16.Append` 后的帧（发送）与 `ReadFrame` 返回的完整帧（接收，**在 `ValidateFrame` 之前**，坏 CRC 也能看到）
+  - 扫码器：`ScannerTcpClient.SendAsync` 入参 / `ReadFrameAsync` 收满的帧（补回被剥掉的结束符）；`TraceOwner` 由 `TryConnectScannerAsync` 设
+  - HTTP：`RunReportTaskAsync` 的请求 JSON / 响应状态码与响应体（响应体**只在抓包时读**）
+- ⚠️ 热路径：`TrafficTap.Frame` 先两次 volatile 读早退；回调里只写环形缓冲，不格式化、不碰控件。
+- 目标列表**只列已建立**连接：PLC / 每台已连接扫码器 / HTTP（HTTP 判据 = `ThemeManager.MesUrl` 非空）。
+  **每 200ms 重算**，不在连接生命周期散落调用点；重建下拉框时要罩 `_rebuilding` 挡 `SelectionChanged`。
+- **重进分段必须显式补一次 `SelectTarget`**：目标列表可能没变化、`RefreshTargets` 会早退，而离开时已
+  `Deactivate`；漏了就是「下拉框选中、缓冲一直空」（2026-11-26 实测踩到）。
+- 只抓选中的那一个目标；换目标 / 离开分段 / 离开设备监控页都清空缓冲，回来从头记。
+- 缓冲 1000 条、自动滚底（用户翻上去就不跟随，与运行日志同口径）、清空按钮、空缓冲留白、不落盘。
+- 每行接收靠左、发送靠右，各带 `[HH:MM:SS]` 前缀；HEX 按字节空格分隔、TEXT 按 UTF-8 直出。
+  **HTTP 目标隐藏 HEX/TEXT 页签并强制 TEXT**（文本协议不做 HEX）。
+- `IoView_Checked` 维护 `_trafficViewActive`；`PollSnapshot.TrafficViewActive` 在 `PollOnceAsync` 里
+  **早退**，否则会落到「读当前页 IO 点位」那条分支（本分段一选中前四个分段都不可见）。
 ### 6.1 自动重连（P6.3）
 
 | 项 | 行为 |
@@ -2469,6 +2499,7 @@ DSH_Modbus采集工具/
 ├── MainWindow.AcquisitionLive.cs  # partial：实时画布（拖动 / 缩放 / 背景图）
 ├── MainWindow.Scanner.cs       # partial：扫码器（连接 + 交互已合并一页）
 ├── MainWindow.Account.cs       # partial：账户与权限（登录 / 注销 / 自由监控写入置灰）
+├── MainWindow.Traffic.cs       # partial：通讯监控（P2.4，目标列表 + 三个控件处理器）
 ├── Scanners/                   # 扫码器（无 WPF）
 │   ├── ScannerDefinition.cs    # 定义 + 规则 + scanner.json
 │   ├── ScannerTcpClient.cs     # 裸 TCP：原样发 + 按结束符收帧
@@ -2487,6 +2518,8 @@ DSH_Modbus采集工具/
 │   ├── Light.xaml / Dark.xaml  # 两套字典，必须同键（Light 值 = 主题化前的字面值）
 │   ├── DialogControls.xaml     # 对话框样式（Dialog.* 前缀，App.xaml 合并）
 │   └── ThemeManager.cs         # 换字典 / 跟随系统 / 键一致性校验 / app-settings.json
+├── Monitoring/                 # 通讯监控抓包（无 WPF）
+│   └── TrafficTrace.cs         # 目标 / 方向 / 环形缓冲 1000 条 / 全局 tap（只抓选中目标）
 ├── Polling/                    # 采集引擎与连接状态（无 WPF）
 │   ├── ICollectorHost.cs       # 宿主契约：周期 / 监控集 / 快照 / 连接身份 / 回 UI / 断线
 │   ├── ModbusPoller.cs         # 轮询编排（IO 分块读 + 自由监控读 + 断线通知）
@@ -2539,6 +2572,7 @@ DSH_Modbus采集工具/
 │   ├── StatusBarPresenter.cs   # 底栏：状态文字 / 状态点颜色 / 右侧连接参数
 │   ├── SourceForegroundConverter.cs  # 采集「来源变量」框字色（MultiBinding + 换主题重算，§13.9）
 │   ├── DeviceLogPresenter.cs   # 日志：内存集合 + 上限裁剪 + 落盘旁路 + 级别映射
+│   ├── TrafficMonitorPresenter.cs  # 通讯监控：目标下拉 / HEX-TEXT / 200ms 增量刷新 / 跟随滚底
 │   ├── CompletionPopup.cs      # 补全下拉：Popup + 键鼠 + 输入法抑制（§5.6）
 │   ├── DialogWindow.cs         # 对话框基类：外壳 / 按钮行 / 内联错误 / 回车与 ESC（§9.3）
 │   ├── DialogChrome.cs         # 对话框字体 / 底色 / 深色标题栏

@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using DSH_Modbus采集工具.Monitoring;
 
 namespace DSH_Modbus采集工具.Drivers
 {
@@ -214,6 +215,9 @@ namespace DSH_Modbus采集工具.Drivers
 
                 await stream.WriteAsync(frame, timeout.Token).ConfigureAwait(false);
 
+                // P2.4 通讯监控：发送帧就是上面拼好的完整 MBAP 帧（含 tid / pid / length / unit）
+                TrafficTap.Frame(TrafficKeys.Plc, TrafficDirection.Send, frame);
+
                 // MBAP 头 6 字节：tid(2) + pid(2) + length(2)；length 后面还有 length 字节（单元号 + PDU）
                 byte[] header = new byte[6];
                 await ReadExactAsync(stream, header, timeout.Token).ConfigureAwait(false);
@@ -237,6 +241,16 @@ namespace DSH_Modbus采集工具.Drivers
 
                 byte[] body = new byte[respLength];
                 await ReadExactAsync(stream, body, timeout.Token).ConfigureAwait(false);
+
+                // P2.4 通讯监控：接收帧 = MBAP 头 + 单元号 + PDU（补回 header 才是「完整帧」）。
+                // 只在本目标被选中时才拷这一份，未选中时两次 volatile 读即返回。
+                if (TrafficTap.Wants(TrafficKeys.Plc))
+                {
+                    byte[] captured = new byte[header.Length + body.Length];
+                    Buffer.BlockCopy(header, 0, captured, 0, header.Length);
+                    Buffer.BlockCopy(body, 0, captured, header.Length, body.Length);
+                    TrafficTap.Frame(TrafficKeys.Plc, TrafficDirection.Receive, captured);
+                }
 
                 if (body[0] != frame[6])
                 {

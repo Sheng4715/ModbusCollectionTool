@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **56892 B / 余量约 8.4 KB**（2026-11-24 校）；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **57601 B / 余量约 7.7 KB**（2026-11-26 校）；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 > 📦 **已搬到细节档的查阅型大表**：§15 完整目录树、§16 样式键全表（53 个 `x:Key`）。
@@ -37,14 +37,14 @@ dotnet run --project DSH_Modbus采集工具
 > 这里只留**每次改动都要判断**的两条：哪些目录不碰 WPF、新增逻辑该放哪。
 > ⚠️ **增删源文件时两处都要改**：§15 是全量树，本节只到目录级。
 
-**9 个不引 WPF 的目录**（可脱离界面阅读/断言，**没有任何** `using System.Windows*`）：
-`Drivers/` `Expressions/` `Io/` `Logging/` `Modeling/` `Net/` `Polling/` `Scanners/` `Startup/`
+**10 个不引 WPF 的目录**（可脱离界面阅读/断言，**没有任何** `using System.Windows*`）：
+`Drivers/` `Expressions/` `Io/` `Logging/` `Modeling/` `Monitoring/` `Net/` `Polling/` `Scanners/` `Startup/`
 
-**引 WPF 的**：`Ui/` `Themes/` + 根目录的 `MainWindow*.cs` 九个 partial、`MonitorItem.cs` / `GlobalVarItem.cs` / `AcquisitionTaskItem.cs` / `SystemVarRow.cs` / `App.xaml.cs`。
+**引 WPF 的**：`Ui/` `Themes/` + 根目录的 `MainWindow*.cs` 十个 partial、`MonitorItem.cs` / `GlobalVarItem.cs` / `AcquisitionTaskItem.cs` / `SystemVarRow.cs` / `App.xaml.cs`。
 
 ⚠️ **判断该不该碰 WPF 看「所在目录」，不是看文件名**：`MonitorItem.cs` 是 `DataPoint` 的界面包装、碰 WPF 属正常，但它在**根目录** —— 不要以为「根目录都不碰」。
 
-**目录职责一句话**（细节见 §15）：入口 `App`（单实例 → 主题 → 建窗）；`MainWindow.*` 九个 partial 按页面分；
+**目录职责一句话**（细节见 §15）：入口 `App`（单实例 → 主题 → 建窗）；`MainWindow.*` 十个 partial 按页面分；
 `Polling/` 采集编排、`Io/` 点位集与分页、`Modeling/` 数据模型与纯逻辑、`Themes/` 主题、`Ui/` 呈现与对话框、
 `Scanners/` 扫码器、`Startup/` 自启与单实例、`Drivers/` Modbus 报文与品牌地址表、`Logging/` 日志落盘。
 
@@ -74,7 +74,7 @@ Window
 | 导航项 | 面板 | 说明 |
 |---|---|---|
 | `OverviewNav` 总览 | `OverviewPanel` | 页头右侧下拉框「当前视图」（`FormComboBox`）**三项**：`PLC状态机`（P1.2）/ `生产数据`（占位）/ `数据采集`（P1.4，见 §5.5、§5.8）；卡片内是当前视图 + 底部运行日志卡。⚠️ 选择会记住（`app-settings.json` → `OverviewView`，存**枚举名**，`Modeling/OverviewViewSetting.cs`，见细节 §5.5） |
-| `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**四分段**：输入监控 / 输出监控 / 自由监控 / 系统变量）+ 分页 |
+| `StatusInfoNav` 设备监控 | `StatusInfoPanel` | IO 监控（**五分段**：输入监控 / 输出监控 / 自由监控 / 系统变量 / 通讯监控（P2.4，2026-11-26 实现））+ 分页 |
 | `AcquisitionConfigNav` 数据管理 | `AcquisitionConfigPanel` | **三分段**：「数据采集」（P3.1，见 §5.7）/「全局变量」（P3.3，见 §5.2）/「系统变量」（P3.5 只读清单，见 §5.3）。⚠️ 第四档「扫码器」已于 2026-11-04 删除，并入设备连接页 |
 | `DeviceConfigNav` 设备连接 | `DeviceConfigPanel` | **三档**：「PLC连接」（连接表单）/「扫码器连接」（P4.5 连接 + P3.5 交互**已合并为一页**，展开块左连接 / 右交互，见 §5.9）/「MES连接」（P4.7，连接方式 HTTP + 请求方法 POST/PUT + 数据模式 JSON_RAW + 服务端 URL，2026-11-24 实现） |
 | `SettingsNav` 设置 | `SettingsPanel` | **卡片顺序（2026-11-08 定案）**：应用标题（P5.6）→ 显示外观（P5.1）→ 开机自启动（P5.5）→ 日志保存（P5.2）→ 项目信息（P5.3）。⚠️ 「自动连接」卡已于 2026-11-05 删除：PLC 的搬去设备连接页，扫码器改用行上「启用」（§7.2） |
@@ -181,16 +181,16 @@ Window
 - ⚠️ 换主题时 `DynamicResource` 换不到 DWM 属性，`OnThemeChanged` 里要调一次 `WindowCorners.SyncBorderColor(this)`；颜色必须从资源取，不能写死
 - 老系统（Win10）上这两个属性号不认识，`DwmSetWindowAttribute` 返回非 0，此时**安静放弃** —— 窗口保持直角无边框，不影响功能
 
-## 4. 代码分工（`MainWindow` 主体 + 九个 partial）
+## 4. 代码分工（`MainWindow` 主体 + 十个 partial）
 
-> **2026-10-29 拆分**：`MainWindow.xaml.cs` 曾长期贴着 4600 行，现为主体 + `MachineState` / `Acquisition` / `GlobalVar` / `Monitor` / `IoImport` / `AcquisitionView` / `AcquisitionLive` / `Scanner`。
+> **2026-10-29 拆分**：`MainWindow.xaml.cs` 曾长期贴着 4600 行，现为主体 + `MachineState` / `Acquisition` / `GlobalVar` / `Monitor` / `IoImport` / `AcquisitionView` / `AcquisitionLive` / `Scanner` / `Traffic`。
 > **新建处理器先按页面归到对应 partial**，只有跨页面的（连接生命周期 / 心跳 / 导航 / 日志 / 底栏）才写回主体。
 > 已抽出去的：采集编排 → `Polling/`、IO 点位集/分页/导入 → `Io/`、主题 → `Themes/`、呈现规则 → `Ui/`。**自由监控刻意未抽成独立的层** —— 它有 12 处直接碰控件，见 `Design.md` §8-1。
 > ⚠️ **不要在这里写 `MainWindow.xaml.cs` 的具体行数**：该数字已三次未跟上（曾同时出现 2590 / 2190 / 2187 三个互相矛盾的值），对判断没有作用。
 
 | 区块 | 关键成员 |
 |---|---|
-| **处理器在哪个 partial** | 主体 `MainWindow.xaml.cs`＝连接 / 心跳 / 导航 / 底栏 / IO 分页·导入·`SetInputsEnabled` / `AppendDeviceLog` / `SetStatus` / `ScanNetworkAdapters`；`Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`GlobalVar.cs`＝`GlobalVar*`；`MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`IoImport.cs`＝IO 表导入；`AcquisitionView.cs`＝总览「数据采集」骨架（任务组下拉框 / 历史表格 / 1 秒增量刷新）；`AcquisitionLive.cs`＝实时画布（卡片拖动 / 缩放 / 背景图）；`Scanner.cs`＝扫码器（`Scanner*` 全部处理器 + `ScannerItem` / `ScannerItemSet` / 判定节拍 / 每台独立重连） |
+| **处理器在哪个 partial** | 主体 `MainWindow.xaml.cs`＝连接 / 心跳 / 导航 / 底栏 / IO 分页·导入·`SetInputsEnabled` / `AppendDeviceLog` / `SetStatus` / `ScanNetworkAdapters`；`Monitor.cs`＝`Monitor*`·`CommitMonitorValueAsync`·`WriteToDeviceAsync`·`ClassifyDisconnectReason`；`GlobalVar.cs`＝`GlobalVar*`；`MachineState.cs`＝`SyncMachineTimer`·`RefreshMachineStates`·`RefreshMachineGlobals`；`Acquisition.cs`＝`RunAcquisitionTick`·`RunWriteTaskAsync`·`RefreshAcquisitionGlobals`·`WriteToDeviceAsync`；`IoImport.cs`＝IO 表导入；`AcquisitionView.cs`＝总览「数据采集」骨架（任务组下拉框 / 历史表格 / 1 秒增量刷新）；`AcquisitionLive.cs`＝实时画布（卡片拖动 / 缩放 / 背景图）；`Scanner.cs`＝扫码器（`Scanner*` 全部处理器 + `ScannerItem` / `ScannerItemSet` / 判定节拍 / 每台独立重连）；`Traffic.cs`＝通讯监控（`BuildTrafficTargets` + 三个控件处理器） |
 | 连接状态机 | `ConnectButton_Click`（表单校验 + 按钮三态）/ `TryConnectAsync` / `Disconnect()` / `Disconnect(status,color)` / `SetInputsEnabled`；**身份与生命周期在 `Polling/ConnectionSession.cs`**（`IsConnecting` / `IsCurrent` / `MarkConnected` / `ReleaseClient` / `ForgetTarget` / 重连计数）+ `RunConnectionTasksAsync` / `IsCurrentConnection` / `OnClosed` |
 | 自动重连 | `StartReconnect` / `ReconnectLoopAsync` / `CancelReconnect`（**循环留在窗口**，逐秒刷状态栏 / 锁表单是界面驱动）；目标快照 `ReconnectTarget` 与退避表 `ReconnectPolicy` 在 `Polling/` |
 | 轮询（入口在本类，实现在 `Polling/`） | `_poller.PollLoopAsync` → `PollOnceAsync`（按地址区分块 + 2000 点切窗 / `PollFreeMonitorAsync` 自由监控，按区选 FC01/03/04） |
@@ -207,7 +207,7 @@ Window
 | **项目信息（P5.3）** | `AppInfo.cs`（读程序集元数据）+ csproj 的 `VersionPrefix`/`VersionSuffix` 与 `WriteBuildDate` 目标；窗口侧 `RefreshProjectInfo`（§7.3） |
 | **开机自启动（P5.5）** | `Startup/AutoStartCommand.cs`（纯逻辑：命令串 / 同 exe 判定 / 禁用记录 `& 0x01` 判据）+ `Startup/AutoStartRegistry.cs`（HKCU `Run` + `StartupApproved` 读写）；窗口侧 `AutoStartToggle_Changed` / `SyncAutoStartToggle` / `RefreshAutoStartStatus`（§7.4） |
 | **应用标题（P5.6）** | `Modeling/AppTitle.cs`（纯逻辑：两个默认值 / 清洗换行与超长 / 默认识别）+ `ThemeManager.AppTitleText` / `SetAppTitle`；窗口侧 `ApplyAppTitle` / `ApplyAppTitlePermission` / `AppTitleTextBox_LostFocus`；权限 `UserRules.CanEditAppTitle`（§7.5）。⚠️ 改的是**两处**：`TitleBarCaption` + `Window.Title`。⚠️ 卡上只有「标题」+ 输入框：**清空即恢复默认**，没有按钮、没有账户说明（2026-11-08 定案） |
-| 关键字段 | `_session` / `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_machineViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter` / `_logWriter` / `_statusBar`。**`volatile` 共 12 个**：`_windowClosed` / `_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_machineViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_machineGlobals` / `_acquisitionGlobals` / `_scannerGlobals` |
+| 关键字段 | `_session` / `_pollCts` / `_windowClosed` / `_pollIntervalMs` / `_currentDriver` / `_poller` / `_ioSet`（内含 X/Y 点位列表与注释表）/ `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_machineViewActive` / `_trafficViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_monitorSet` / `_globalVarSet` / `_logPresenter` / `_logWriter` / `_statusBar`。**`volatile` 共 13 个**：`_windowClosed` / `_pollIntervalMs` / `_ioPageActive` / `_yViewActive` / `_freeViewActive` / `_trafficViewActive` / `_machineViewActive` / `_xPageIndex` / `_yPageIndex` / `_visiblePage` / `_machineGlobals` / `_acquisitionGlobals` / `_scannerGlobals` |
 
 **线程规则**：WPF 控件不可跨线程访问 → 后台只读 `volatile` 字段或启动时缓存的对象（如 `_currentDriver`）；回 UI 一律 `Dispatcher.InvokeAsync`，且先过 `IsCurrentConnection` 校验。
 
@@ -366,7 +366,7 @@ public sealed class MyDialog : DialogWindow
 | **采集「写入任务」真正下发** | `Modeling/AcquisitionWrite.cs`（TryBuild / **ApplyToMemory** / DescribeFailure）+ `RunWriteTaskAsync`；**`CannotAddress`=无地址 → 只回填内存、不发报文**（2026-11-05，早期是静默跳过导致变量永不更新）、失败不短路；CSV 只记写入变量回读值。**只读区只拦「写」不拦「映射」** —— 判定唯一来源 `GlobalVariableStore.IsReadOnlyElement`（§5.7） |
 | **扫码器（P4.5 + P3.5 合并一页）** | `Scanners/`（定义+规则+`scanner.json` / 裸 TCP 收帧 / 连接身份 / 上升沿）+ `MainWindow.Scanner.cs`（`Scanner*` 全部处理器 + 50ms 判定节拍 + 每台独立重连）（§5.9）。⚠️ **触发测试**（§5.9.9）：按钮在「触发请求内容」右边，`ScannerTestTrigger_Click` + `Scanners/ScannerTestResult.cs`（文案纯逻辑）；**不写变量、不写日志**，弹框看完即走 |
 | **扫码器触发测试布局** | 触发行用 `StackPanel` + 输入框定宽 200，**靠把标签从 168 收窄到 140 腾空间**（两列共省 56 DIP）—— 这样五个输入框才能精确等宽对齐。⚠️ 别改成 `DockPanel`（按钮能显示但输入框会被撑成 236、与其余行不齐）。⚠️ 1536 px 窗口下余量仅约 13 DIP，**再往右加任何东西都会溢出**（§5.9.9） |
-| 采集跟随可见性（三分段统一） | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
+| 采集跟随可见性（五分段统一） | `_ioPageActive`（页面级）+ `_freeViewActive` / `_yViewActive` / `_trafficViewActive` → `PollOnceAsync` 开头；详见 `Design.md` §5.6 |
 | **自由监控写入（FC05/06/16）** | `MonitorItemSet.TryBuildWrite`（文本 → `WritePlan`）+ `ValueCodec.TryEncodeRegisters` / `EncodeStringFixed`；`MainWindow.Monitor.cs` 的 `CommitMonitorValueAsync` → `WriteToDeviceAsync`；报文层 `WriteSingleCoilAsync` / `WriteSingleRegisterAsync` / `WriteMultipleRegistersAsync` |
 | **写入的文本解析与范围校验** | `ValueCodec.TryParseIntegerLiteral`（DEC 支持 `0x`/`0b` 前缀与负号）+ `CheckIntegerRange`；**校验必须在位宽截断前**（`-32769` 截成 `0x7FFF` 会变成合法值） |
 | 改 IO 行高/列宽、加分段切换 | `IoItemTemplate` 的 `Height`/`Margin`；`IoColumnsGrid`/`YIoColumnsGrid`（4×`*`）；`IoSegmentRadioButton` + `XViewSegment` / `YViewSegment` / `FreeViewSegment` + `IoView_Checked` |
@@ -383,6 +383,7 @@ public sealed class MyDialog : DialogWindow
 | 轮询与断线逻辑 | `Polling/ModbusPoller.cs` 的 `PollLoopAsync` / `PollOnceAsync` + `Disconnect(status,color)` |
 | **IO 合法异常码不再断开（连续 5 次才记日志）** | `PollOnceAsync` 的 `catch (ModbusResponseException)` + `ConsecutiveExceptionThreshold` + `_blockExceptionStreaks`；告警通道 `ICollectorHost.ReportCommunicationWarning` → 窗口 `ReportCommunicationWarning`（§5，证据 `Design.md` §10.2） |
 | 网卡扫描/绑定/记忆 | `Net/NicScanner.cs`（`NicInfo` / `Scan` / `IndexOf` / `RestoreIndex`）；窗口侧 `ScanNetworkAdapters` / `TargetNicComboBox_SelectionChanged` / `ConnectButton_Click`（§3.4、§8.2） |
+| **通讯监控（P2.4）** | `Monitoring/TrafficTrace.cs`（目标 / 方向 / 环形缓冲 / 静态 tap，无 WPF）+ `Ui/TrafficMonitorPresenter.cs`（200ms 增量刷新 / 目标下拉 / HEX-TEXT / 跟随滚底）+ `MainWindow.Traffic.cs`（`BuildTrafficTargets` / `TrafficTargetCombo_SelectionChanged` / `TrafficFormat_Checked` / `TrafficClearButton_Click`）；`IoView_Checked` 维护 `_trafficViewActive`；`PollSnapshot.TrafficViewActive` → `PollOnceAsync` 早退（§5.10） |
 | **日志编排 / 落盘 / 颜色** | `Ui/DeviceLogPresenter.cs`（`Append` / `Clear` / `RefreshThemeColors` / `ToFileLevel`）+ `Logging/DeviceLogFileWriter.cs` + `LogEntry`（`DeviceLogLevel` → `LevelBrush`）/ `DeviceLogItemTemplate`；独立验证 `LoggingCheck`（§7.1） |
 | 断开原因归类 | `Logging/DisconnectReasonClassifier.cs`（规则本体，纯函数、可独立断言）；窗口侧 `ClassifyDisconnectReason` 只是薄包装（为满足 `ICollectorHost`） |
 | **单实例保护（每台机器一个）** | `Startup/SingleInstanceName.cs`（命名）+ `SingleInstanceGuard.cs`（抢锁 / 异常）+ `WindowFinder.cs`（唤起已有窗口）；接线在 `App.OnStartup` 最开头、`OnExit` 释放。⚠️ 用 `Global\` 不用 `Local\`、⚠️ `createdNew` 不能判重 —— **改前必读细节 §14** |

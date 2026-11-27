@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using DSH_Modbus采集工具.Monitoring;
 
 namespace DSH_Modbus采集工具.Scanners
 {
@@ -26,6 +27,12 @@ namespace DSH_Modbus采集工具.Scanners
         private TcpClient? _tcp;
 
         public bool IsConnected => _tcp?.Connected == true;
+
+        /// <summary>
+        /// P2.4 通讯监控：本连接归属的监控目标身份（窗口侧填 <c>ScannerDefinition</c>）。
+        /// <para>为 <c>null</c> 表示不参与抓包 —— 例如「触发测试」临时借用的短连接。</para>
+        /// </summary>
+        public object? TraceOwner { get; set; }
 
         /// <summary>
         /// 建立 TCP 连接；超时抛 OperationCanceledException。
@@ -72,6 +79,12 @@ namespace DSH_Modbus采集工具.Scanners
                 ct.ThrowIfCancellationRequested();
                 TcpClient tcp = _tcp ?? throw new IOException("连接未建立");
                 await tcp.GetStream().WriteAsync(data, ct).ConfigureAwait(false);
+
+                // P2.4 通讯监控：发送的就是触发文本原样字节（不补结束符）
+                if (TraceOwner != null)
+                {
+                    TrafficTap.Frame(TraceOwner, TrafficDirection.Send, data);
+                }
             }
             catch
             {
@@ -181,7 +194,25 @@ namespace DSH_Modbus采集工具.Scanners
 
                 // 成功收到一帧 → 链路是活的，零字节超时计数清零
                 _zeroByteTimeouts = 0;
-                return payload.ToArray();
+
+                byte[] result = payload.ToArray();
+
+                // P2.4 通讯监控：抓「裸 TCP 收发的原始字节」。返回值为了给调用方用已经去掉了
+                // 结束符，而抓包要的是原始帧，故有结束符时把它补回去；静默模式收到的就是全部字节。
+                if (TraceOwner != null && TrafficTap.Wants(TraceOwner))
+                {
+                    byte[] raw = result;
+                    if (!silenceMode && terminator.Length > 0)
+                    {
+                        raw = new byte[result.Length + terminator.Length];
+                        Buffer.BlockCopy(result, 0, raw, 0, result.Length);
+                        Buffer.BlockCopy(terminator, 0, raw, result.Length, terminator.Length);
+                    }
+
+                    TrafficTap.Frame(TraceOwner, TrafficDirection.Receive, raw);
+                }
+
+                return result;
             }
             catch
             {

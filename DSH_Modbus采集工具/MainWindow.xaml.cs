@@ -374,6 +374,12 @@ namespace DSH_Modbus采集工具
         private volatile bool _freeViewActive;
 
         /// <summary>
+        /// 当前显示的是「通讯监控」分段（P2.4，第五分段）。选中它时 IO / 自由监控一律不采 ——
+        /// 它把前四个分段全遮住了，见 <see cref="PollSnapshot.TrafficViewActive"/>。
+        /// </summary>
+        private volatile bool _trafficViewActive;
+
+        /// <summary>
         /// 采集编排器（轮询 + 心跳）。不持有 WPF 控件，与窗口之间只走
         /// <see cref="ICollectorHost"/> 与 <see cref="PollSnapshot"/> 两条通道 —— 见 <c>Polling/</c>。
         /// </summary>
@@ -583,6 +589,9 @@ namespace DSH_Modbus采集工具
 
             // 账户与权限（P 权限）：启动即技术员，自由监控的写入格按角色置灰
             InitializeAccount();
+
+            // 通讯监控（P2.4）：绑定第五分段的控件与目标提供方；定时器由可见性启停
+            InitializeTrafficMonitor();
         }
 
         // ---------- IO 点位集构建 / 分页 ----------
@@ -783,6 +792,9 @@ namespace DSH_Modbus采集工具
             // 采集跟随页面可见性：离开设备监控页即停采（零报文，灯保留上次数据）
             _ioPageActive = ReferenceEquals(sender, StatusInfoNav);
             SyncSystemVarTimer();
+
+            // 通讯监控同样只在设备监控页可见时抓（离开即停、清空，回来从头记）
+            _traffic?.SetPageActive(_ioPageActive);
 
             // 状态机只在总览页可见时求值（离开就停，别白白每 50ms 算一遍）
             _overviewPageActive = ReferenceEquals(sender, OverviewNav);
@@ -3378,6 +3390,7 @@ namespace DSH_Modbus采集工具
         PollSnapshot ICollectorHost.CaptureSnapshot() => new(
             IoPageActive: _ioPageActive,
             FreeViewActive: _freeViewActive,
+            TrafficViewActive: _trafficViewActive,
             VisiblePage: _visiblePage,
             PollIntervalMs: _pollIntervalMs,
             MachineViewActive: _machineViewActive,
@@ -3511,20 +3524,22 @@ namespace DSH_Modbus采集工具
             bool yView = YViewSegment.IsChecked == true;
             bool freeView = FreeViewSegment?.IsChecked == true;
             bool sysView = SysVarViewSegment?.IsChecked == true;
+            bool trafficView = TrafficViewSegment?.IsChecked == true;
 
             // 采集跟随可见分段：未显示区不读，保留上次数据
             _yViewActive = yView;
             _freeViewActive = freeView;
             _sysViewActive = sysView;
+            _trafficViewActive = trafficView;
 
             IoColumnsGrid.Visibility = xView ? Visibility.Visible : Visibility.Collapsed;
             YIoColumnsGrid.Visibility = yView ? Visibility.Visible : Visibility.Collapsed;
 
-            // X/Y 共用的滚动容器：另外两个分段下整层隐藏，
+            // X/Y 共用的滚动容器：另外三个分段下整层隐藏，
             // 免得空容器与面板叠在同一格
             if (IoScrollViewer != null)
             {
-                IoScrollViewer.Visibility = freeView || sysView
+                IoScrollViewer.Visibility = freeView || sysView || trafficView
                     ? Visibility.Collapsed
                     : Visibility.Visible;
             }
@@ -3539,28 +3554,36 @@ namespace DSH_Modbus采集工具
                 SystemVarMonitorPanel.Visibility = sysView ? Visibility.Visible : Visibility.Collapsed;
             }
 
-            // 导入 IO 表按钮只在 X/Y 分段下有意义（另外两个分段各有自己的内容）
+            if (TrafficMonitorPanel != null)
+            {
+                TrafficMonitorPanel.Visibility = trafficView ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            // 导入 IO 表按钮只在 X/Y 分段下有意义（另外三个分段各有自己的内容）
             if (ImportIoTableButton != null)
             {
-                ImportIoTableButton.Visibility = freeView || sysView
+                ImportIoTableButton.Visibility = freeView || sysView || trafficView
                     ? Visibility.Collapsed
                     : Visibility.Visible;
             }
 
-            // IO 分页控件在另外两个分段下无意义
-            if (IoPagerPanel != null && (freeView || sysView))
+            // IO 分页控件在另外三个分段下无意义
+            if (IoPagerPanel != null && (freeView || sysView || trafficView))
             {
                 IoPagerPanel.Visibility = Visibility.Collapsed;
             }
 
-            // 空提示只属于 X/Y（另外两个分段各有自己的内容）
-            if (IoEmptyHint != null && (freeView || sysView))
+            // 空提示只属于 X/Y（另外三个分段各有自己的内容）
+            if (IoEmptyHint != null && (freeView || sysView || trafficView))
             {
                 IoEmptyHint.Visibility = Visibility.Collapsed;
             }
 
             // 系统变量定时器跟随分段启停
             SyncSystemVarTimer();
+
+            // 通讯监控：分段可见性 + 抓包总开关（离开即停，再进来从头记）
+            _traffic?.SetSegmentVisible(trafficView);
 
             if (freeView)
             {
@@ -3570,7 +3593,7 @@ namespace DSH_Modbus采集工具
             {
                 RefreshSystemVarValues();
             }
-            else
+            else if (!trafficView)
             {
                 // 切段后本段有自己的页号与页数，重新切片绑定
                 ApplyIoPage();

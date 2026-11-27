@@ -20,6 +20,7 @@ using DSH_Modbus采集工具.Io;
 using DSH_Modbus采集工具.Logging;
 using DSH_Modbus采集工具.Expressions;
 using DSH_Modbus采集工具.Modeling;
+using DSH_Modbus采集工具.Monitoring;
 using DSH_Modbus采集工具.Net;
 using DSH_Modbus采集工具.Polling;
 using DSH_Modbus采集工具.Themes;
@@ -1031,9 +1032,38 @@ namespace DSH_Modbus采集工具
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
+                // P2.4 通讯监控：HTTP 只有 TEXT，抓「请求：方法 + URL + 请求体 / 响应：状态码 + 响应体」。
+                // 只有选中 HTTP 目标时才抓；响应体也只在抓包时读（正常路径不看响应体）。
+                bool captureHttp = TrafficTap.Wants(TrafficKeys.Http);
+                if (captureHttp)
+                {
+                    TrafficTap.Frame(
+                        TrafficKeys.Http,
+                        TrafficDirection.Send,
+                        Encoding.UTF8.GetBytes(json),
+                        $"请求：{method} {url}");
+                }
+
                 HttpResponseMessage response = string.Equals(method, "PUT", StringComparison.OrdinalIgnoreCase)
                     ? await http.PutAsync(url, content).ConfigureAwait(true)
                     : await http.PostAsync(url, content).ConfigureAwait(true);
+
+                if (captureHttp)
+                {
+                    try
+                    {
+                        string responseBody = await response.Content.ReadAsStringAsync().ConfigureAwait(true);
+                        TrafficTap.Frame(
+                            TrafficKeys.Http,
+                            TrafficDirection.Receive,
+                            Encoding.UTF8.GetBytes(responseBody),
+                            $"响应：{(int)response.StatusCode} {response.StatusCode}");
+                    }
+                    catch
+                    {
+                        // 抓包读响应体失败不影响本次上报的判定
+                    }
+                }
 
                 if (!response.IsSuccessStatusCode)
                 {

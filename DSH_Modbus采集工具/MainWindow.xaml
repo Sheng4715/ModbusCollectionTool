@@ -2335,6 +2335,53 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- ================= 通讯监控（P2.4） ================= -->
+
+        <!-- 监控目标下拉的显示模板：与 MonitorTypeItemTemplate 同一原因，不能用 DisplayMemberPath
+             （自定义 ComboBox 模板下它不与 SelectionBoxItemTemplate 合成，闭合态会退化成 ToString）。 -->
+        <DataTemplate x:Key="TrafficTargetItemTemplate">
+            <TextBlock Text="{Binding DisplayName}"
+                       FontSize="12" Foreground="{DynamicResource Brush.Text.Primary}"
+                       VerticalAlignment="Center"/>
+        </DataTemplate>
+
+        <!-- 报文行：时间戳一行 + 报文一行。接收靠左、发送靠右（TextAlignment 由行数据给）。
+             ⚠️ 报文可能很长（最多 260 字节的 HEX），必须 TextWrapping="Wrap"。 -->
+        <DataTemplate x:Key="TrafficRowItemTemplate">
+            <TextBlock Text="{Binding Text}"
+                       TextAlignment="{Binding TextAlignment}"
+                       TextWrapping="Wrap"
+                       FontSize="12"
+                       Foreground="{DynamicResource Brush.Text.Primary}"
+                       Margin="0,2"/>
+        </DataTemplate>
+
+        <!-- 报文列表：无边框/透明底，去掉条目的选中底色与焦点框（只读展示）。
+             结构照 DeviceLogListStyle —— 两处都是「只读、自动跟随滚底」的列表。 -->
+        <Style x:Key="TrafficListStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="Margin" Value="0"/>
+                        <Setter Property="Focusable" Value="False"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <ContentPresenter/>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="RootGrid">
@@ -2724,6 +2771,11 @@
                                                          GroupName="IoView"
                                                          Style="{StaticResource IoSegmentRadioButton}"
                                                          Checked="IoView_Checked"/>
+                                            <RadioButton x:Name="TrafficViewSegment"
+                                                         Content="通讯监控"
+                                                         GroupName="IoView"
+                                                         Style="{StaticResource IoSegmentRadioButton}"
+                                                         Checked="IoView_Checked"/>
                                         </StackPanel>
                                     </Border>
                                 </Grid>
@@ -2997,6 +3049,75 @@
                                             </ItemsControl.ItemContainerStyle>
                                         </ItemsControl>
                                     </ScrollViewer>
+                                </Grid>
+
+                                <!-- ================= 通讯监控（P2.4，默认隐藏） =================
+                                     第五分段：只监控**已经建立**的通讯连接。口径见 Brief P2.4：
+                                     只抓下拉框选中那一个目标、只在本分段可见时抓、仅内存 1000 条、
+                                     HTTP 只给 TEXT、空缓冲什么都不显示（不放占位文字）。
+                                     报文行「接收靠左 / 发送靠右」，由 TrafficRow.TextAlignment 给。 -->
+                                <Grid x:Name="TrafficMonitorPanel" Visibility="Collapsed">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>   <!-- 工具行（常驻） -->
+                                        <RowDefinition Height="*"/>      <!-- 报文列表（自身滚动） -->
+                                    </Grid.RowDefinitions>
+
+                                    <Border Grid.Row="0"
+                                            Height="46"
+                                            Margin="0,0,0,2"
+                                            Background="Transparent"
+                                            BorderBrush="{DynamicResource Brush.Divider}"
+                                            BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock Text="监控目标"
+                                                           FontSize="12"
+                                                           Foreground="{DynamicResource Brush.Text.Secondary}"
+                                                           VerticalAlignment="Center"
+                                                           Margin="0,0,8,0"/>
+                                                <ComboBox x:Name="TrafficTargetComboBox"
+                                                          Width="180"
+                                                          Style="{StaticResource MonitorInlineComboBox}"
+                                                          ItemContainerStyle="{StaticResource MonitorComboItem}"
+                                                          ItemTemplate="{StaticResource TrafficTargetItemTemplate}"
+                                                          SelectionChanged="TrafficTargetCombo_SelectionChanged"/>
+                                            </StackPanel>
+
+                                            <StackPanel Orientation="Horizontal"
+                                                        HorizontalAlignment="Right"
+                                                        VerticalAlignment="Center">
+                                                <!-- HTTP 目标下整体隐藏（文本协议不做 HEX） -->
+                                                <Border x:Name="TrafficFormatPanel"
+                                                        Background="{DynamicResource Brush.Control.Background}"
+                                                        CornerRadius="6" Padding="2" Margin="0,0,8,0">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <RadioButton x:Name="TrafficHexSegment"
+                                                                     Content="HEX"
+                                                                     GroupName="TrafficFormat"
+                                                                     IsChecked="True"
+                                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                                     Checked="TrafficFormat_Checked"/>
+                                                        <RadioButton x:Name="TrafficTextSegment"
+                                                                     Content="TEXT"
+                                                                     GroupName="TrafficFormat"
+                                                                     Style="{StaticResource IoSegmentRadioButton}"
+                                                                     Checked="TrafficFormat_Checked"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Button x:Name="TrafficClearButton"
+                                                        Content="清空"
+                                                        Style="{StaticResource IoCardButton}"
+                                                        Click="TrafficClearButton_Click"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- 列表：只在这里滚动，不写 MaxHeight（与自由监控/系统变量同一几何） -->
+                                    <ListBox x:Name="TrafficMonitorList"
+                                             Grid.Row="1"
+                                             Margin="0,6,0,0"
+                                             Style="{StaticResource TrafficListStyle}"
+                                             ItemTemplate="{StaticResource TrafficRowItemTemplate}"/>
                                 </Grid>
                                 </Grid>
 

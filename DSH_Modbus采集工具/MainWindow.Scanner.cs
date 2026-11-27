@@ -1585,6 +1585,9 @@ namespace DSH_Modbus采集工具
             bool firstFailure = session.Attempt == 0;
 
             var client = new ScannerTcpClient();
+            // P2.4 通讯监控：正式连接带上本台扫码器的身份（名字引用同一个 ScannerDefinition，
+            // 改名不换身份；「触发测试」的临时连接不设，故不会混进来）
+            client.TraceOwner = def;
             using CancellationTokenSource connectCts = session.BeginConnect(token);
 
             try
