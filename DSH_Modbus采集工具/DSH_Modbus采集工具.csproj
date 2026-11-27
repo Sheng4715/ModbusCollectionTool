@@ -26,12 +26,12 @@
     版本即干净的 1.0.0。
   -->
   <PropertyGroup>
-    <VersionPrefix>1.0.2</VersionPrefix>
+    <VersionPrefix>1.1.0</VersionPrefix>
     <VersionSuffix Condition="'$(Configuration)' == 'Debug'">debug</VersionSuffix>
     <!-- AssemblyVersion / FileVersion 固定不带 suffix：程序集身份必须稳定，
          否则每换一次配置都会让引用方全部重编（与上面 WriteBuildDate 同一考虑）。 -->
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
-    <FileVersion>1.0.2.0</FileVersion>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
     <Product>DSH Modbus 采集工具</Product>
     <Company>DSH</Company>
     <Description>基于 WPF / .NET 8 的 Modbus 数据采集上位机</Description>
