@@ -9,7 +9,7 @@
 > 发布交付在 `AGENTS-发布.md`。**改到这些功能时先读那份的对应章节**，那里有成条的 ⚠️ 坑。
 > 本文件曾达 136 KB，**超过工作区指令预算（65536 B）被整体丢弃、规则一条都没生效** —— 所以只留「每次都要用的」。
 > 优先使用PowerShell 7 工具（如果环境存在），文档均使用UTF-8编码
-> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **57601 B / 余量约 7.7 KB**（2026-11-26 校）；
+> 📏 **预算红线 65536 B**（含框架开销约 365 B）。本文件当前 **57923 B / 余量约 7.4 KB**（2026-11-27 校）；
 > 新增前先 `(Get-Item AGENTS.md).Length`，超 64 KB 会再次静默失效。
 > 长段落放 `AGENTS-细节.md`（实现细节）或 `AGENTS-发布.md`（发布交付），这里只留一句指向。
 > 📦 **已搬到细节档的查阅型大表**：§15 完整目录树、§16 样式键全表（53 个 `x:Key`）。
@@ -391,6 +391,7 @@ public sealed class MyDialog : DialogWindow
 ## 11. 版本控制
 
 - git 仓库（分支 `main`），`.gitignore` 排除 `bin/ obj/ .vs/ *.user`；身份为仓库级配置（`G.Sheng`）
+- **远程 `origin` = <https://github.com/Sheng4715/ModbusCollectionTool.git>**（2026-11-27 接入）。⚠️ 本仓库 `.git/config` 里写死了 `http(s).proxy = http://127.0.0.1:7897`（Clash Verge，git 不读系统代理）；Clash 换端口时要同步改，否则表现为 `Failed to connect to github.com:443`
 - **提交信息用中文**；提交前先 `git diff` 确认范围，**不要整文件盲加**（会把别人的 WIP 一起带走）
 - **不要自动提交**（2026-10-30 用户定案）：改完就停，等用户看过再决定是否提交。
 - **提交前的验证只跑两样（2026-10-29 用户定案）**：`dotnet build DSH_Modbus采集工具.sln` + `.tmp/ExpressionCheck`（跑 exe，不用 `dotnet run`），详见 §2。

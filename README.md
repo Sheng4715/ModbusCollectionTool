@@ -6,6 +6,12 @@
 基于 **WPF / .NET 8**，界面参考 Windows 11 Fluent（自绘标题栏 + 左侧导航 + 卡片式内容），中文界面。
 **全部 NuGet 依赖只有一个**：微软官方 `System.IO.Ports`（串口 Modbus RTU 用）。
 
+> **仓库地址**：<https://github.com/Sheng4715/ModbusCollectionTool.git>
+
+```powershell
+git clone https://github.com/Sheng4715/ModbusCollectionTool.git
+```
+
 ---
 
 ## 功能概览
