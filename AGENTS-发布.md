@@ -255,3 +255,30 @@ Get-Process "DSH_Modbus采集工具" | Select-Object MainWindowTitle      # ④ 
 
 然后在**目标机**上：`Test-Path` 运行时 → 双击能开 → 改主题、关掉、重开 → **主题还在**（这一条同时验证目录可写）。
 自检完把 `Log\` 和 `app-settings.json` 删掉，包才是干净的出厂状态。
+
+### 12.11 GitHub Release 发布规范（2026-11-27 定案）
+
+发布到 GitHub Releases 时，**Release 标题与附件文件名统一用 `Modbus Collection Tool` + 版本号**：
+
+| 项 | 格式 | 示例 |
+|---|---|---|
+| Release 标题 | `Modbus Collection Tool <版本号>` | `Modbus Collection Tool 1.0.2` |
+| 附件文件名 | `Modbus-Collection-Tool-<版本号>.zip` | `Modbus-Collection-Tool-1.0.2.zip` |
+| Git tag | `v<版本号>` | `v1.0.2` |
+
+⚠️ **GitHub 会把文件名里的空格替换成点号**（实测 `Modbus Collection Tool 1.0.2.zip` 上传后变成 `Modbus.Collection.Tool.1.0.2.zip`），所以**附件名用连字符**，不要用空格；中文文件名也会被过滤（`DSH_Modbus采集工具_1.0.2.zip` → `DSH_Modbus._1.0.2.zip`）。
+
+**附件内容 = §12.2 那 5 个程序文件**，打成 zip 上传：
+
+- ✅ 包含：exe / dll / `System.IO.Ports.dll` / deps.json / runtimeconfig.json
+- ❌ 排除：`*.json` 配置本身、`*.json.bak`、`*.bad-*`、`Log\`、`DeviceData\`、`Images\`、`.pdb`
+- 打包命令：`Compress-Archive -Path "<暂存目录>\*" -DestinationPath "<名>.zip"`（先复制到独立暂存目录，不要在 `Release\` 原地压）
+
+**上传通道**：用 GitHub REST API（`POST /repos/{owner}/{repo}/releases` 建 Release，
+`POST https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name=<文件名>` 上传附件）。
+⚠️ 本机需带代理：`Invoke-RestMethod -Proxy http://127.0.0.1:7897`，否则连不上 github.com（见 `AGENTS.md` §11）。
+凭据从 `git credential fill` 取（`protocol=https` / `host=github.com`），不要明文写在脚本里。
+
+**Release 说明写什么**：按功能模块分节，突出本版**实际具备**的能力（尤其数据采集与设备连接）；
+**不要**罗列「本版不包含 XX」——读者只关心这一版能做什么。安装步骤、运行时前置条件、
+「不能装 Program Files」这三条必须写进去。

@@ -401,6 +401,6 @@ public sealed class MyDialog : DialogWindow
 
 > **这一章已整段移到 [AGENTS-发布.md](AGENTS-发布.md)。**
 > 内容：框架依赖发布的产物构成（**5 个文件，含 `System.IO.Ports.dll`**）/ 发布命令 / 目录可写性验证 / 覆盖更新只替换程序本体、配置与 `Images\` `Log\` 原样保留 /
-> 目标机 .NET 8 Desktop Runtime 前置条件。
+> 目标机 .NET 8 Desktop Runtime 前置条件 / **GitHub Release 命名规范（标题与附件统一 `Modbus Collection Tool` + 版本号，§12.11）**。
 >
 > 要发版、改发布参数、或排查「现场机双击没反应」时先打开那份。
